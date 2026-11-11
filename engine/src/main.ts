@@ -19,11 +19,7 @@ function replyError(id: string | undefined, error: unknown): void {
 	else send({ type: "error", errorKind: kind, message: e.message });
 }
 
-const LATER: Partial<Record<Command["type"], number>> = {
-	memory_undo: 5,
-	memory_forget_all: 5,
-	voice_proposal_decision: 5,
-};
+const LATER: Partial<Record<Command["type"], number>> = {};
 
 /** Commands that change engine state run one at a time, in order. Reads and abort don't wait. */
 const SERIAL = new Set<Command["type"]>(["configure", "prompt", "set_thinking", "clear", "undo_clear", "history_restore"]);
@@ -66,6 +62,15 @@ async function handle(message: Command): Promise<unknown> {
 		case "history_restore":
 			await engine.restore(message.entryId);
 			return undefined;
+		case "memory_undo":
+			engine.undoMemory(message.saveId);
+			return undefined;
+		case "memory_forget_all":
+			return { removed: engine.forgetMemory() };
+		case "voice_proposal_decision":
+			return engine.voiceDecision(message.proposalId, message.accept);
+		case "voice_list":
+			return engine.voiceList();
 		case "list_providers":
 			return listProviders();
 		case "list_models":

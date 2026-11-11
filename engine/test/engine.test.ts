@@ -452,12 +452,8 @@ test("custom OpenAI-compatible endpoint: list_models, test_connection, configure
 test("later-step commands, stats and results for every id", async () => {
 	const engine = start();
 	await engine.configure();
-	expect(await engine.call({ type: "memory_undo", saveId: "s" })).toMatchObject({ ok: false, error: "Not available until step 5" });
-	expect(await engine.call({ type: "memory_forget_all" })).toMatchObject({ ok: false, error: "Not available until step 5" });
-	expect(await engine.call({ type: "voice_proposal_decision", proposalId: "p", accept: true })).toMatchObject({
-		ok: false,
-		error: "Not available until step 5",
-	});
+	expect(await engine.call({ type: "memory_undo", saveId: "s" })).toMatchObject({ ok: false, error: "Nothing to undo" });
+	expect(await engine.call({ type: "now_line" })).toMatchObject({ ok: false, error: 'Unknown command "now_line"' });
 	const stats = await engine.callOk<{ rssBytes: number; heapUsedBytes: number; uptimeMs: number }>({ type: "stats" });
 	expect(stats.rssBytes).toBeGreaterThan(0);
 	expect(stats.uptimeMs).toBeGreaterThanOrEqual(0);
@@ -549,17 +545,22 @@ test("useThreadContext sends recent thread text; without it nothing is sent", as
 	await engine.shutdown();
 }, T);
 
-test("useVoice adds the voice profile to the instructions", async () => {
+test("useVoice adds the named voice profile to the instructions, else the default profile", async () => {
 	const engine = start();
-	await engine.configure({ assistantStyle: "Dry wit.", faux: { replies: [{ echoSystemPrompt: true }, { echoSystemPrompt: true }, { echoSystemPrompt: true }] } });
-	const voiced = await action(engine, "action-6", { action: spec({ useVoice: true }), voiceProfile: "Short, lowercase, no emoji." });
-	expect(voiced.end.text).toContain("Short, lowercase, no emoji.");
+	const echo = { echoSystemPrompt: true };
+	await engine.configure({ assistantStyle: "Dry wit.", defaultVoiceProfile: "casual", faux: { replies: [echo, echo, echo, echo] } });
+	writeFileSync(join(engine.dataDir, "voice", "work.md"), "Short, formal, no emoji.\n");
+	const voiced = await action(engine, "action-6", { action: spec({ useVoice: true }), voiceProfile: "work" });
+	expect(voiced.end.text).toContain("Short, formal, no emoji.");
 	expect(voiced.end.text).toContain("Dry wit.");
 	expect(voiced.end.text).toContain("no preamble");
-	const off = await action(engine, "action-7", { voiceProfile: "Short, lowercase, no emoji." });
-	expect(off.end.text).not.toContain("lowercase");
-	const noProfile = await action(engine, "action-8", { action: spec({ useVoice: true }) });
-	expect(noProfile.end.text).not.toContain("voice_profile");
+	const off = await action(engine, "action-7", { voiceProfile: "work" });
+	expect(off.end.text).not.toContain("voice_profile");
+	const casual = readFileSync(join(engine.dataDir, "voice", "casual.md"), "utf8").trim();
+	const fallback = await action(engine, "action-8", { action: spec({ useVoice: true }) });
+	expect(fallback.end.text).toContain(casual);
+	const missing = await action(engine, "action-9", { action: spec({ useVoice: true }), voiceProfile: "../settings" });
+	expect(missing.end.text).toContain(casual);
 	await engine.shutdown();
 }, T);
 

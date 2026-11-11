@@ -21,6 +21,8 @@ export class Thread {
 	private readonly actionsPath: string;
 	manager: SessionManager;
 	private undo: UndoState | undefined;
+	/** saveIds of undone memory saves, for the transcript's memory_saved rows. */
+	undoneSaves: () => ReadonlySet<string> = () => new Set();
 
 	constructor(readonly dataDir: string) {
 		this.engineDir = join(dataDir, "engine");
@@ -157,7 +159,7 @@ export class Thread {
 		if (action) return actionTranscript(action);
 		const path = await this.findSession(entryId);
 		if (!path) throw new EngineError(`No history entry "${entryId}"`, "engine");
-		return transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch());
+		return transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch(), this.undoneSaves());
 	}
 
 	/** The prompt preamble this thread was started with (pi stores it as a system message), if any. */
@@ -172,7 +174,7 @@ export class Thread {
 	}
 
 	transcript(): TranscriptItem[] {
-		return transcriptItems(this.manager.getBranch());
+		return transcriptItems(this.manager.getBranch(), this.undoneSaves());
 	}
 
 	/** Append one finished one-off action to engine\actions.jsonl. */
@@ -259,9 +261,11 @@ export function toolSummary(name: string, args: unknown): string {
 }
 
 /** Build transcript rows from a session branch (root → leaf). */
-export function transcriptItems(entries: SessionEntry[]): TranscriptItem[] {
+export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySet<string> = new Set()): TranscriptItem[] {
 	const items: TranscriptItem[] = [];
 	const tools = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
+	/** memory_save calls wait for their result: a successful one becomes a memory_saved row. */
+	const saves = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
 	for (const entry of entries) {
 		const at = Date.parse(entry.timestamp);
 		if (entry.type === "compaction") {
@@ -300,6 +304,10 @@ export function transcriptItems(entries: SessionEntry[]): TranscriptItem[] {
 					ok: null,
 					at,
 				};
+				if (block.name === "memory_save") {
+					saves.set(block.id, item);
+					continue;
+				}
 				tools.set(block.id, item);
 				items.push(item);
 			}
@@ -308,6 +316,24 @@ export function transcriptItems(entries: SessionEntry[]): TranscriptItem[] {
 				items.push({ kind: "error", id: `${entry.id}:error`, errorKind: classifyError(errorMessage), message: errorMessage, at });
 			}
 		} else if (message.role === "toolResult") {
+			const save = saves.get(message.toolCallId as string);
+			if (save) {
+				const details = message.details as { saveId?: unknown; title?: unknown } | undefined;
+				if (!message.isError && typeof details?.saveId === "string") {
+					items.push({
+						kind: "memory_saved",
+						id: save.id,
+						saveId: details.saveId,
+						title: typeof details.title === "string" ? details.title : "",
+						undone: undoneSaves.has(details.saveId),
+						at: save.at,
+					});
+					continue;
+				}
+				// A failed save stays a generic tool row.
+				tools.set(message.toolCallId as string, save);
+				items.push(save);
+			}
 			const tool = tools.get(message.toolCallId as string);
 			if (tool) {
 				tool.ok = !message.isError;

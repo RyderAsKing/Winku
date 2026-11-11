@@ -1,6 +1,8 @@
 // Ties the pieces together: runtime + thread + the live AgentSession + replies.
 // The AgentSession is a view over the thread's SessionManager; it is rebuilt (and its events
 // re-attached) whenever the provider, model or current thread changes.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
@@ -12,11 +14,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type ActionSetup, Actions, type OneOffAction } from "./action.ts";
 import { FAUX_PROVIDER, type FauxOptions } from "./faux.ts";
+import { ensureStarterFiles, MemoryStore, memoryTools } from "./memory.ts";
 import { buildSystemPrompt } from "./prompt.ts";
-import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel } from "./protocol.ts";
+import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
 import { Replies } from "./reply.ts";
 import { clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
 import { Thread } from "./thread.ts";
+import { VoiceProfiles, voiceTools } from "./voice.ts";
 
 /** configure as the engine accepts it: the protocol command plus a test-only faux script. */
 export type EngineConfig = ConfigureCommand & { faux?: FauxOptions };
@@ -46,7 +50,11 @@ export class Engine {
 	private unsubscribe: (() => void) | undefined;
 	/** Frozen for the thread until clear or compaction, so the provider's prompt cache keeps hitting. */
 	private systemPrompt = "";
+	/** A new snapshot waits for the session to be idle before pi picks it up. */
+	private reloadPending = false;
 	private quick: ModelChoice | undefined;
+	private memory: MemoryStore | undefined;
+	private voice: VoiceProfiles | undefined;
 	readonly replies: Replies;
 	readonly actions: Actions;
 
@@ -54,7 +62,10 @@ export class Engine {
 		this.actions = new Actions(emit);
 		this.replies = new Replies(
 			emit,
-			() => this.emitContext(),
+			() => {
+				this.emitContext();
+				void this.flushReload();
+			},
 			(ok) => {
 				if (ok) void this.refreezePrompt();
 			},
@@ -65,8 +76,30 @@ export class Engine {
 		return !!this.session;
 	}
 
+	/** Re-reads about-me.md, the voice profiles and MEMORY.md: a new snapshot. */
 	private freshPrompt(): string {
-		return buildSystemPrompt({ assistantStyle: this.config.assistantStyle ?? "" });
+		let aboutMe = "";
+		try {
+			aboutMe = readFileSync(join(this.config.dataDir, "about-me.md"), "utf8");
+		} catch {}
+		// The starter template is only an HTML comment; leave it out until the user writes something.
+		aboutMe = aboutMe.replace(/<!--[\s\S]*?-->/g, "");
+		return buildSystemPrompt({
+			assistantStyle: this.config.assistantStyle ?? "",
+			aboutMe,
+			voiceProfiles: this.requireVoice().all(),
+			memoryIndex: this.requireMemory().index(),
+		});
+	}
+
+	private requireMemory(): MemoryStore {
+		if (!this.memory) throw new Error("Engine is not configured");
+		return this.memory;
+	}
+
+	private requireVoice(): VoiceProfiles {
+		if (!this.voice) throw new Error("Engine is not configured");
+		return this.voice;
 	}
 
 	/** The prompt the current thread started with, so a restart or restore doesn't break the cache. */
@@ -93,7 +126,12 @@ export class Engine {
 		this.model = model;
 		this.quick = config.quick;
 		if (!this.thread || this.thread.dataDir !== config.dataDir) {
+			ensureStarterFiles(config.dataDir);
 			this.thread = new Thread(config.dataDir);
+			const memory = new MemoryStore(config.dataDir);
+			this.memory = memory;
+			this.voice = new VoiceProfiles(config.dataDir);
+			this.thread.undoneSaves = () => memory.undone();
 			this.systemPrompt = this.threadPrompt();
 		}
 		await this.openSession(clampThinking(model, config.main.thinking));
@@ -107,6 +145,7 @@ export class Engine {
 		if (this.replies.busy) await this.replies.abort();
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		this.reloadPending = false;
 		this.session.dispose();
 		this.session = undefined;
 	}
@@ -131,10 +170,51 @@ export class Engine {
 				retry: { enabled: !faux, maxRetries: 2 },
 			}),
 			sessionManager: this.thread.manager,
-			tools: [],
+			customTools: this.tools(),
+			tools: ["memory_save", "memory_read", "voice_propose"],
 		});
 		this.session = session;
 		this.unsubscribe = this.replies.attach(session);
+	}
+
+	private tools() {
+		const memory = memoryTools(
+			() => this.requireMemory(),
+			() => this.thread.sessionId,
+			(save) => {
+				const id = this.replies.activeId;
+				this.emit({ type: "memory_saved", ...(id ? { id } : {}), saveId: save.saveId, title: save.title });
+			},
+		);
+		const voice = voiceTools(
+			() => this.requireVoice(),
+			(proposal) => {
+				const id = this.replies.activeId;
+				this.emit({ type: "voice_proposal", ...(id ? { id } : {}), ...proposal });
+			},
+		);
+		return [...memory, ...voice];
+	}
+
+	undoMemory(saveId: string): void {
+		this.requireSession();
+		this.requireMemory().undo(saveId, this.thread.sessionId);
+		this.emit({ type: "memory_undone", saveId });
+	}
+
+	forgetMemory(): number {
+		this.requireSession();
+		return this.requireMemory().forgetAll();
+	}
+
+	voiceDecision(proposalId: string, accept: boolean): { written: boolean } {
+		this.requireSession();
+		return this.requireVoice().decide(proposalId, accept);
+	}
+
+	voiceList(): VoiceProfileInfo[] {
+		this.requireSession();
+		return this.requireVoice().list();
 	}
 
 	private readyEvent(): Event {
@@ -161,13 +241,22 @@ export class Engine {
 		});
 	}
 
-	/** After compaction the prompt may pick up changes (style now; memory and voice from step 5). */
+	/** After compaction the prompt picks up changes: style, About me, voice profiles, MEMORY.md. */
 	private async refreezePrompt(): Promise<void> {
 		const next = this.freshPrompt();
 		if (next === this.systemPrompt || !this.session) return;
 		this.systemPrompt = next;
+		this.reloadPending = true;
+		await this.flushReload();
+	}
+
+	/** pi can't reload mid-run (threshold compaction happens inside one), so wait until it settles. */
+	private async flushReload(): Promise<void> {
+		const session = this.session;
+		if (!this.reloadPending || !session || session.isStreaming || session.isCompacting) return;
+		this.reloadPending = false;
 		try {
-			await this.session.reload();
+			await session.reload();
 		} catch (error) {
 			process.stderr.write(`prompt reload failed: ${String(error)}\n`);
 		}
@@ -183,6 +272,7 @@ export class Engine {
 		const session = this.requireSession();
 		const thinking = session.thinkingLevel as ThinkingLevel;
 		await this.stop();
+		this.voice?.dropPending();
 		try {
 			await change();
 		} finally {
@@ -240,6 +330,11 @@ export class Engine {
 			model,
 			thinking: clampThinking(model, quick.thinking),
 			assistantStyle: this.config.assistantStyle ?? "",
+			voiceProfile: (name) => {
+				const voice = this.requireVoice();
+				const fallback = this.config.defaultVoiceProfile;
+				return (name ? voice.read(name) : undefined) ?? (fallback ? voice.read(fallback) : undefined);
+			},
 			transcript: () => thread.transcript(),
 			record: (line) => thread.recordAction(line),
 		};

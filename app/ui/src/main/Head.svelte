@@ -31,6 +31,8 @@
 
 	let start: { x: number; y: number } | null = null;
 
+	// A press doesn't focus the eyes (onmousedown): focus stays in the message box while the bar is
+	// dragged, and the next key press doesn't ring the eyes. Tab still reaches them.
 	function onpointerdown(event: PointerEvent) {
 		if (event.button !== 0) return;
 		start = { x: event.screenX, y: event.screenY };
@@ -87,6 +89,7 @@
 		type="button"
 		aria-label={open ? "Close Winku" : "Open Winku"}
 		{onpointerdown}
+		onmousedown={(event) => event.preventDefault()}
 		{onpointermove}
 		{onpointerup}
 		{oncontextmenu}

@@ -40,6 +40,19 @@ const cases = [
 		},
 	},
 	{
+		name: "reply-low-left",
+		path: "/?left&low",
+		ready: "text=Paste it into Paint",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400);
+		},
+	},
+	{ name: "bar-large", path: "/?size=large", ready: "text=23% ctx", prepare: summon },
+	{
 		name: "pill-update",
 		path: "/?update=1",
 		ready: ".head .dot",
@@ -427,7 +440,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .bubbles, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

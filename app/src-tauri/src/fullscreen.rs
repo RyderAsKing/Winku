@@ -1,6 +1,7 @@
 //! Hides the resting pill while a fullscreen app has focus (docs/ARCHITECTURE.md "Shipping").
-//! Windows listens to foreground and location changes with WinEvent hooks (no polling); other
-//! platforms never report fullscreen.
+//! Windows checks the foreground window on every foreground change (a WinEvent hook) and when
+//! Explorer reports a fullscreen app opening or closing (an appbar notification); no polling.
+//! Other platforms never report fullscreen.
 
 #![cfg_attr(not(windows), allow(dead_code))]
 

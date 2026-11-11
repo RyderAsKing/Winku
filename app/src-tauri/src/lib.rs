@@ -41,6 +41,12 @@ pub fn run() {
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
             hotkeys::register_all(handle, &current);
+            #[cfg(windows)]
+            if let Some(main) = app.get_webview_window(window::MAIN) {
+                if let Ok(hwnd) = main.hwnd() {
+                    platform::plain_frame(platform::WindowHandle(hwnd.0 as isize));
+                }
+            }
             window::place_pill(handle)?;
             window::set_mode(handle, window::Mode::Pill)?;
             engine::Engine::start(handle)?;

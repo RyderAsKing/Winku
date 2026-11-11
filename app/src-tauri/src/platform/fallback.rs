@@ -18,6 +18,10 @@ pub fn foreground_window() -> WindowHandle {
     WindowHandle(0)
 }
 
+pub fn process_name(_window: WindowHandle) -> Option<String> {
+    None
+}
+
 pub fn focus_window(_window: WindowHandle) -> bool {
     false
 }

@@ -3,7 +3,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{GlobalFree, HANDLE, HWND};
+use windows_sys::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
     GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
@@ -11,7 +11,10 @@ use windows_sys::Win32::System::DataExchange::{
 use windows_sys::Win32::System::Memory::{
     GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
 };
-use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows_sys::Win32::System::Threading::{
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyW, SendInput, VkKeyScanExW, INPUT, INPUT_0,
     INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, VK_CONTROL, VK_LBUTTON, VK_LWIN,
@@ -70,6 +73,33 @@ pub fn altgr_keys() -> Option<Vec<char>> {
 pub fn foreground_window() -> WindowHandle {
     // SAFETY: plain Win32 call.
     WindowHandle(unsafe { GetForegroundWindow() } as isize)
+}
+
+/// Lower-case executable file name of the process that owns `window`, e.g. "outlook.exe".
+pub fn process_name(window: WindowHandle) -> Option<String> {
+    let hwnd = window.0 as HWND;
+    // SAFETY: Win32 calls; the process handle is closed before returning.
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut buffer = [0u16; 1024];
+        let mut len = buffer.len() as u32;
+        let ok =
+            QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, buffer.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+        if ok == 0 {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buffer[..len as usize]);
+        path.rsplit(['\\', '/']).next().map(str::to_ascii_lowercase)
+    }
 }
 
 /// Brings `window` to the front. True when it ended up in the foreground.

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Settings: one column of grouped fields (SPEC §3). The Model group applies with an explicit
 	// Save after a connection test; everything else saves as you change it.
-	import type { ActionSpec, ModelInfo, ProviderInfo, ThinkingLevel } from "../../../../engine/src/protocol.ts";
+	import type { ActionSpec, ModelInfo, ProviderInfo, ThinkingLevel, VoiceProfileInfo } from "../../../../engine/src/protocol.ts";
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
@@ -28,11 +28,15 @@
 
 	const ALL_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-	let settings: Settings | null = $state(null);
+	let settings = $state<Settings | null>(null);
 	let hasKey = $state(false);
 	let providers: ProviderInfo[] = $state([]);
 	let models: ModelInfo[] = $state([]);
 	let hotkeys: HotkeysStatus = $state({ failed: [] });
+	let profiles: VoiceProfileInfo[] = $state([]);
+	let newApp = $state("");
+	let confirmForget = $state(false);
+	let forgetResult: string | null = $state(null);
 	let altGr = $state<AltGrReport | null>(null);
 
 	// Model group draft
@@ -82,6 +86,7 @@
 			void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		});
 		void shell.hotkeysStatus().then((s) => (hotkeys = s)).catch(() => {});
+		void loadProfiles();
 		void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		const unlistenHotkeys = onHotkeysStatus((s) => (hotkeys = s));
 		return () => {
@@ -185,6 +190,47 @@
 		if (typeof key === "number") hotkeys.actions[key] = value;
 		else hotkeys[key] = value;
 		save({ hotkeys });
+	}
+
+	async function loadProfiles() {
+		profiles = await shell.call<VoiceProfileInfo[]>({ type: "voice_list" }).catch(() => []);
+	}
+
+	/** Profile names to offer: the files in voice\, plus any named in settings but missing. */
+	const profileNames = $derived(
+		[
+			...new Set([
+				...profiles.map((p) => p.name),
+				...(settings ? [settings.voiceProfiles.default, ...Object.values(settings.voiceProfiles.byApp)] : []),
+			]),
+		].filter(Boolean),
+	);
+
+	function setVoice(patch: Partial<Settings["voiceProfiles"]>) {
+		if (!settings) return;
+		save({ voiceProfiles: { ...structuredClone($state.snapshot(settings.voiceProfiles)), ...patch } });
+	}
+
+	function setAppProfile(app: string, profile: string | null) {
+		if (!settings) return;
+		const byApp = { ...settings.voiceProfiles.byApp };
+		if (profile === null) delete byApp[app];
+		else byApp[app] = profile;
+		setVoice({ byApp });
+	}
+
+	function addApp() {
+		let app = newApp.trim().toLowerCase();
+		if (!app || !settings) return;
+		if (!app.includes(".")) app += ".exe";
+		setAppProfile(app, settings.voiceProfiles.default);
+		newApp = "";
+	}
+
+	async function forgetEverything() {
+		const { removed } = await shell.call<{ removed: number }>({ type: "memory_forget_all" });
+		confirmForget = false;
+		forgetResult = removed === 1 ? "Forgot 1 file." : `Forgot ${removed} files.`;
 	}
 
 	function setAction(index: number, patch: Partial<ActionSpec>, debounce = 0) {
@@ -343,6 +389,75 @@
 					oninput={(e) => save({ assistantStyle: e.currentTarget.value }, 500)}
 				></textarea>
 			</label>
+		</section>
+
+		<section>
+			<h2>Memory and voice</h2>
+			<p class="hint intro">Plain markdown files you can edit in any editor.</p>
+			<div class="field top">
+				<span class="label-top">About me</span>
+				<div class="stack">
+					<div class="inline">
+						<button type="button" class="quiet" onclick={() => shell.openDataPath("about_me")}>Open in editor</button>
+					</div>
+					<p class="hint">What Winku should know about you. It only reads this.</p>
+				</div>
+			</div>
+
+			<div class="field top">
+				<span class="label-top">Your voice</span>
+				<div class="stack">
+					<div class="inline">
+						<select class="narrow-select" aria-label="Default voice profile" value={settings.voiceProfiles.default} onchange={(e) => setVoice({ default: e.currentTarget.value })}>
+							{#each profileNames as name (name)}
+								<option value={name}>{name}</option>
+							{/each}
+						</select>
+						<button type="button" class="quiet" onclick={() => shell.openDataPath("voice")}>Open folder</button>
+					</div>
+					<p class="hint">Rewrites use this voice, unless an app below has its own.</p>
+				</div>
+			</div>
+			{#each Object.entries(settings.voiceProfiles.byApp) as [app, profile] (app)}
+				<div class="field">
+					<span class="mono app">{app}</span>
+					<div class="inline">
+						<select class="narrow-select" aria-label="Voice profile for {app}" value={profile} onchange={(e) => setAppProfile(app, e.currentTarget.value)}>
+							{#each profileNames as name (name)}
+								<option value={name}>{name}</option>
+							{/each}
+						</select>
+						<button type="button" class="quiet" onclick={() => setAppProfile(app, null)}>Remove</button>
+					</div>
+				</div>
+			{/each}
+			<div class="field">
+				<span></span>
+				<form class="inline" onsubmit={(e) => (e.preventDefault(), addApp())}>
+					<input class="narrow-input" aria-label="App" placeholder="outlook.exe" spellcheck="false" bind:value={newApp} />
+					<button type="submit" class="quiet" disabled={!newApp.trim()}>Use a voice for this app</button>
+				</form>
+			</div>
+
+			<div class="field top">
+				<span class="label-top">Memory</span>
+				<div class="stack">
+					<div class="inline">
+						<button type="button" class="quiet" onclick={() => shell.openDataPath("memory")}>Open folder</button>
+						{#if !confirmForget}
+							<button type="button" class="quiet" onclick={() => ((confirmForget = true), (forgetResult = null))}>Forget everything</button>
+							{#if forgetResult}<p class="hint">{forgetResult}</p>{/if}
+						{/if}
+					</div>
+					{#if confirmForget}
+						<p class="hint bad">This deletes everything Winku remembers. About me and your voice stay.</p>
+						<div class="inline">
+							<button type="button" class="quiet danger" onclick={forgetEverything}>Forget everything</button>
+							<button type="button" class="quiet" onclick={() => (confirmForget = false)}>Cancel</button>
+						</div>
+					{/if}
+				</div>
+			</div>
 		</section>
 
 		<section>
@@ -558,6 +673,21 @@
 		background: var(--panel-raised);
 		font-size: 12px;
 		cursor: pointer;
+	}
+	.label-top {
+		padding-top: 7px;
+	}
+	.narrow-select {
+		width: 160px !important;
+		flex: none;
+	}
+	.app {
+		font-size: 12px !important;
+		overflow-wrap: anywhere;
+	}
+	.quiet.danger {
+		border-color: var(--error);
+		color: var(--error);
 	}
 	.intro {
 		margin-top: -4px;

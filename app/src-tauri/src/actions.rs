@@ -180,8 +180,17 @@ fn run(app: &AppHandle, slot: u8, window: WindowHandle, selection: Option<String
         app,
         json!({ "kind": "action_started", "id": id, "slot": slot, "name": action.name, "output": action.output }),
     );
-    let command =
-        json!({ "type": "run_action", "id": id, "action": action, "selection": selection });
+    // Rewriting actions write in the voice profile for the app the text came from.
+    let voice_profile = settings
+        .voice_profiles
+        .for_app(platform::process_name(window).as_deref());
+    let command = json!({
+        "type": "run_action",
+        "id": id,
+        "action": action,
+        "selection": selection,
+        "voiceProfile": voice_profile,
+    });
     if let Err(message) = app.state::<engine::Engine>().send(&command) {
         actions.forget(&id);
         emit_ui(

@@ -78,6 +78,7 @@ export function createMockShell(): ShellImpl {
 	if (hasKey) {
 		settings = {
 			...settings,
+			voiceProfiles: { default: "casual", byApp: { "outlook.exe": "work" } },
 			provider: { kind: "catalog", id: "anthropic" },
 			main: { id: "claude-sonnet-4-5", thinking: (params.get("thinking") as ThinkingLevel | null) ?? "medium" },
 		};
@@ -121,7 +122,10 @@ export function createMockShell(): ShellImpl {
 	};
 
 	const handleSend = (message: Command) => {
-		if (message.type === "prompt") stream(message.id);
+		if (message.type === "prompt") {
+			if (/\bremember\b/i.test(message.text)) memoryReply(message.id);
+			else stream(message.id);
+		}
 		if (message.type === "abort" && streaming) {
 			timers.forEach(clearTimeout);
 			timers = [];
@@ -151,9 +155,40 @@ export function createMockShell(): ShellImpl {
 				return MODELS;
 			case "test_connection":
 				return { ok: true, supportsImages: true };
+			case "voice_list":
+				return [
+					{ name: "casual", summary: "Casual: short, warm, lowercase is fine" },
+					{ name: "work", summary: "Work: clear, polite, no slang" },
+				];
+			case "memory_forget_all":
+				return { removed: 4 };
+			case "voice_proposal_decision":
+				return { written: message.accept };
 			default:
 				return undefined;
 		}
+	};
+
+	/** A reply that saves a memory and proposes a voice change ("remember …" prompts). */
+	const memoryReply = (id: string) => {
+		emit("engine", { type: "thinking", id });
+		timers.push(
+			setTimeout(() => {
+				emit("engine", { type: "memory_saved", id, saveId: "s-1", title: "Signs off work emails with “Cheers, Sam”" });
+				emit("engine", {
+					type: "voice_proposal",
+					id,
+					proposalId: "v-1",
+					profile: "work",
+					current: "# Work\n- Clear and polite.\n- No slang.",
+					content: "# Work\n- Clear and polite.\n- No slang.\n- Sign off with “Cheers, Sam”.",
+					reason: "add your sign-off.",
+				});
+				const text = "Noted. Want me to add it to your work voice too?";
+				emit("engine", { type: "text_delta", id, delta: text });
+				emit("engine", { type: "reply_end", id, text, aborted: false, mood: "happy" });
+			}, 600),
+		);
 	};
 
 	/** What the shell does for an action hotkey (SPEC §6), with a canned result. */

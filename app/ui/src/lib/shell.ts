@@ -98,6 +98,8 @@ export const shell = {
 	contextMenu: () => invoke<void>("context_menu"),
 	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),
 	hotkeysAltGr: () => invoke<AltGrReport>("hotkeys_altgr"),
+	/** Open About me in the default editor, or the memory or voice folder. */
+	openDataPath: (what: "about_me" | "memory" | "voice") => invoke<void>("open_data_path", { what }),
 	nowLine: () => invoke<NowLine>("now_line"),
 	screenshot: () => invoke<ImageAttachment>("screenshot"),
 	/** Open an http(s) URL in the default browser. */

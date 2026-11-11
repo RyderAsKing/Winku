@@ -111,6 +111,32 @@ pub fn hotkeys_altgr(store: State<'_, Store>) -> AltGrReport {
     hotkeys::altgr_report(&store.get())
 }
 
+/// Opens About me in the default editor, or the memory or voice folder (SPEC §9: plain
+/// markdown, editable anywhere). Creates the file or folder first if it doesn't exist yet.
+#[tauri::command]
+pub fn open_data_path(app: AppHandle, store: State<'_, Store>, what: String) -> Result<(), String> {
+    let path = match what.as_str() {
+        "about_me" => {
+            let file = store.data_dir.join("about-me.md");
+            if !file.exists() {
+                std::fs::create_dir_all(&store.data_dir).map_err(|e| e.to_string())?;
+                std::fs::write(&file, "").map_err(|e| e.to_string())?;
+            }
+            file
+        }
+        "memory" | "voice" => {
+            let dir = store.data_dir.join(&what);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            dir
+        }
+        other => return Err(format!("unknown data path {other:?}")),
+    };
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Opens a link from a reply in the default browser. Only http(s): a model-written link must not
 /// launch a local file or another URL scheme handler.
 #[tauri::command]

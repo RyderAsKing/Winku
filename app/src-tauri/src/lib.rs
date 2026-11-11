@@ -57,6 +57,7 @@ pub fn run() {
             commands::hotkeys_status,
             commands::hotkeys_altgr,
             commands::open_external,
+            commands::open_data_path,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Winku")

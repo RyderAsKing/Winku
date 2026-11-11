@@ -29,6 +29,16 @@ export interface Reply {
 	tools: LiveTool[];
 	error?: { kind: ErrorKind | "action"; message: string };
 	saved?: { saveId: string; title: string; undone: boolean }[];
+	proposals?: VoiceProposal[];
+}
+
+export interface VoiceProposal {
+	proposalId: string;
+	profile: string;
+	content: string;
+	current: string;
+	reason: string;
+	decided?: "accepted" | "dismissed";
 }
 
 export interface Toast {
@@ -189,6 +199,12 @@ export class MainState {
 
 	async undoMemory(saveId: string) {
 		await shell.send({ type: "memory_undo", saveId });
+	}
+
+	/** Accept or dismiss a proposed change to a voice profile (SPEC §9). */
+	async decideProposal(proposal: VoiceProposal, accept: boolean) {
+		await shell.call({ type: "voice_proposal_decision", proposalId: proposal.proposalId, accept });
+		proposal.decided = accept ? "accepted" : "dismissed";
 	}
 
 	showToast(text: string, action?: Toast["action"]) {
@@ -396,6 +412,17 @@ export class MainState {
 				this.eyes.noted();
 				if (reply) reply.saved = [...(reply.saved ?? []), { saveId: message.saveId, title: message.title, undone: false }];
 				break;
+			case "voice_proposal": {
+				const proposal: VoiceProposal = {
+					proposalId: message.proposalId,
+					profile: message.profile,
+					content: message.content,
+					current: message.current,
+					reason: message.reason,
+				};
+				if (reply) reply.proposals = [...(reply.proposals ?? []), proposal];
+				break;
+			}
 			case "memory_undone":
 				for (const saved of reply?.saved ?? []) if (saved.saveId === message.saveId) saved.undone = true;
 				break;

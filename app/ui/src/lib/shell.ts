@@ -57,6 +57,8 @@ export interface Shape {
 	y: number;
 	w: number;
 	h: number;
+	/** Corner radius, logical px. The window region is rounded to match on Windows. */
+	r: number;
 }
 
 export type EngineMessage = EngineEvent | EngineRequest;

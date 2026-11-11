@@ -3,6 +3,7 @@
 	// into the bar in place, and replies show in a bubble under it, or over it low on the screen.
 	import { cubicIn, cubicOut } from "svelte/easing";
 	import { fly } from "svelte/transition";
+	import { follow } from "../lib/follow.ts";
 	import { ms } from "../lib/motion.ts";
 	import "../lib/theme.css";
 	import Connect from "./Connect.svelte";
@@ -114,7 +115,7 @@
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
-					<div class="bubble pad scroll" class:resting={!open}><ReplyView {app} reply={app.reply} /></div>
+					<div class="bubble pad scroll" class:resting={!open} use:follow><ReplyView {app} reply={app.reply} /></div>
 				{/if}
 				{#if app.toast}
 					<div class="bubble toast" role="status">
@@ -188,7 +189,7 @@
 	.bubble {
 		min-height: 0;
 		border: 1px solid var(--line);
-		border-radius: 18px;
+		border-radius: 18px; /* BUBBLE_RADIUS in stage.ts */
 		background: rgb(14 16 21 / 0.88);
 		overflow-wrap: anywhere;
 	}

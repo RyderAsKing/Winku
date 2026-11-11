@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev
+
+      - name: Engine typecheck and tests
+        working-directory: engine
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
+
+      - name: UI check and build, stage the engine sidecar
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun run ui:build
+          bun run engine
+
+      - name: Shell fmt, clippy, tests
+        working-directory: app/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Engine tests (source)
+        working-directory: engine
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
+
+      - name: Engine tests (compiled exe)
+        working-directory: engine
+        shell: pwsh
+        run: |
+          bun run build
+          Get-Item dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
+          $env:WINKU_ENGINE_BIN = (Resolve-Path dist/winku-engine.exe).Path
+          bun test
+
+      - name: Build app (release, no installer)
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          bun run engine
+          bunx tauri build --no-bundle
+
+      - name: Shell tests
+        working-directory: app/src-tauri
+        run: cargo test
+
+      - name: Smoke test and idle memory
+        working-directory: app
+        shell: pwsh
+        run: ./scripts/measure-memory.ps1

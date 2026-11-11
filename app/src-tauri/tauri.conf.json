@@ -14,9 +14,17 @@
       {
         "label": "main",
         "title": "Winku",
-        "width": 560,
-        "height": 360,
-        "resizable": true
+        "url": "index.html",
+        "width": 140,
+        "height": 84,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false
       }
     ],
     "security": {

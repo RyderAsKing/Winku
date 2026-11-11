@@ -57,6 +57,28 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 	return (await impl).listen<T>(event, handler);
 }
 
+export interface HotkeyFailure {
+	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking" or "leaderKey". */
+	name: string;
+	binding: string;
+	error: string;
+}
+
+export interface HotkeysStatus {
+	failed: HotkeyFailure[];
+}
+
+export interface AltGrReport {
+	/** null when the platform can't tell (non-Windows). */
+	altGr: boolean | null;
+	/** Keys that type a character with Ctrl+Alt in the current layout. */
+	keys: string[];
+	/** Settings fields of bindings that use Ctrl+Alt with one of those keys. */
+	conflicts: string[];
+	/** What to offer instead, "Ctrl+Shift". */
+	suggestion: string;
+}
+
 export const shell = {
 	send: (message: Command) => invoke<void>("engine_send", { message }),
 	call: <T>(message: CallMessage) => invoke<T>("engine_call", { message }),
@@ -67,9 +89,12 @@ export const shell = {
 	secretClear: () => invoke<void>("secret_clear"),
 	secretPresent: () => invoke<boolean>("secret_present"),
 	windowMode: (mode: WindowMode) => invoke<void>("window_mode", { mode }),
+	/** Whole bar height in logical px (72 input row + reply); the shell clamps it to 72…432. */
 	windowBarHeight: (height: number) => invoke<void>("window_bar_height", { height }),
 	openWindow: (name: "settings" | "history") => invoke<void>("open_window", { name }),
 	contextMenu: () => invoke<void>("context_menu"),
+	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),
+	hotkeysAltGr: () => invoke<AltGrReport>("hotkeys_altgr"),
 	nowLine: () => invoke<NowLine>("now_line"),
 	screenshot: () => invoke<ImageAttachment>("screenshot"),
 	/** Open an http(s) URL in the default browser. */
@@ -93,6 +118,8 @@ export const shell = {
 export const onEngine = (handler: (message: EngineMessage) => void) => listen<EngineMessage>("engine", handler);
 export const onUi = (handler: (event: UiEvent) => void) => listen<UiEvent>("ui", handler);
 export const onSettingsChanged = (handler: (settings: Settings) => void) => listen<Settings>("settings_changed", handler);
+
+export const onHotkeysStatus = (handler: (status: HotkeysStatus) => void) => listen<HotkeysStatus>("hotkeys_status", handler);
 
 let nextId = 0;
 /** Unique id for prompts and actions sent from this window. */

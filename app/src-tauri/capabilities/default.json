@@ -1,7 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: listen to engine events",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Main, Settings and History windows: shell commands, engine and ui events, window dragging",
+  "windows": [
+    "main",
+    "settings",
+    "history"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-set-focus"
+  ]
 }

@@ -339,6 +339,8 @@ export class MainState {
 				this.eyes.setActivity("speaking");
 				break;
 			case "tool_start":
+				// A memory save shows as its own "Saved to memory" row instead.
+				if (message.name === "memory_save") break;
 				reply?.tools.push({ toolCallId: message.toolCallId, name: message.name, summary: message.summary, ok: null });
 				this.eyes.setActivity("thinking");
 				break;

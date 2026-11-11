@@ -1,8 +1,8 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HistoryEntry, ModelInfo, OutboundMessage, ProviderInfo, TranscriptItem } from "../src/protocol.ts";
-import { deltas, EngineProcess } from "./harness.ts";
+import { deltas, EngineProcess, removeTempDirs } from "./harness.ts";
 
 const running: EngineProcess[] = [];
 function start(): EngineProcess {
@@ -10,6 +10,7 @@ function start(): EngineProcess {
 	running.push(engine);
 	return engine;
 }
+afterAll(removeTempDirs);
 afterEach(async () => {
 	for (const engine of running.splice(0)) {
 		try {
@@ -138,19 +139,19 @@ test("appends the now line to the user message and passes images through", async
 test("reports tool calls generically", async () => {
 	const engine = start();
 	await engine.configure({
-		faux: { replies: [{ text: "Let me look.", toolCalls: [{ name: "look_at_screen", arguments: { why: "check" } }] }, { text: "Done. <mood:neutral>" }] },
+		faux: { replies: [{ text: "Let me look.", toolCalls: [{ name: "no_such_tool", arguments: { why: "check" } }] }, { text: "Done. <mood:neutral>" }] },
 	});
 	const { end, records } = await engine.prompt("look");
 	const toolStart = records.find((r) => r.type === "tool_start");
 	const toolEnd = records.find((r) => r.type === "tool_end");
-	expect(toolStart).toMatchObject({ name: "look_at_screen", summary: "look_at_screen: check" });
-	// No tools are registered in step 2, so the call fails.
-	expect(toolEnd).toMatchObject({ ok: false, summary: "look_at_screen: check" });
+	expect(toolStart).toMatchObject({ name: "no_such_tool", summary: "check" });
+	// An unknown tool fails; the summary falls back to its first string argument.
+	expect(toolEnd).toMatchObject({ ok: false, summary: "check" });
 	expect(end).toMatchObject({ text: "Let me look.\n\nDone.", mood: "neutral" });
 	expect(deltas(records)).toBe(end.text);
 	const transcript = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
 	expect(transcript.map((t) => t.kind)).toEqual(["user", "assistant", "tool", "assistant"]);
-	expect(transcript[2]).toMatchObject({ name: "look_at_screen", ok: false });
+	expect(transcript[2]).toMatchObject({ name: "no_such_tool", summary: "check", ok: false });
 	await engine.shutdown();
 }, T);
 

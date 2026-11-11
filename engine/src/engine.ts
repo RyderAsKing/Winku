@@ -2,6 +2,7 @@
 // The AgentSession is a view over the thread's SessionManager; it is rebuilt (and its events
 // re-attached) whenever the provider, model or current thread changes.
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
@@ -18,12 +19,41 @@ import { ensureStarterFiles, MemoryStore, memoryTools } from "./memory.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
 import { Replies } from "./reply.ts";
+import type { ShellRequests } from "./requests.ts";
 import { clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
 import { Thread } from "./thread.ts";
+import { installImageDrop } from "./tools/images.ts";
+import { activeToolNames, type AnyTool, agentTools } from "./tools/index.ts";
+import { type PermissionPolicy, policyFrom } from "./tools/permission.ts";
+import { hasRipgrep, localShells } from "./tools/shell.ts";
 import { VoiceProfiles, voiceTools } from "./voice.ts";
 
 /** configure as the engine accepts it: the protocol command plus a test-only faux script. */
 export type EngineConfig = ConfigureCommand & { faux?: FauxOptions };
+
+/** configure fields that update in place, without reopening the session (so a running reply carries on). */
+const LIVE_FIELDS = ["id", "type", "askBeforeRunning", "alwaysAllow", "searchApiKey"] as const;
+
+/** JSON with object keys sorted at every level, so key order doesn't matter. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+	if (value && typeof value === "object")
+		return `{${Object.keys(value)
+			.filter((k) => (value as Record<string, unknown>)[k] !== undefined)
+			.sort()
+			.map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`)
+			.join(",")}}`;
+	return JSON.stringify(value) ?? "null";
+}
+
+function sameExceptLive(a: EngineConfig, b: EngineConfig): boolean {
+	const strip = (c: EngineConfig) => {
+		const copy: Record<string, unknown> = { ...c };
+		for (const key of LIVE_FIELDS) delete copy[key];
+		return canonical(copy);
+	};
+	return strip(a) === strip(b);
+}
 
 function isolatedResourceLoader(getSystemPrompt: () => string): ResourceLoader {
 	return {
@@ -55,15 +85,25 @@ export class Engine {
 	private quick: ModelChoice | undefined;
 	private memory: MemoryStore | undefined;
 	private voice: VoiceProfiles | undefined;
+	/** Ask before running + Always allow; read by the permission gate on every call. */
+	private policy: PermissionPolicy = policyFrom(false, []);
+	private searchApiKey: string | undefined;
+	private agentToolList: AnyTool[] = [];
+	/** The tool set changed (search key) while a reply ran; applied once it settles. */
+	private toolsPending = false;
 	readonly replies: Replies;
 	readonly actions: Actions;
 
-	constructor(private readonly emit: (event: Event) => void) {
+	constructor(
+		private readonly emit: (event: Event) => void,
+		private readonly requests: ShellRequests,
+	) {
 		this.actions = new Actions(emit);
 		this.replies = new Replies(
 			emit,
 			() => {
 				this.emitContext();
+				this.flushTools();
 				void this.flushReload();
 			},
 			(ok) => {
@@ -107,7 +147,21 @@ export class Engine {
 		return this.thread.frozenPrompt() ?? this.freshPrompt();
 	}
 
+	private applyLive(config: EngineConfig): void {
+		this.policy = policyFrom(!!config.askBeforeRunning, config.alwaysAllow ?? []);
+		this.searchApiKey = config.searchApiKey || undefined;
+	}
+
 	async configure(config: EngineConfig): Promise<void> {
+		// Only tool settings changed: update in place, don't disturb a running reply or the thread.
+		if (this.session && this.config && sameExceptLive(this.config, config)) {
+			this.config = config;
+			this.applyLive(config);
+			this.toolsPending = true;
+			this.flushTools();
+			this.emit(this.readyEvent());
+			return;
+		}
 		// Validate everything before touching the running session.
 		const mainId = config.main.id;
 		const quickId = config.quick?.id;
@@ -122,6 +176,7 @@ export class Engine {
 
 		await this.stop();
 		this.config = config;
+		this.applyLive(config);
 		this.runtime = runtime;
 		this.model = model;
 		this.quick = config.quick;
@@ -171,13 +226,38 @@ export class Engine {
 			}),
 			sessionManager: this.thread.manager,
 			customTools: this.tools(),
-			tools: ["memory_save", "memory_read", "voice_propose"],
+			tools: [...this.agentToolList.map((t) => t.name), "memory_save", "memory_read", "voice_propose"],
 		});
+		installImageDrop(session);
 		this.session = session;
 		this.unsubscribe = this.replies.attach(session);
+		// Set the loadout explicitly: a thread from before step 6 recorded only the memory tools.
+		this.toolsPending = true;
+		this.flushTools();
+	}
+
+	/** Activate the agent tools (web_search only with a search key), once nothing is running. */
+	private flushTools(): void {
+		const session = this.session;
+		if (!this.toolsPending || !session || session.isStreaming || session.isCompacting) return;
+		this.toolsPending = false;
+		const wanted = [...activeToolNames(this.agentToolList, !!this.searchApiKey), "memory_save", "memory_read", "voice_propose"];
+		const current = session.getActiveToolNames();
+		if (current.length === wanted.length && wanted.every((name) => current.includes(name))) return;
+		session.setActiveToolsByName(wanted);
 	}
 
 	private tools() {
+		this.agentToolList = agentTools({
+			home: homedir(),
+			shells: localShells(),
+			ripgrep: hasRipgrep(),
+			policy: () => this.policy,
+			requests: this.requests,
+			replyId: () => this.replies.activeId,
+			supportsImages: () => modelInfo(this.model).supportsImages,
+			searchKey: () => this.searchApiKey,
+		});
 		const memory = memoryTools(
 			() => this.requireMemory(),
 			() => this.thread.sessionId,
@@ -193,7 +273,7 @@ export class Engine {
 				this.emit({ type: "voice_proposal", ...(id ? { id } : {}), ...proposal });
 			},
 		);
-		return [...memory, ...voice];
+		return [...this.agentToolList, ...memory, ...voice];
 	}
 
 	undoMemory(saveId: string): void {

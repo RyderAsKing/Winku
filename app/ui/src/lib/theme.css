@@ -1,0 +1,124 @@
+/* Winku design tokens. The face is always dark, whatever the OS theme (SPEC §4). */
+:root {
+	color-scheme: dark;
+	--face-hi: #181b22;
+	--face-lo: #07080c;
+	--panel: #0c0e13;
+	--panel-raised: #151820;
+	--line: rgb(255 255 255 / 0.07);
+	--line-strong: rgb(255 255 255 / 0.14);
+	--text: #f4f1ea;
+	--muted: #9a9488;
+	--faint: #6b675f;
+	--accent: #5ef6f0;
+	--error: #ff8b82;
+	--focus: rgb(94 246 240 / 0.55);
+	--radius-bar: 36px;
+	--font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+	--mono: "Cascadia Code", "Cascadia Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+	font-family: var(--font);
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--text);
+	-webkit-font-smoothing: antialiased;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+	margin: 0;
+	height: 100%;
+}
+
+h1,
+h2,
+h3,
+p {
+	text-wrap: pretty;
+}
+h1,
+h2,
+h3 {
+	text-wrap: balance;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.mono {
+	font-family: var(--mono);
+	font-size: 11px;
+	letter-spacing: 0.01em;
+}
+
+/* Rendered model markdown */
+.md > :first-child {
+	margin-top: 0;
+}
+.md > :last-child {
+	margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol {
+	margin: 0 0 0.6em;
+}
+.md ul,
+.md ol {
+	padding-left: 1.3em;
+}
+.md a {
+	color: var(--accent);
+	text-underline-offset: 0.2em;
+}
+.md code {
+	font-family: var(--mono);
+	font-size: 0.9em;
+	background: rgb(255 255 255 / 0.06);
+	padding: 0.1em 0.35em;
+	border-radius: 5px;
+}
+.md pre {
+	position: relative;
+	margin: 0.4em 0 0.7em;
+	padding: 10px 12px;
+	background: #07080c;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	overflow-x: auto;
+}
+.md pre code {
+	background: none;
+	padding: 0;
+	font-size: 12px;
+	line-height: 1.55;
+}
+.md blockquote {
+	margin: 0 0 0.6em;
+	padding-left: 10px;
+	border-left: 2px solid var(--line-strong);
+	color: var(--muted);
+}
+.md table {
+	border-collapse: collapse;
+	margin-bottom: 0.6em;
+}
+.md th,
+.md td {
+	border: 1px solid var(--line);
+	padding: 3px 8px;
+}

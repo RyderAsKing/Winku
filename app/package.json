@@ -5,11 +5,24 @@
   "license": "MIT",
   "scripts": {
     "engine": "bun run scripts/stage-engine.ts",
+    "ui:dev": "vite",
+    "ui:build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "dev": "bun run engine && tauri dev",
     "build": "bun run engine && tauri build",
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.12.4"
-  }
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@tauri-apps/cli": "2.12.4",
+    "@tsconfig/svelte": "5.0.8",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4"
+  },
+  "type": "module"
 }

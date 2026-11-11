@@ -4,10 +4,12 @@
   "version": "0.0.1",
   "identifier": "app.winku",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "bun run ui:dev",
+    "beforeBuildCommand": "bun run ui:build"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
@@ -23,8 +25,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "externalBin": ["binaries/winku-engine"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.png"]
+    "targets": [
+      "nsis"
+    ],
+    "externalBin": [
+      "binaries/winku-engine"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
   }
 }

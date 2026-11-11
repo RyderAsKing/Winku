@@ -372,6 +372,35 @@ pub fn is_own_window(window: WindowHandle) -> bool {
     }
 }
 
+/// Class names of `window` and of the window with keyboard focus in its thread (a browser's
+/// render widget, or a WebView2 inside another app's frame).
+pub fn input_window_classes(window: WindowHandle) -> Vec<String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GUITHREADINFO};
+
+    let class_of = |hwnd: HWND| {
+        let mut class = [0u16; 128];
+        // SAFETY: the buffer length is passed with the pointer; a stale HWND returns 0.
+        let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
+        (len > 0).then(|| String::from_utf16_lossy(&class[..len as usize]))
+    };
+    let hwnd = window.0 as HWND;
+    let mut classes: Vec<String> = class_of(hwnd).into_iter().collect();
+    // SAFETY: GUITHREADINFO is plain data sized by cbSize; the thread id may be stale.
+    unsafe {
+        let thread = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+        let mut info: GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if thread != 0
+            && GetGUIThreadInfo(thread, &mut info) != 0
+            && !info.hwndFocus.is_null()
+            && info.hwndFocus != hwnd
+        {
+            classes.extend(class_of(info.hwndFocus));
+        }
+    }
+    classes
+}
+
 pub fn window_title(window: WindowHandle) -> Option<String> {
     let hwnd = window.0 as HWND;
     // SAFETY: the buffer length is passed with the pointer.

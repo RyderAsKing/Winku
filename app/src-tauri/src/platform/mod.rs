@@ -39,6 +39,22 @@ pub(crate) fn crop(image: RawImage, x: i32, y: i32, w: i32, h: i32) -> RawImage 
     }
 }
 
+/// Chromium (Chrome, Edge, Electron apps such as VS Code, Slack and T3 Code, WebView2 hosts)
+/// builds its full accessibility tree the first time a UI Automation or MSAA client asks one
+/// of its windows for anything, and keeps it until the app restarts. From then on every page
+/// change also updates that tree, which makes busy pages and editors noticeably slower. True
+/// when `classes` (a window and its focused child) include a Chromium frame
+/// (`Chrome_WidgetWin_*`) or render widget (`Chrome_RenderWidgetHostHWND`).
+pub fn uia_switches_on_accessibility(classes: &[String]) -> bool {
+    classes.iter().any(|c| c.starts_with("Chrome_"))
+}
+
+/// Whether reading the selection of `window` through UI Automation is free of side effects on
+/// the app (see `uia_switches_on_accessibility`).
+pub fn uia_is_safe(window: WindowHandle) -> bool {
+    !uia_switches_on_accessibility(&input_window_classes(window))
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -77,5 +93,30 @@ mod crop_tests {
         assert_eq!(crop(image(4, 3), 3, 0, 2, 2).width, 4);
         assert_eq!(crop(image(4, 3), -1, 0, 2, 2).width, 4);
         assert_eq!(crop(image(4, 3), 0, 0, 0, 2).width, 4);
+    }
+}
+
+#[cfg(test)]
+mod uia_tests {
+    use super::uia_switches_on_accessibility;
+
+    #[test]
+    fn no_uia_selection_in_chromium_windows() {
+        let classes = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(uia_switches_on_accessibility(&classes(&[
+            "Chrome_WidgetWin_1"
+        ])));
+        assert!(uia_switches_on_accessibility(&classes(&[
+            "Olk Host",
+            "Chrome_RenderWidgetHostHWND"
+        ])));
+        assert!(!uia_switches_on_accessibility(&classes(&[
+            "Notepad",
+            "RichEditD2DPT"
+        ])));
+        assert!(!uia_switches_on_accessibility(&classes(&[
+            "OpusApp", "_WwG"
+        ])));
+        assert!(!uia_switches_on_accessibility(&[]));
     }
 }

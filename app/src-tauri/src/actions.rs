@@ -126,7 +126,7 @@ fn start_capture(app: &AppHandle, want: Want) {
     let app = app.clone();
     std::thread::spawn(move || {
         platform::wait_for_modifiers_released(MODIFIER_TIMEOUT);
-        let selection = capture_selection();
+        let selection = capture_selection(window);
         app.state::<Actions>()
             .capturing
             .store(false, Ordering::SeqCst);
@@ -140,9 +140,12 @@ fn start_capture(app: &AppHandle, want: Want) {
     });
 }
 
-/// UI Automation first, then a simulated copy. Whitespace-only counts as nothing.
-fn capture_selection() -> Option<String> {
-    platform::selection_via_uia()
+/// UI Automation first (skipped in Chromium windows, see `platform::uia_is_safe`), then a
+/// simulated copy. Whitespace-only counts as nothing.
+fn capture_selection(window: WindowHandle) -> Option<String> {
+    platform::uia_is_safe(window)
+        .then(platform::selection_via_uia)
+        .flatten()
         .filter(|s| !s.trim().is_empty())
         .or_else(platform::selection_via_copy)
         .filter(|s| !s.trim().is_empty())

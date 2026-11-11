@@ -215,12 +215,14 @@ impl NowState {
 
 /// Notes the foreground window as the bar is about to be shown. Winku's own windows are
 /// ignored (the previous snapshot stays). App and title are read now; the selection (UI
-/// Automation only, never a simulated copy) on a worker thread so the bar isn't delayed.
+/// Automation only, never a simulated copy) on a worker thread so the bar isn't delayed, and
+/// not at all in Chromium windows (`platform::uia_is_safe`).
 pub fn note_summon(app: &AppHandle) {
     let window = platform::foreground_window();
     if platform::is_own_window(window) || window == WindowHandle(0) {
         return;
     }
+    let skip_selection = !platform::uia_is_safe(window);
     let state = app.state::<NowState>();
     let generation = {
         let mut snap = state.lock();
@@ -234,10 +236,14 @@ pub fn note_summon(app: &AppHandle) {
             platform::window_title(window),
             None,
         );
-        snap.reading = true;
+        snap.reading = !skip_selection;
         snap.at = Some(Instant::now());
         snap.generation
     };
+    if skip_selection {
+        state.ready.notify_all();
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
         let selection = platform::selection_via_uia();

@@ -45,6 +45,11 @@ pub fn is_own_window(_window: WindowHandle) -> bool {
     false
 }
 
+/// Class names of a window and of its focused child.
+pub fn input_window_classes(_window: WindowHandle) -> Vec<String> {
+    Vec::new()
+}
+
 pub fn window_title(_window: WindowHandle) -> Option<String> {
     None
 }

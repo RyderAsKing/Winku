@@ -199,8 +199,14 @@ pub fn on_engine_record(app: &AppHandle, record: &Value) {
     };
     let app = app.clone();
     std::thread::spawn(move || {
-        platform::focus_window(paste.action.window);
-        if let Err(message) = platform::paste_text(&paste.text) {
+        // Never paste into a different window than the one the text came from: if it can't be
+        // brought back to the front, the UI shows the result in the bar instead.
+        let pasted = if platform::focus_window(paste.action.window) {
+            platform::paste_text(&paste.text)
+        } else {
+            Err("Couldn't get back to the window to paste. Here's the result.".into())
+        };
+        if let Err(message) = pasted {
             emit_ui(
                 &app,
                 json!({

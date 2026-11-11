@@ -1,0 +1,149 @@
+// Screenshots of the UI running on the browser mock shell (ui/src/lib/mock.ts): no Tauri,
+// no engine, no keys. Start the UI first:  bun run ui:dev   (serves http://127.0.0.1:5173)
+//
+//   bun run screenshots [before|after] [case …]
+//   BASE_URL=http://127.0.0.1:5173 bun run screenshots after bar reply
+//
+// Output: app/.screenshots/<label>/<case>-<viewport>.png
+// Winku is a desktop app, so the two sizes are a normal and a high-DPI display, not mobile.
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { chromium } from "playwright";
+
+const baseURL = process.env.BASE_URL || "http://127.0.0.1:5173";
+const label = process.argv[2] || "after";
+const selected = process.argv.slice(3);
+
+const summon = async (page) => {
+	await page.getByRole("button", { name: "Open Winku" }).click();
+	await page.getByRole("textbox", { name: "Message" }).waitFor();
+};
+const ui = (page, event) => page.evaluate((e) => window.__winkuMock.ui(e), event);
+const engine = (page, event) => page.evaluate((e) => window.__winkuMock.engine(e), event);
+
+const cases = [
+	{ name: "pill", path: "/", ready: "role=button[name='Open Winku']" },
+	{ name: "pill-full-context", path: "/?ctx=0.95&thinking=high", ready: "role=button[name='Open Winku']" },
+	{ name: "bar", path: "/", ready: "text=23% ctx", prepare: summon },
+	{
+		name: "reply",
+		path: "/",
+		ready: "text=Paste it into Paint",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400); // let reply_end land
+		},
+	},
+	{
+		name: "error",
+		path: "/",
+		ready: "role=alert",
+		prepare: async (page) => {
+			await summon(page);
+			await engine(page, { type: "error", errorKind: "auth", message: "Anthropic rejected the API key (401)." });
+		},
+	},
+	{
+		name: "cleared",
+		path: "/",
+		ready: "text=Context cleared",
+		prepare: async (page) => {
+			await summon(page);
+			await ui(page, { kind: "clear" });
+		},
+	},
+	{
+		name: "chips",
+		path: "/",
+		ready: "text=Selection, 9 words",
+		prepare: async (page) => {
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+		},
+	},
+	{
+		name: "transcript",
+		path: "/",
+		ready: "text=Earlier conversation summarized",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Control+j");
+		},
+	},
+	{
+		name: "connect",
+		path: "/?connect=1",
+		ready: "text=Connect a model",
+		prepare: async (page) => {
+			await summon(page);
+			await page.waitForFunction(() => document.querySelector("select")?.value);
+		},
+	},
+	{ name: "settings", path: "/settings.html", size: { width: 680, height: 1040 }, ready: "text=Leader key" },
+	{
+		name: "history",
+		path: "/history.html",
+		size: { width: 760, height: 560 },
+		ready: "role=button[name='Restore as current']",
+		prepare: async (page) => {
+			await page.getByText("Draft a polite reply").click();
+		},
+	},
+];
+
+const viewports = [
+	{ name: "desktop", width: 1280, height: 800, deviceScaleFactor: 1 },
+	{ name: "hidpi", width: 1280, height: 800, deviceScaleFactor: 2 },
+];
+
+if (!/^[a-zA-Z0-9_-]+$/.test(label)) throw new Error("Use a simple capture label, e.g. before or after.");
+for (const name of selected) {
+	if (!cases.some((c) => c.name === name)) throw new Error(`Unknown case: ${name}. Known: ${cases.map((c) => c.name).join(", ")}`);
+}
+const targets = cases.filter((c) => selected.length === 0 || selected.includes(c.name));
+const out = path.resolve(import.meta.dirname, "..", ".screenshots", label);
+await mkdir(out, { recursive: true });
+
+const browser = await chromium.launch({ headless: true, ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}) });
+try {
+	for (const item of targets) {
+		for (const vp of viewports) {
+			const context = await browser.newContext({
+				viewport: item.size ?? { width: vp.width, height: vp.height },
+				deviceScaleFactor: vp.deviceScaleFactor,
+				colorScheme: "dark",
+				reducedMotion: "reduce",
+				locale: "en-US",
+				timezoneId: "UTC",
+			});
+			try {
+				context.setDefaultTimeout(15000);
+				const page = await context.newPage();
+				const response = await page.goto(new URL(item.path, baseURL).href, { waitUntil: "domcontentloaded" });
+				if (!response?.ok()) throw new Error(`${item.name}: HTTP ${response?.status() ?? "no response"}`);
+				await page.getByRole("button", { name: "Open Winku" }).or(page.locator("main")).first().waitFor();
+				if (item.prepare) await item.prepare(page);
+				await page.locator(item.ready).first().waitFor({ state: "visible" });
+				await page.evaluate(() => document.fonts.ready);
+				const file = path.join(out, `${item.name}-${vp.name}.png`);
+				// Clip to the window plus a margin of stand-in desktop; the rest of the viewport is empty.
+				const box = item.size ? null : await page.locator(".window").first().boundingBox();
+				const m = 40;
+				const clip = box && {
+					x: Math.max(0, box.x - m),
+					y: Math.max(0, box.y - m),
+					width: Math.min(vp.width, box.width + 2 * m),
+					height: Math.min(vp.height, box.height + 2 * m),
+				};
+				await page.screenshot({ path: file, animations: "disabled", caret: "hide", ...(clip ? { clip } : {}) });
+				console.log(file);
+			} finally {
+				await context.close();
+			}
+		}
+	}
+} finally {
+	await browser.close();
+}

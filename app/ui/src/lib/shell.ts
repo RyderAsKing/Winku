@@ -1,6 +1,5 @@
 // Typed wrappers for the shell's commands and events. See docs/ARCHITECTURE.md, "Shell ↔ UI contract".
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+// Outside Tauri (plain `vite` in a browser, used for UI work and screenshots) a mock shell is used.
 import type {
 	Command,
 	Event as EngineEvent,
@@ -12,6 +11,8 @@ import type {
 import type { Settings } from "./settings.ts";
 
 export type WindowMode = "pill" | "bar" | "transcript";
+
+export type MenuItem = "settings" | "history" | "ask_before_running" | "hide_eyes" | "pause_listening" | "quit";
 
 export type UiEvent =
 	| { kind: "summon" }
@@ -25,15 +26,40 @@ export type UiEvent =
 	| { kind: "talk_start" }
 	| { kind: "talk_level"; level: number }
 	| { kind: "talk_end"; text: string }
-	| { kind: "menu"; item: "settings" | "history" | "ask_before_running" | "hide_eyes" | "pause_listening" | "quit" }
+	| { kind: "menu"; item: MenuItem }
 	| { kind: "update_ready" };
 
-/** Commands with a Result. The shell assigns the id. */
-type CallCommand = Extract<Command, { id: string }> | Extract<Command, { id?: string }>;
+export type EngineMessage = EngineEvent | EngineRequest;
+type Unlisten = () => void;
+
+/** Commands that get a Result. The shell assigns the id. */
+export type CallMessage = Command extends infer C ? (C extends { id: string } | { id?: string } ? Omit<C, "id"> : never) : never;
+
+export interface ShellImpl {
+	invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+	listen<T>(event: string, handler: (payload: T) => void): Promise<Unlisten>;
+}
+
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const impl: Promise<ShellImpl> = isTauri
+	? Promise.all([import("@tauri-apps/api/core"), import("@tauri-apps/api/event")]).then(([core, event]) => ({
+			invoke: <T>(command: string, args?: Record<string, unknown>) => core.invoke<T>(command, args),
+			listen: <T>(name: string, handler: (payload: T) => void) => event.listen<T>(name, ({ payload }) => handler(payload)),
+		}))
+	: import("./mock.ts").then((m) => m.createMockShell());
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+	return (await impl).invoke<T>(command, args);
+}
+
+async function listen<T>(event: string, handler: (payload: T) => void): Promise<Unlisten> {
+	return (await impl).listen<T>(event, handler);
+}
 
 export const shell = {
 	send: (message: Command) => invoke<void>("engine_send", { message }),
-	call: <T>(message: Omit<CallCommand, "id">) => invoke<T>("engine_call", { message }),
+	call: <T>(message: CallMessage) => invoke<T>("engine_call", { message }),
 	respond: (response: EngineResponse) => invoke<void>("engine_respond", { response }),
 	settingsGet: () => invoke<Settings>("settings_get"),
 	settingsSet: (settings: Settings) => invoke<Settings>("settings_set", { settings }),
@@ -46,15 +72,31 @@ export const shell = {
 	contextMenu: () => invoke<void>("context_menu"),
 	nowLine: () => invoke<NowLine>("now_line"),
 	screenshot: () => invoke<ImageAttachment>("screenshot"),
+	/** Open an http(s) URL in the default browser. */
+	openExternal: (url: string) => invoke<void>("open_external", { url }),
 	speak: (text: string) => invoke<void>("speak", { text }),
 	stopSpeaking: () => invoke<void>("stop_speaking"),
+	/** Start dragging the current window (the resting pill). Needs core:window:allow-start-dragging. */
+	startDrag: async () => {
+		if (!isTauri) return;
+		const { getCurrentWindow } = await import("@tauri-apps/api/window");
+		await getCurrentWindow().startDragging();
+	},
+	/** Close the current window (Settings, History). */
+	closeWindow: async () => {
+		if (!isTauri) return window.close();
+		const { getCurrentWindow } = await import("@tauri-apps/api/window");
+		await getCurrentWindow().close();
+	},
 };
 
-export const onEngine = (handler: (event: EngineEvent | EngineRequest) => void): Promise<UnlistenFn> =>
-	listen<EngineEvent | EngineRequest>("engine", ({ payload }) => handler(payload));
+export const onEngine = (handler: (message: EngineMessage) => void) => listen<EngineMessage>("engine", handler);
+export const onUi = (handler: (event: UiEvent) => void) => listen<UiEvent>("ui", handler);
+export const onSettingsChanged = (handler: (settings: Settings) => void) => listen<Settings>("settings_changed", handler);
 
-export const onUi = (handler: (event: UiEvent) => void): Promise<UnlistenFn> =>
-	listen<UiEvent>("ui", ({ payload }) => handler(payload));
-
-export const onSettingsChanged = (handler: (settings: Settings) => void): Promise<UnlistenFn> =>
-	listen<Settings>("settings_changed", ({ payload }) => handler(payload));
+let nextId = 0;
+/** Unique id for prompts and actions sent from this window. */
+export function newId(prefix: string): string {
+	nextId += 1;
+	return `${prefix}-${Date.now().toString(36)}-${nextId}`;
+}

@@ -46,6 +46,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `window_bar_height` | `{ height: number }` → `()` (bar grows as a reply streams; clamped) | 2 |
 | `open_window` | `{ name: "settings" \| "history" }` → `()` | 2 |
 | `context_menu` | `()` → `()` (native menu at the cursor) | 2 |
+| `open_external` | `{ url }` → `()`; http(s) only, opens the default browser | 2 |
 | `now_line` | `()` → `NowLine` captured when the bar was summoned | 6 |
 | `screenshot` | `()` → `ImageAttachment` of the window that was active before the bar | 6 |
 | `speak` / `stop_speaking` | `{ text }` / `()` | 7 |
@@ -170,7 +171,8 @@ app/ui/src/
 
 - Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index) get unit tests. Everything also runs against the compiled binary in CI.
 - Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing). Platform code is behind traits so the logic is testable on Linux.
-- UI: `svelte-check` and a Vite build. Screenshots come from the repo's screenshot command once it exists.
+- UI: `svelte-check` and a Vite build.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `settings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
 - CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory. A Linux job runs the same checks faster.
 
 ## Decisions not spelled out in the spec

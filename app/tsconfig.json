@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "types": []
   },
-  "include": ["ui/src/**/*.ts", "ui/src/**/*.svelte", "../engine/src/protocol.ts"]
+  "include": ["ui/src/**/*.d.ts", "ui/src/**/*.ts", "ui/src/**/*.svelte", "../engine/src/protocol.ts"]
 }

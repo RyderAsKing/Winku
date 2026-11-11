@@ -2,11 +2,13 @@
 //! docs/ARCHITECTURE.md (`app/ui/src/lib/shell.ts` is the TypeScript side).
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::capture::{self, ImageAttachment, NowLine, NowState};
 
 use crate::engine::{self, Engine};
 use crate::hotkeys::{self, AltGrReport, HotkeyState, Status};
-use crate::secrets;
+use crate::secrets::{self, Account};
 use crate::settings::{self, Settings, Store};
 use crate::window::{self, Mode, Page};
 
@@ -60,22 +62,42 @@ pub fn settings_set(
 }
 
 #[tauri::command]
-pub async fn secret_set(app: AppHandle, api_key: String) -> Result<(), String> {
-    secrets::set(api_key.trim())?;
+pub async fn secret_set(
+    app: AppHandle,
+    api_key: String,
+    account: Option<String>,
+) -> Result<(), String> {
+    secrets::set(Account::parse(account.as_deref())?, api_key.trim())?;
     engine::configure(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn secret_clear(app: AppHandle) -> Result<(), String> {
-    secrets::clear()?;
+pub async fn secret_clear(app: AppHandle, account: Option<String>) -> Result<(), String> {
+    secrets::clear(Account::parse(account.as_deref())?)?;
     engine::configure(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn secret_present() -> bool {
-    secrets::present()
+pub async fn secret_present(account: Option<String>) -> Result<bool, String> {
+    Ok(secrets::present(Account::parse(account.as_deref())?))
+}
+
+/// The now line noted when the bar was summoned (waits briefly for its selection).
+#[tauri::command]
+pub async fn now_line(app: AppHandle) -> NowLine {
+    tauri::async_runtime::spawn_blocking(move || app.state::<NowState>().now_line())
+        .await
+        .unwrap_or_default()
+}
+
+/// A screenshot of the window that was in front before the bar.
+#[tauri::command]
+pub async fn screenshot(app: AppHandle) -> Result<ImageAttachment, String> {
+    tauri::async_runtime::spawn_blocking(move || capture::screenshot(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

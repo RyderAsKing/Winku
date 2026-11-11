@@ -6,6 +6,14 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowHandle(#[allow(dead_code)] pub(crate) isize);
 
+/// Captured pixels, RGBA, rows top to bottom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]

@@ -95,6 +95,10 @@ export function createMockShell(): ShellImpl {
 	};
 
 	let settings: Settings = defaultSettings();
+	const size = params.get("size");
+	if (size === "medium" || size === "large") settings = { ...settings, eyes: { ...settings.eyes, size } };
+	// ?left puts the pill on the left half of the screen, ?low in the lower part.
+	const layout = { alignRight: !params.has("left"), above: params.has("low") };
 	let hasKey = !params.has("connect");
 	let hasSearchKey = false;
 	let pendingAsk: ((decision: string) => void) | null = null;
@@ -401,6 +405,9 @@ export function createMockShell(): ShellImpl {
 					return undefined as T;
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;
+				case "window_layout":
+				case "window_shape":
+					return layout as T;
 				default:
 					return undefined as T;
 			}

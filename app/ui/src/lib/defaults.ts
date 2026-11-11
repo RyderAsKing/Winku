@@ -60,7 +60,7 @@ export function defaultSettings(): Settings {
 			cycleThinking: "Ctrl+Alt+T",
 		},
 		leaderKey: null,
-		eyes: { hidden: false, positions: {} },
+		eyes: { hidden: false, size: "small", positions: {} },
 		voice: { stt: "moonshine-base", tts: "os", osVoice: null, reply: "mirror", listeningPaused: false },
 		updates: "auto",
 		launchAtLogin: true,

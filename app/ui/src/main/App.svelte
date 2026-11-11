@@ -1,17 +1,56 @@
 <script lang="ts">
+	// The main window: a fixed stage with the pill in one corner (see stage.ts). The pill opens
+	// into the bar in place, and replies show in a bubble under it, or over it low on the screen.
+	import { fly } from "svelte/transition";
 	import "../lib/theme.css";
-	import Bar from "./Bar.svelte";
-	import Pill from "./Pill.svelte";
+	import Connect from "./Connect.svelte";
+	import Head from "./Head.svelte";
+	import ReplyView from "./ReplyView.svelte";
+	import { GAP, stageSize } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
+	import TranscriptList from "./TranscriptList.svelte";
 
 	const app = new MainState();
 	void app.init();
 
-	// Outside Tauri the page shows the window on a stand-in desktop, sized like the real one.
+	// Outside Tauri the page shows the stage on a stand-in desktop.
 	const framed = !("__TAURI_INTERNALS__" in window);
-	const frame = $derived(
-		app.mode === "pill" ? { w: 140, h: 84 } : app.mode === "bar" ? { w: 560, h: null } : { w: 420, h: 560 },
-	);
+
+	const d = $derived(app.dims);
+	const stage = $derived(stageSize(d));
+	const open = $derived(app.mode !== "pill");
+	const transcript = $derived(app.mode === "transcript");
+	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
+	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null);
+	const above = $derived(app.layout.above);
+
+	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
+	$effect(() => {
+		app.eyes.setBarVisible(open || app.bubbleOpen || app.listening || app.busy || app.speaking);
+	});
+
+	// Tell the shell what is drawn. Growth is reported at once so nothing is clipped; shrinking
+	// waits for the close animation so it isn't cut off.
+	let bubbleH = $state(0);
+	let sent: { headW: number; bubbleH: number; key: string } | null = null;
+	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const next = {
+			headW: open ? d.barW : d.pillW,
+			bubbleH: showBubble ? Math.ceil(bubbleH) : 0,
+			key: `${app.settings?.eyes.size}:${app.layout.alignRight}:${app.layout.above}`,
+		};
+		const dims = d;
+		clearTimeout(shrinkTimer);
+		const send = () => {
+			sent = next;
+			void app.reportShape(dims, next.headW, next.bubbleH);
+		};
+		if (sent && sent.headW === next.headW && sent.bubbleH === next.bubbleH && sent.key === next.key) return;
+		const shrinking = sent !== null && sent.key === next.key && (next.headW < sent.headW || next.bubbleH < sent.bubbleH);
+		if (shrinking) shrinkTimer = setTimeout(send, 240);
+		else send();
+	});
 
 	function onkeydown(event: KeyboardEvent) {
 		if (event.key === "Escape") {
@@ -22,16 +61,56 @@
 			void app.toggleTranscript();
 		}
 	}
+
+	// A click on the bubble under the resting pill opens the bar, unless it hit a control.
+	function onBubbleClick(event: MouseEvent) {
+		if (open) return;
+		if ((event.target as HTMLElement).closest("button, a, summary, details, input, textarea, select")) return;
+		void app.summon();
+	}
 </script>
 
 <svelte:window {onkeydown} />
 
 <div class="root" class:framed>
-	<div class="window" style:width={framed ? `${frame.w}px` : null} style:height={framed ? (frame.h ? `${frame.h}px` : "auto") : null}>
-		{#if app.mode === "pill"}
-			<Pill {app} />
-		{:else}
-			<Bar {app} />
+	<div
+		class="stage"
+		class:right={app.layout.alignRight}
+		class:above
+		style:width="{stage.w}px"
+		style:height="{stage.h}px"
+		style:--gap="{d.pillH + GAP}px"
+		style:--bubble-max="{d.bubbleMax}px"
+	>
+		<Head {app} {open} />
+
+		{#if showBubble}
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+			<div
+				class="bubbles"
+				style:width="{d.barW}px"
+				bind:offsetHeight={bubbleH}
+				onclick={onBubbleClick}
+				onpointerenter={() => app.holdBubble(true)}
+				onpointerleave={() => app.holdBubble(false)}
+				transition:fly={{ y: above ? 6 : -6, duration: 160 }}
+			>
+				{#if open && app.needsConnect}
+					<div class="bubble pad scroll"><Connect {app} /></div>
+				{:else if transcript}
+					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
+				{:else if showReply && app.reply}
+					<div class="bubble pad scroll" class:resting={!open}><ReplyView {app} reply={app.reply} /></div>
+				{/if}
+				{#if app.toast}
+					<div class="bubble toast" role="status">
+						<span>{app.toast.text}</span>
+						{#if app.toast.action}
+							<button type="button" onclick={app.toast.action.run}>{app.toast.action.label}</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 </div>
@@ -42,22 +121,120 @@
 		background: transparent;
 		overflow: hidden;
 	}
-	.root,
-	.window {
+	.root {
 		width: 100%;
 		height: 100%;
 	}
-	.framed {
+	/* The stage is pinned to the window corner the pill is in, so a window that is only as big as
+	   the pill (outside Windows) still shows the pill. */
+	.stage {
+		position: fixed;
+		top: 0;
+		left: 0;
+	}
+	.stage.right {
+		left: auto;
+		right: 0;
+	}
+	.stage.above {
+		top: auto;
+		bottom: 0;
+	}
+	.stage :global(.head) {
+		top: 0;
+		left: 0;
+	}
+	.stage.right :global(.head) {
+		left: auto;
+		right: 0;
+	}
+	.stage.above :global(.head) {
+		top: auto;
+		bottom: 0;
+	}
+	.bubbles {
+		position: absolute;
+		top: var(--gap);
+		left: 0;
 		display: flex;
-		justify-content: center;
-		align-items: flex-start;
-		padding-top: 72px;
+		flex-direction: column;
+		gap: 6px;
+		max-height: var(--bubble-max);
+	}
+	.right .bubbles {
+		left: auto;
+		right: 0;
+	}
+	.above .bubbles {
+		top: auto;
+		bottom: var(--gap);
+		flex-direction: column-reverse;
+	}
+	/* Translucent and rounded, apart from the pill: the reply sits over whatever is behind. */
+	.bubble {
+		min-height: 0;
+		border: 1px solid var(--line);
+		border-radius: 18px;
+		background: rgb(14 16 21 / 0.88);
+		overflow-wrap: anywhere;
+	}
+	.pad {
+		padding: 12px 16px 14px;
+	}
+	.scroll {
+		flex: 0 1 auto;
+		overflow-y: auto;
+		scrollbar-width: thin;
+		scrollbar-color: var(--line-strong) transparent;
+	}
+	.resting {
+		cursor: pointer;
+	}
+	.transcript {
+		height: var(--bubble-max);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.toast {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 10px 8px 16px;
+		color: var(--muted);
+		font-size: 13px;
+	}
+	.toast button {
+		flex: none;
+		min-height: 28px;
+		border: 0;
+		background: none;
+		color: var(--accent);
+		cursor: pointer;
+		font-weight: 600;
+	}
+
+	/* The browser preview: a stand-in desktop with the stage outlined faintly. */
+	.framed {
+		position: relative;
 		background:
 			radial-gradient(circle at 20% 15%, #2d4057 0, transparent 45%),
 			radial-gradient(circle at 80% 70%, #4b3a52 0, transparent 50%),
 			#1b2230;
 	}
-	.framed .window {
-		flex: none;
+	.framed .stage {
+		position: absolute;
+		top: 64px;
+		left: 64px;
+	}
+	.framed .stage.right {
+		left: auto;
+		right: 64px;
+	}
+	.framed .stage.above {
+		top: auto;
+		bottom: 64px;
 	}
 </style>

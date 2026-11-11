@@ -782,6 +782,14 @@
 
 		<section>
 			<h2>Eyes</h2>
+			<label class="field">
+				<span>Size</span>
+				<select value={settings.eyes.size} onchange={(e) => save({ eyes: { ...settings!.eyes, size: e.currentTarget.value as Settings["eyes"]["size"] } })}>
+					<option value="small">Small</option>
+					<option value="medium">Medium</option>
+					<option value="large">Large</option>
+				</select>
+			</label>
 			<label class="field check">
 				<span>Visibility</span>
 				<span class="inline">

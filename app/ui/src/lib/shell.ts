@@ -39,7 +39,23 @@ export type UiEvent =
 	| { kind: "voice_error"; message: string }
 	| { kind: "menu"; item: MenuItem }
 	/** An update is downloaded (auto) or available (notify): the eyes show a small dot. */
-	| { kind: "update_ready"; version: string };
+	| { kind: "update_ready"; version: string }
+	/** The pill moved across the screen: things now grow the other way. */
+	| ({ kind: "layout" } & Layout);
+
+/** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
+export interface Layout {
+	alignRight: boolean;
+	above: boolean;
+}
+
+/** A shape the main window draws, logical px from the stage's top-left. */
+export interface Shape {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
 
 export type EngineMessage = EngineEvent | EngineRequest;
 type Unlisten = () => void;
@@ -132,8 +148,10 @@ export const shell = {
 	secretClear: (account?: SecretAccount) => invoke<void>("secret_clear", { account }),
 	secretPresent: (account?: SecretAccount) => invoke<boolean>("secret_present", { account }),
 	windowMode: (mode: WindowMode) => invoke<void>("window_mode", { mode }),
-	/** Whole bar height in logical px (72 input row + reply); the shell clamps it to 72…432. */
-	windowBarHeight: (height: number) => invoke<void>("window_bar_height", { height }),
+	/** The stage size and the shapes drawn on it (logical px). The window becomes the stage around
+	 * the pill, clipped to the shapes on Windows. Returns which way things grow. */
+	windowShape: (width: number, height: number, shapes: Shape[]) => invoke<Layout>("window_shape", { width, height, shapes }),
+	windowLayout: () => invoke<Layout | null>("window_layout"),
 	openWindow: (name: "settings" | "history") => invoke<void>("open_window", { name }),
 	contextMenu: () => invoke<void>("context_menu"),
 	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),

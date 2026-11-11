@@ -41,6 +41,7 @@ pub fn run() {
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
             hotkeys::register_all(handle, &current);
+            window::place_pill(handle)?;
             window::set_mode(handle, window::Mode::Pill)?;
             engine::Engine::start(handle)?;
             commands::apply_launch_at_login(handle, current.launch_at_login);
@@ -68,7 +69,8 @@ pub fn run() {
             commands::now_line,
             commands::screenshot,
             commands::window_mode,
-            commands::window_bar_height,
+            commands::window_shape,
+            commands::window_layout,
             commands::open_window,
             commands::context_menu,
             commands::hotkeys_status,

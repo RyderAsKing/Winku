@@ -57,3 +57,11 @@ pub fn window_text(_window: WindowHandle) -> Option<String> {
 pub fn capture_window(_window: WindowHandle) -> Result<RawImage, String> {
     Err("screen capture is not supported on this platform".into())
 }
+
+/// Moves and resizes a window in one step. False: not supported here, use Tauri's calls.
+pub fn set_window_rect(_window: WindowHandle, _x: i32, _y: i32, _w: i32, _h: i32) -> bool {
+    false
+}
+
+/// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.
+pub fn set_window_region(_window: WindowHandle, _rects: &[(i32, i32, i32, i32)]) {}

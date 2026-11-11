@@ -928,3 +928,51 @@ unsafe fn report(hwnd: HWND) {
     };
     callback(&class, own, bounds(rect), bounds(info.rcMonitor));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Main window shape (window.rs: the stage around the pill)
+
+/// Moves and resizes `window` in one SetWindowPos, without activating it or changing its z-order,
+/// so no frame shows the old size at the new position.
+pub fn set_window_rect(window: WindowHandle, x: i32, y: i32, w: i32, h: i32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+    };
+    // SAFETY: plain Win32 call on our own window.
+    unsafe {
+        SetWindowPos(
+            window.0 as HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+        ) != 0
+    }
+}
+
+/// Clips `window` to the union of `rects` (left, top, right, bottom; window px). Outside the
+/// region nothing paints and clicks reach the windows underneath. Empty `rects` removes the clip.
+pub fn set_window_region(window: WindowHandle, rects: &[(i32, i32, i32, i32)]) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+    };
+    // SAFETY: regions are created here; SetWindowRgn takes ownership of the one it is given, the
+    // rest are deleted.
+    unsafe {
+        if rects.is_empty() {
+            SetWindowRgn(window.0 as HWND, std::ptr::null_mut(), 1);
+            return;
+        }
+        let region = CreateRectRgn(0, 0, 0, 0);
+        for &(l, t, r, b) in rects {
+            let part = CreateRectRgn(l, t, r, b);
+            CombineRgn(region, region, part, RGN_OR);
+            DeleteObject(part);
+        }
+        if SetWindowRgn(window.0 as HWND, region, 1) == 0 {
+            DeleteObject(region);
+        }
+    }
+}

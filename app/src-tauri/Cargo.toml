@@ -26,6 +26,7 @@ sherpa-onnx = { version = "=2.0.1", default-features = false, features = ["stati
 sha2 = "0.10"
 bzip2 = "0.6"
 tar = { version = "0.4", default-features = false }
+tauri-plugin-autostart = "2"
 
 [profile.release]
 codegen-units = 1
@@ -41,12 +42,16 @@ version = "3"
 default-features = false
 features = ["native-tls-no-default"]
 
+[target."cfg(not(windows))".dependencies.tauri-plugin-updater]
+version = "2"
+
 [target."cfg(not(windows))".dependencies.ureq]
 version = "3"
 default-features = false
 features = ["rustls"]
 
 [target."cfg(windows)".dependencies]
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 keyring = { version = "3", features = ["windows-native"] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
@@ -57,6 +62,7 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_Threading",
+  "Win32_UI_Accessibility",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }

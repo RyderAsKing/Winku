@@ -365,13 +365,14 @@ pub fn set_bar_height(app: &AppHandle, height: f64) -> Result<(), String> {
 }
 
 /// Shows or hides the pill per `eyes.hidden` and keeps the tray icon in step. The bar always
-/// shows; hidden eyes only hide the pill.
+/// shows; hidden eyes only hide the pill. A focused fullscreen app also hides the pill.
 pub fn apply_eyes_visibility(app: &AppHandle) {
     let hidden = app.state::<settings::Store>().get().eyes.hidden;
     crate::menu::set_tray_visible(app, hidden);
     let Ok(window) = main_window(app) else { return };
     if app.state::<WindowState>().mode() == Mode::Pill {
-        let _ = if hidden { window.hide() } else { window.show() };
+        let hide = hidden || crate::fullscreen::active();
+        let _ = if hide { window.hide() } else { window.show() };
     }
 }
 

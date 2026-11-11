@@ -14,8 +14,9 @@ const TRAY_ID: &str = "winku";
 /// Shows the native menu at the cursor, over the main window.
 pub fn show_context_menu(app: &AppHandle) -> Result<(), String> {
     let s = app.state::<settings::Store>().get();
+    let update_label = crate::update::menu_label(&app.state::<crate::update::Updates>().status());
     let build = || -> tauri::Result<Menu<tauri::Wry>> {
-        Menu::with_items(
+        let menu = Menu::with_items(
             app,
             &[
                 &MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?,
@@ -41,7 +42,12 @@ pub fn show_context_menu(app: &AppHandle) -> Result<(), String> {
                 &PredefinedMenuItem::separator(app)?,
                 &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
             ],
-        )
+        )?;
+        if let Some(label) = &update_label {
+            let item = MenuItem::with_id(app, "update_restart", label, true, None::<&str>)?;
+            menu.insert(&item, menu.items()?.len() - 1)?;
+        }
+        Ok(menu)
     };
     let menu = build().map_err(|e| e.to_string())?;
     let window = app
@@ -70,11 +76,21 @@ pub fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "ask_before_running" => toggle(|s| s.ask_before_running = !s.ask_before_running),
         "hide_eyes" => toggle(|s| s.eyes.hidden = true),
         "pause_listening" => toggle(|s| s.voice.listening_paused = !s.voice.listening_paused),
+        "update_restart" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::update::restart(&app).await {
+                    eprintln!("winku: update: {e}");
+                }
+            });
+            return;
+        }
         "quit" => {}
         _ => return,
     }
     let _ = app.emit_to(window::MAIN, "ui", &json!({ "kind": "menu", "item": item }));
     if item == "quit" {
+        crate::update::install_on_quit(app);
         app.exit(0);
     }
 }

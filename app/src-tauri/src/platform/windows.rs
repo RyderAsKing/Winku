@@ -826,6 +826,36 @@ pub fn paste_text(text: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Main window frame
+
+/// Tells DWM to draw nothing around the transparent, undecorated main window: no non-client
+/// frame or shadow, no rounded-corner clip, no show/hide transition. The eyes draw everything
+/// themselves, so whatever DWM adds is extra composition work and the visible shadow users saw
+/// behind the pill. Call once, after the window exists.
+pub fn plain_frame(window: WindowHandle) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY,
+        DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    };
+    let hwnd = window.0 as HWND;
+    let set = |attribute: i32, value: i32| {
+        // SAFETY: a 4-byte value for a 4-byte attribute; DWM rejects a stale HWND with an
+        // error code. Corner preference fails before Windows 11, which is fine.
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                attribute as u32,
+                (&value as *const i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+            )
+        };
+    };
+    set(DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED);
+    set(DWMWA_TRANSITIONS_FORCEDISABLED, 1);
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Foreground watching (fullscreen apps hide the pill)
 
 use crate::fullscreen::Bounds;

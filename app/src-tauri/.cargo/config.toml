@@ -1,0 +1,7 @@
+# sherpa-onnx's prebuilt Windows libraries (onnxruntime and friends) are built with /MT, the
+# static C runtime. Link the whole app the same way so MSVC doesn't see two runtimes.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

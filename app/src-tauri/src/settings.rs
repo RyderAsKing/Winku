@@ -182,6 +182,29 @@ impl Default for Voice {
     }
 }
 
+impl Voice {
+    /// Unknown voice choices fall back to the defaults.
+    pub fn normalize(&mut self) {
+        let defaults = Voice::default();
+        if !crate::voice::models::is_stt(&self.stt) {
+            self.stt = defaults.stt;
+        }
+        if !matches!(self.tts.as_str(), "os" | "kokoro") {
+            self.tts = defaults.tts;
+        }
+        if !matches!(self.reply.as_str(), "mirror" | "always" | "never") {
+            self.reply = defaults.reply;
+        }
+        if self
+            .os_voice
+            .as_deref()
+            .is_some_and(|v| v.trim().is_empty())
+        {
+            self.os_voice = None;
+        }
+    }
+}
+
 pub fn default_actions() -> Vec<ActionSpec> {
     let action = |name: &str, prompt: &str, output: &str, thread: bool, voice: bool| ActionSpec {
         name: name.into(),
@@ -236,8 +259,9 @@ pub fn default_actions() -> Vec<ActionSpec> {
 
 impl Settings {
     /// Fills in what a hand-edited or older file may lack: exactly five action slots and five
-    /// action hotkeys.
+    /// action hotkeys, and voice choices the app knows.
     pub fn normalize(&mut self) {
+        self.voice.normalize();
         let defaults = default_actions();
         self.actions.truncate(5);
         let have = self.actions.len();
@@ -399,6 +423,24 @@ mod tests {
 
     /// Settings > Actions offers "Reset to default" using the UI's copy of the defaults
     /// (`app/ui/src/lib/defaults.ts`). Keep the two in step.
+    #[test]
+    fn unknown_voice_choices_fall_back_to_defaults() {
+        let mut settings = Settings::default();
+        settings.voice.stt = "whisper-base-en".into();
+        settings.voice.tts = "kokoro".into();
+        settings.voice.reply = "always".into();
+        settings.normalize();
+        assert_eq!(settings.voice.stt, "whisper-base-en");
+        assert_eq!(settings.voice.tts, "kokoro");
+        assert_eq!(settings.voice.reply, "always");
+        settings.voice.stt = "kokoro".into(); // a TTS model
+        settings.voice.tts = "piper".into();
+        settings.voice.reply = "sometimes".into();
+        settings.voice.os_voice = Some(" ".into());
+        settings.normalize();
+        assert_eq!(settings.voice, Voice::default());
+    }
+
     #[test]
     fn voice_profile_follows_the_app() {
         let mut profiles = VoiceProfiles::default();

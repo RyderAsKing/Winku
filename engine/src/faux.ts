@@ -9,6 +9,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 	getCurrentSystemPrompt,
+	getCurrentTools,
 	type Message,
 	type Provider,
 } from "@earendil-works/pi-ai";
@@ -28,6 +29,10 @@ export interface FauxStep {
 	echoUser?: boolean;
 	/** Reply with "<model id> reasoning=<level>" of the request (which model and thinking level was used). */
 	echoModel?: boolean;
+	/** Reply with "tools: a,b,c", the tool names sent with the request, sorted. */
+	echoTools?: boolean;
+	/** Reply with "images:<n> removed:<m>": image blocks and "[screenshot removed]" notes across the whole request. */
+	echoImages?: boolean;
 }
 
 /** Test-only extension of the configure command. Not part of protocol.ts. */
@@ -70,6 +75,22 @@ export function createFauxProvider(modelIds: string[], options: FauxOptions = {}
 			if (step.error) return fauxAssistantMessage("", { stopReason: "error", errorMessage: step.error });
 			if (step.echoSystemPrompt) return fauxAssistantMessage(getCurrentSystemPrompt(context.messages));
 			if (step.echoModel) return fauxAssistantMessage(`${model.id} reasoning=${options?.reasoning ?? "off"}`);
+			if (step.echoTools) {
+				const names = getCurrentTools(context.messages).map((t) => t.name).sort();
+				return fauxAssistantMessage(`tools: ${names.join(",")}`);
+			}
+			if (step.echoImages) {
+				let images = 0;
+				let removed = 0;
+				for (const m of context.messages) {
+					if (typeof m.content === "string" || !Array.isArray(m.content)) continue;
+					for (const block of m.content as { type: string; text?: string }[]) {
+						if (block.type === "image") images++;
+						if (block.type === "text" && block.text?.includes("[screenshot removed]")) removed++;
+					}
+				}
+				return fauxAssistantMessage(`images:${images} removed:${removed}`);
+			}
 			if (step.echoUser) {
 				const { text, images } = userText(lastUser);
 				return fauxAssistantMessage(`${text}\n[images:${images}]`);

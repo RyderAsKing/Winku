@@ -252,12 +252,51 @@ function textOf(content: unknown): string {
 	return (content as Block[]).map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
 }
 
+function clip(text: string, max = 80): string {
+	const line = (text.trim().split("\n")[0] ?? "").trim();
+	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/** Last part of a path: "C:\\Users\\x\\notes.txt" → "notes.txt". */
+function baseName(path: string): string {
+	const parts = path.trim().replace(/[\\/]+$/, "").split(/[\\/]/);
+	return parts.at(-1) || path.trim();
+}
+
+/** One short line for a tool call, shown after the tool name: "Get-ChildItem Downloads", "notes.txt". */
 export function toolSummary(name: string, args: unknown): string {
-	if (!args || typeof args !== "object") return name;
-	const first = Object.values(args as Record<string, unknown>).find((v) => typeof v === "string") as string | undefined;
-	if (!first) return name;
-	const line = first.split("\n")[0] ?? "";
-	return `${name}: ${line.length > 60 ? `${line.slice(0, 59)}…` : line}`;
+	const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+	const str = (key: string) => (typeof a[key] === "string" ? (a[key] as string) : "");
+	switch (name) {
+		case "bash":
+		case "powershell":
+			return clip(str("command")) || name;
+		case "read":
+		case "write":
+		case "edit":
+			return str("path") ? baseName(str("path")) : name;
+		case "ls":
+			return str("path") ? clip(str("path")) : "~";
+		case "find":
+		case "grep":
+			return clip([str("pattern"), str("path") ? `in ${str("path")}` : ""].filter(Boolean).join(" ")) || name;
+		case "open":
+			return clip(str("target")) || name;
+		case "web_fetch":
+			return clip(str("url")) || name;
+		case "web_search":
+			return clip(str("query")) || name;
+		case "look_at_screen":
+			return "the active window";
+		case "memory_save":
+			return clip(str("title")) || name;
+		case "memory_read":
+			return clip(str("topic")) || name;
+		case "voice_propose":
+			return clip(str("profile")) || name;
+	}
+	const first = Object.values(a).find((v) => typeof v === "string") as string | undefined;
+	return first ? clip(first) : name;
 }
 
 /** Build transcript rows from a session branch (root → leaf). */

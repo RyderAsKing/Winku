@@ -2,11 +2,13 @@ import "./isolate.ts";
 import enginePackage from "../package.json" with { type: "json" };
 import { Engine, type EngineConfig } from "./engine.ts";
 import { readLines, send } from "./io.ts";
+import { ShellRequests } from "./requests.ts";
 import type { Command, InboundMessage } from "./protocol.ts";
 import { errorOf, listModels, listProviders, testConnection } from "./runtime.ts";
 
 const startedAt = performance.now();
-const engine = new Engine(send);
+const requests = new ShellRequests(send);
+const engine = new Engine(send, requests);
 
 function reply(id: string | undefined, data?: unknown): void {
 	if (id !== undefined) send({ type: "result", id, ok: true, ...(data !== undefined ? { data } : {}) });
@@ -106,7 +108,10 @@ async function main(): Promise<void> {
 			send({ type: "error", errorKind: "engine", message: `Invalid JSON: ${line.slice(0, 200)}` });
 			continue;
 		}
-		if (message.type === "response") continue; // No engine → shell requests until step 6.
+		if (message.type === "response") {
+			requests.handle(message);
+			continue;
+		}
 		if (message.type === "shutdown") break;
 
 		const command = message;

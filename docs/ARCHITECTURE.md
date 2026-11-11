@@ -149,21 +149,28 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 
 | Tool | Does | Asks first when "Ask before running" is on |
 |---|---|---|
-| `read`, `ls`, `find`, `grep` | pi's file tools | no |
+| `read`, `ls`, `find`, `grep` | pi's file tools; `find` uses a built-in glob instead of `fd`, and `grep` is only offered when ripgrep (`rg`) is on PATH (the engine never downloads either) | no |
 | `write`, `edit` | pi's file tools | yes; allowKey `write:<path>` / `edit:<path>` |
 | `powershell` | pi's PowerShell tool (Windows) | yes; allowKey `powershell:<first command word>` |
 | `bash` | pi's bash tool, only when a bash is found (Git Bash on Windows) | yes; allowKey `bash:<first command word>` |
 | `open` | `{ target }`: an http(s) URL, a file or folder path, or an app name, opened the way Explorer would | yes; allowKey `open:<target>` |
-| `web_fetch` | `{ url }`: http(s) only, returns readable text, capped | no |
+| `web_fetch` | `{ url }`: http(s) only, never into the local network, returns readable text, capped | no |
 | `web_search` | `{ query }`: Brave Search API, only when a search key is set | no |
 | `look_at_screen` | asks the shell for a `screen_capture`; image only if the Main model takes images | no |
 | `memory_save`, `memory_read`, `voice_propose` | see "Memory and voice profiles" | no |
 
-- Tools run in the user's home folder (not the data folder).
-- **Ask before running** (off by default; right-click menu and Settings): before a gated tool runs, the engine sends a `permission` Request with `{ replyId, tool, summary, allowKey }` unless `allowKey` is in `alwaysAllow`. The bar shows Allow once / Always allow this command / Deny. "Always" also adds the key to `settings.alwaysAllow`. Deny gives the model a tool result saying the user declined. `Esc` (abort) denies any pending request.
+- Tools run in the user's home folder (not the data folder). pi's session keeps the data folder as its cwd (isolation); each tool call sees the home folder as its cwd instead.
+- **`open`** only opens http(s) URLs (every other scheme, such as `file:`, `javascript:` or `ms-settings:`, is refused), paths that exist (UNC and device paths are refused), and app names made of letters, digits, spaces and `. _ - ( ) +`. On Windows a URL goes to `rundll32 url.dll,FileProtocolHandler`, a path to `explorer.exe`, an app name to `cmd /d /c start "" "<name>"`; macOS uses `open` (`open -a` for apps), Linux `xdg-open` (an app name is started directly). Nothing goes through a shell except the restricted app name.
+- **`web_fetch`** resolves the host first and refuses loopback, private, link-local, CGNAT, multicast and reserved addresses (v4 and v6, including v4-mapped), `localhost`, `*.local` and `*.internal`. Redirects (at most 5) are followed by hand and each hop is checked again. 15 s timeout, 2 MB download, 20,000 characters of text; HTML loses scripts, styles, navigation and forms, and keeps headings, list items and links (`text (url)`) as text. Binary content types are refused.
+- **`web_search`** calls the Brave Search API (`X-Subscription-Token`) and returns title, URL and snippet for the top 8 results.
+- **`look_at_screen`** sends `screen_capture` with `includeImage` = the Main model takes images, waits up to 10 s, and returns the app, window title and UI Automation text, plus the screenshot as image content when there is one.
+- **Ask before running** (off by default; right-click menu and Settings): before a gated tool runs, the engine sends a `permission` Request with `{ replyId, tool, summary, allowKey }` unless `allowKey` is in `alwaysAllow` (compared case-insensitively). The bar shows Allow once / Always allow this command / Deny. "Always" also adds the key to `settings.alwaysAllow` (the engine adds it to its in-memory list at once). Deny gives the model a tool result saying the user declined. `Esc` (abort) denies any pending request; so does an error Response or no answer within 30 minutes. Summaries: `Run: <command>`, `Write <absolute path>`, `Edit <absolute path>`, `Open <target>`; `write`/`edit` keys use the absolute path.
+- **"Always allow" never covers a compound command.** A `powershell`/`bash` command that chains, pipes, redirects, substitutes or spans lines (`;`, `&`, `|`, `<`, `>`, `` ` ``, `$(`, a newline) is always asked about, even when its first word is in `alwaysAllow`; otherwise `ls; rm -rf ~` would ride on `bash:ls`.
+- **Settings changes keep the reply running.** A `configure` that only changes `askBeforeRunning`, `alwaysAllow` or `searchApiKey` updates them in place: no session rebuild, no abort. Adding or removing the search key switches `web_search` on or off once the current reply settles.
 - **Now line:** when the bar is summoned (hotkey or pill click), the shell notes the foreground app (process name), its window title and its selection (UI Automation only, never a simulated copy). `now_line` returns that snapshot; the UI sends it with each prompt and the engine appends it to the user message.
 - **Screenshot hotkey** (`Ctrl+Alt+S`): the shell captures the foreground window (downscaled like `screen_capture`) and emits `ui` `attach_screenshot`; the UI shows it as a chip and sends it with the next prompt.
-- **Compaction drops screenshots:** images in the kept part of the thread are replaced by "[screenshot removed]" when the thread is compacted.
+- **Compaction drops screenshots:** images in the kept part of the thread are replaced by "[screenshot removed]" when the thread is compacted. This happens in what is sent to the model (a context transform on the session's agent): the session file keeps the images, so the transcript still counts them, and images sent after the compaction are untouched.
+- **Tool events** carry a short summary without the tool name (the UI shows `name: summary`): the command's first line for shells, the file name for `read`/`write`/`edit`, the URL, query or target for the web tools and `open`.
 
 ## Memory and voice profiles
 
@@ -200,7 +207,10 @@ engine/src/
   actions.ts     one-off actions on the Quick model                       (step 4)
   memory.ts      MEMORY.md index + topic files, save/undo/forget, memory tools (step 5)
   voice.ts       voice profiles, proposals, voice_propose tool              (step 5)
-  tools/         look_at_screen, open, web, permission gate                 (step 6)
+  requests.ts    engine → shell Requests, correlated with their Responses (timeouts, abort)
+  tools/         agent tools: index (assembly), shell (PowerShell/bash choice), find (glob backend),
+                 open, web (web_fetch, web_search), screen (look_at_screen), permission (gate),
+                 images (compaction drops screenshots)                        (step 6)
 
 app/src-tauri/src/
   lib.rs         builder, plugins, command registration

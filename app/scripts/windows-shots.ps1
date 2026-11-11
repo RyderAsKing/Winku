@@ -17,7 +17,7 @@ public static class Keys {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint flags);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(IntPtr cls, string title);
   [DllImport("user32.dll")] public static extern int GetWindowRgn(IntPtr hwnd, IntPtr region);
   [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
   [DllImport("gdi32.dll")] public static extern int GetRgnBox(IntPtr region, out RECT box);
@@ -80,7 +80,7 @@ try {
   Start-Sleep -Seconds 15
   Shot "1-pill"
   # The window region follows the pill's rounded ends, so nothing shows in the corners of its box.
-  $hwnd = [Keys]::FindWindow($null, "Winku")
+  $hwnd = [Keys]::FindWindow([IntPtr]::Zero, "Winku")
   if ($hwnd -eq [IntPtr]::Zero) { throw "no Winku window" }
   $rgn = [Keys]::CreateRectRgn(0, 0, 0, 0)
   try {

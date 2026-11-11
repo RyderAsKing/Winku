@@ -7,6 +7,7 @@ mod menu;
 mod platform;
 mod secrets;
 mod settings;
+mod voice;
 mod window;
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -27,6 +28,7 @@ pub fn run() {
             app.manage(engine::Engine::new());
             app.manage(actions::Actions::default());
             app.manage(capture::NowState::default());
+            app.manage(voice::Voice::default());
 
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
@@ -62,6 +64,12 @@ pub fn run() {
             commands::hotkeys_altgr,
             commands::open_external,
             commands::open_data_path,
+            commands::speak,
+            commands::stop_speaking,
+            commands::voice_os_voices,
+            commands::voice_models,
+            commands::voice_model_download,
+            commands::voice_model_remove,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Winku")

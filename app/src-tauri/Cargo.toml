@@ -21,6 +21,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 tauri-plugin-global-shortcut = "2"
 tokio = { version = "1", features = ["time", "sync"] }
 tauri-plugin-opener = "2"
+cpal = "0.18"
+sherpa-onnx = { version = "=2.0.1", default-features = false, features = ["static"] }
+sha2 = "0.10"
+bzip2 = "0.6"
+tar = { version = "0.4", default-features = false }
 
 [profile.release]
 codegen-units = 1
@@ -28,6 +33,18 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Model downloads. Windows uses its own TLS stack (SChannel) and certificate store; elsewhere
+# rustls with the bundled Mozilla roots.
+[target."cfg(windows)".dependencies.ureq]
+version = "3"
+default-features = false
+features = ["native-tls-no-default"]
+
+[target."cfg(not(windows))".dependencies.ureq]
+version = "3"
+default-features = false
+features = ["rustls"]
 
 [target."cfg(windows)".dependencies]
 keyring = { version = "3", features = ["windows-native"] }
@@ -43,7 +60,16 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Accessibility"] }
+windows = { version = "0.62", features = [
+  "Foundation",
+  "Foundation_Collections",
+  "Media_Core",
+  "Media_SpeechSynthesis",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Accessibility",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

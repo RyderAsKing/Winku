@@ -68,6 +68,7 @@
 				expression={app.eyes.state}
 				tint={app.tint}
 				lid={app.lid}
+				progress={app.download?.fraction ?? null}
 				eyeSize={24}
 				spacing={31}
 				animate={app.eyes.animate}
@@ -96,7 +97,7 @@
 				bind:this={input}
 				bind:value={text}
 				rows="1"
-				placeholder="Ask anything"
+				placeholder={app.listening ? "Listening…" : "Ask anything"}
 				disabled={app.needsConnect}
 				aria-label="Message"
 				{onkeydown}
@@ -106,6 +107,9 @@
 
 		{#if !app.needsConnect}
 			<div class="meta">
+				{#if app.download}
+					<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
+				{/if}
 				{#if ctx !== null}<span class="mono" title="Context used">{ctx}% ctx</span>{/if}
 				<button type="button" class="mono level" title="Thinking level (Ctrl+Alt+T)" onclick={() => app.cycleThinking()}>
 					{app.thinking}

@@ -314,11 +314,11 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 		if (entry.type !== "message") continue;
 		const message = entry.message as { role: string; content?: unknown } & Record<string, unknown>;
 		if (message.role === "user") {
-			const { text, now } = parseNow(textOf(message.content));
+			const { text, now, spoken } = parseNow(textOf(message.content));
 			const images = Array.isArray(message.content)
 				? (message.content as Block[]).filter((b) => b.type === "image").length
 				: 0;
-			items.push({ kind: "user", id: entry.id, text, images, ...(now ? { now } : {}), at });
+			items.push({ kind: "user", id: entry.id, text, images, ...(now ? { now } : {}), ...(spoken ? { spoken } : {}), at });
 		} else if (message.role === "assistant") {
 			const blocks = (Array.isArray(message.content) ? message.content : []) as Block[];
 			const { text, mood } = stripMood(textOf(blocks));

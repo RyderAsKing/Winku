@@ -26,6 +26,7 @@
 		{#if item.kind === "user"}
 			<div class="user">
 				<p>{item.text}</p>
+				{#if item.spoken}<span class="meta">Spoken</span>{/if}
 				{#if item.images > 0}<span class="meta">{item.images === 1 ? "1 image" : `${item.images} images`}</span>{/if}
 			</div>
 		{:else if item.kind === "assistant"}

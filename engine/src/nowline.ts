@@ -6,14 +6,15 @@ const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").rep
 const unescape = (s: string) =>
 	s.replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 
-/** `\n\n<now app="…" window="…">selection</now>`, or "" when there is nothing to say. */
-export function formatNow(now: NowLine | undefined): string {
-	if (!now) return "";
+/** `\n\n<now app="…" window="…" spoken="yes">selection</now>`, or "" when there is nothing to say. */
+export function formatNow(now: NowLine | undefined, spoken = false): string {
+	if (!now && !spoken) return "";
 	const attrs = [
-		now.app ? ` app="${escape(now.app)}"` : "",
-		now.windowTitle ? ` window="${escape(now.windowTitle)}"` : "",
+		now?.app ? ` app="${escape(now.app)}"` : "",
+		now?.windowTitle ? ` window="${escape(now.windowTitle)}"` : "",
+		spoken ? ` spoken="yes"` : "",
 	].join("");
-	const selection = now.selection ? escape(now.selection) : "";
+	const selection = now?.selection ? escape(now.selection) : "";
 	if (!attrs && !selection) return "";
 	return `\n\n<now${attrs}>${selection}</now>`;
 }
@@ -21,14 +22,17 @@ export function formatNow(now: NowLine | undefined): string {
 const TRAILING_NOW = /\n\n<now((?: [a-z]+="[^"]*")*)>([\s\S]*)<\/now>$/;
 
 /** Split a stored user message back into the typed text and its now line. */
-export function parseNow(text: string): { text: string; now?: NowLine } {
+export function parseNow(text: string): { text: string; now?: NowLine; spoken?: true } {
 	const match = TRAILING_NOW.exec(text);
 	if (!match) return { text };
 	const now: NowLine = {};
+	let spoken = false;
 	for (const [, key, value] of (match[1] ?? "").matchAll(/ ([a-z]+)="([^"]*)"/g)) {
 		if (key === "app") now.app = unescape(value ?? "");
 		if (key === "window") now.windowTitle = unescape(value ?? "");
+		if (key === "spoken") spoken = value === "yes";
 	}
 	if (match[2]) now.selection = unescape(match[2]);
-	return { text: text.slice(0, match.index), now };
+	const rest = { text: text.slice(0, match.index), ...(Object.keys(now).length ? { now } : {}) };
+	return spoken ? { ...rest, spoken: true } : rest;
 }

@@ -22,8 +22,8 @@ interface ActiveReply {
 	tools: Map<string, string>;
 }
 
-export function userMessageText(command: Pick<PromptCommand, "text" | "now">): string {
-	return `${command.text}${formatNow(command.now)}`;
+export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken">): string {
+	return `${command.text}${formatNow(command.now, command.spoken === true)}`;
 }
 
 export class Replies {

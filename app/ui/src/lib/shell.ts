@@ -31,7 +31,12 @@ export type UiEvent =
 	| { kind: "action_error"; id?: string; slot: number; name: string; message: string }
 	| { kind: "talk_start" }
 	| { kind: "talk_level"; level: number }
+	/** "" when nothing was heard. */
 	| { kind: "talk_end"; text: string }
+	/** Text-to-speech started (true) or finished or was stopped (false). */
+	| { kind: "speech"; playing: boolean }
+	/** The microphone, a model download or speech failed. */
+	| { kind: "voice_error"; message: string }
 	| { kind: "menu"; item: MenuItem }
 	| { kind: "update_ready" };
 
@@ -85,6 +90,30 @@ export interface AltGrReport {
 	suggestion: string;
 }
 
+export type VoiceModelId = "moonshine-base" | "whisper-base-en" | "parakeet" | "kokoro";
+
+export interface VoiceModel {
+	id: VoiceModelId;
+	kind: "stt" | "tts";
+	name: string;
+	sizeMb: number;
+	installed: boolean;
+	downloading: boolean;
+}
+
+export interface OsVoice {
+	id: string;
+	name: string;
+	language: string;
+}
+
+/** fraction 0…1 while downloading, 1 when installed, -1 when it failed. */
+export interface DownloadProgress {
+	what: "stt" | "tts";
+	model: VoiceModelId;
+	fraction: number;
+}
+
 export const shell = {
 	send: (message: Command) => invoke<void>("engine_send", { message }),
 	call: <T>(message: CallMessage) => invoke<T>("engine_call", { message }),
@@ -109,6 +138,10 @@ export const shell = {
 	openExternal: (url: string) => invoke<void>("open_external", { url }),
 	speak: (text: string) => invoke<void>("speak", { text }),
 	stopSpeaking: () => invoke<void>("stop_speaking"),
+	voiceOsVoices: () => invoke<OsVoice[]>("voice_os_voices"),
+	voiceModels: () => invoke<VoiceModel[]>("voice_models"),
+	voiceModelDownload: (id: VoiceModelId) => invoke<void>("voice_model_download", { id }),
+	voiceModelRemove: (id: VoiceModelId) => invoke<void>("voice_model_remove", { id }),
 	/** Start dragging the current window (the resting pill). Needs core:window:allow-start-dragging. */
 	startDrag: async () => {
 		if (!isTauri) return;
@@ -126,6 +159,9 @@ export const shell = {
 export const onEngine = (handler: (message: EngineMessage) => void) => listen<EngineMessage>("engine", handler);
 export const onUi = (handler: (event: UiEvent) => void) => listen<UiEvent>("ui", handler);
 export const onSettingsChanged = (handler: (settings: Settings) => void) => listen<Settings>("settings_changed", handler);
+
+export const onDownloadProgress = (handler: (progress: DownloadProgress) => void) =>
+	listen<DownloadProgress>("download_progress", handler);
 
 export const onHotkeysStatus = (handler: (status: HotkeysStatus) => void) => listen<HotkeysStatus>("hotkeys_status", handler);
 

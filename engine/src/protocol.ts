@@ -77,7 +77,7 @@ export type ErrorKind = "auth" | "network" | "model" | "config" | "engine";
 
 /** One row in the transcript. The UI renders these; the engine builds them from the session. */
 export type TranscriptItem =
-	| { kind: "user"; id: string; text: string; images: number; now?: NowLine; at: number }
+	| { kind: "user"; id: string; text: string; images: number; now?: NowLine; spoken?: boolean; at: number }
 	| { kind: "assistant"; id: string; text: string; mood?: Mood; aborted?: boolean; at: number }
 	| { kind: "tool"; id: string; name: string; summary: string; ok: boolean | null; detail?: string; at: number }
 	| { kind: "compaction"; id: string; summary: string; at: number }

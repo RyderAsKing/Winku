@@ -13,12 +13,14 @@
 		eyeSize: number;
 		/** Distance between eye centres in px. */
 		spacing: number;
+		/** A voice model downloading, 0…1: the eyes fill from the bottom. null = not downloading. */
+		progress?: number | null;
 		/** Allow continuous loops (pulse, bounce). */
 		animate?: boolean;
 		reduceMotion?: boolean;
 	}
 
-	let { expression, tint, lid = 0, eyeSize, spacing, animate = false, reduceMotion = false }: Props = $props();
+	let { expression, tint, lid = 0, progress = null, eyeSize, spacing, animate = false, reduceMotion = false }: Props = $props();
 
 	const uid = $props.id();
 	const look = $derived(lookFor(expression, tint));
@@ -27,7 +29,18 @@
 	const loop = $derived(animate && !reduceMotion ? look.loop : "none");
 	// Lid edge in % of the eye box; a soft mask rather than a dark cap, so it works on any face.
 	const lidEdge = $derived(lid > 0.01 && look.shape === "rect" ? ((14 + lid * 68) / 108) * 100 : 0);
-	const lidMask = $derived(lidEdge ? `linear-gradient(to bottom, transparent ${lidEdge}%, #000 ${lidEdge + 7}%)` : "none");
+	// Download progress: the lit part rises through the eye body (20..88 of the box); the rest is dim.
+	const fillEdge = $derived(progress === null ? null : ((20 + Math.min(Math.max(progress, 0), 1) * 68) / 108) * 100);
+	const lidMask = $derived(
+		fillEdge !== null
+			? `linear-gradient(to top, #000 ${fillEdge}%, rgb(0 0 0 / 0.22) ${fillEdge}%)`
+			: lidEdge
+				? `linear-gradient(to bottom, transparent ${lidEdge}%, #000 ${lidEdge + 7}%)`
+				: "none",
+	);
+	const label = $derived(
+		progress === null ? `Winku is ${expression}` : `Downloading a voice model, ${Math.round(Math.min(Math.max(progress, 0), 1) * 100)}%`,
+	);
 
 	// The eye body sits in 20..88 of a 108-unit box; the margin leaves room for the glow.
 	const C = 54;
@@ -119,7 +132,7 @@
 	style:height="{box}px"
 	style:--c={look.colour}
 	role="img"
-	aria-label="Winku is {expression}"
+	aria-label={label}
 >
 	<div
 		class="pair {loop}"

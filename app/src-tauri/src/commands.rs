@@ -159,6 +159,44 @@ pub fn open_data_path(app: AppHandle, store: State<'_, Store>, what: String) -> 
         .map_err(|e| e.to_string())
 }
 
+/// Speaks `text` (the UI strips markdown first), replacing anything already playing.
+#[tauri::command]
+pub fn speak(app: AppHandle, text: String) {
+    crate::voice::speak(&app, text);
+}
+
+#[tauri::command]
+pub fn stop_speaking(app: AppHandle) {
+    crate::voice::stop_speaking(&app);
+}
+
+/// The OS voices (Windows OneCore); empty elsewhere. Async: WinRT enumeration can take a moment.
+#[tauri::command]
+pub async fn voice_os_voices() -> Vec<crate::voice::tts::OsVoice> {
+    tauri::async_runtime::spawn_blocking(crate::voice::os_voices)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn voice_models(app: AppHandle) -> Vec<crate::voice::ModelInfo> {
+    crate::voice::model_list(&app)
+}
+
+/// Starts a download and returns at once; progress arrives as `download_progress`.
+#[tauri::command]
+pub fn voice_model_download(app: AppHandle, id: String) -> Result<(), String> {
+    crate::voice::download_model(&app, &id)
+}
+
+/// Async and off the runtime threads: it may wait for a transcription or speech to finish.
+#[tauri::command]
+pub async fn voice_model_remove(app: AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::voice::remove_model(&app, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Opens a link from a reply in the default browser. Only http(s): a model-written link must not
 /// launch a local file or another URL scheme handler.
 #[tauri::command]

@@ -14,10 +14,13 @@
 	{/if}
 
 	{#each reply.tools as tool (tool.toolCallId)}
-		<p class="tool mono" class:failed={tool.ok === false}>
+		<details class="tool mono" class:failed={tool.ok === false}>
+			<summary title={tool.summary}>
 			{tool.ok === null ? (reply.permissions?.some((ask) => !ask.decided) ? "Wants to run" : "Running") : tool.ok ? "Ran" : "Failed"}
 			{tool.name}<span class="summary">: {tool.summary}</span>
-		</p>
+			</summary>
+			<pre>{tool.summary}</pre>
+		</details>
 	{/each}
 
 	{#if reply.text}
@@ -87,9 +90,8 @@
 	.ask {
 		display: grid;
 		gap: 8px;
-		padding: 10px 12px;
-		border-radius: 12px;
-		border: 1px solid var(--line-strong);
+		padding: 12px 0 0;
+		border-top: 1px solid var(--line-strong);
 	}
 	.ask p {
 		margin: 0;
@@ -117,17 +119,18 @@
 		max-height: 160px;
 		overflow: auto;
 		padding: 8px 10px;
-		border-radius: 8px;
-		background: var(--panel-raised);
+		border-left: 2px solid var(--line-strong);
+		overflow-wrap: anywhere;
 		font-size: 12px;
 		white-space: pre-wrap;
 	}
 	.choices {
 		display: flex;
 		gap: 8px;
+		flex-wrap: wrap;
 	}
 	.choices button {
-		height: 28px;
+		min-height: 32px;
 		padding: 0 12px;
 		border-radius: 8px;
 		border: 1px solid var(--line-strong);
@@ -142,6 +145,9 @@
 		font-weight: 600;
 	}
 	.reply {
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
+		overflow-wrap: anywhere;
 		display: grid;
 		gap: 6px;
 	}
@@ -152,11 +158,27 @@
 		color: var(--muted);
 	}
 	.tool {
+		min-width: 0;
+		max-width: 100%;
 		margin: 0;
 		color: var(--muted);
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.tool summary {
+		cursor: pointer;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		padding: 3px 0;
+	}
+	.tool pre {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font: inherit;
+		margin: 4px 0 8px;
+		padding-left: 10px;
+		border-left: 2px solid var(--line-strong);
 	}
 	.tool.failed {
 		color: var(--error);
@@ -174,6 +196,7 @@
 		display: flex;
 		gap: 12px;
 		align-items: baseline;
+		flex-wrap: wrap;
 		color: var(--error);
 	}
 	.error p {

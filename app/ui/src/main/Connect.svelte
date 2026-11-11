@@ -95,7 +95,7 @@
 
 	<label>
 		<span>Provider</span>
-		<select bind:value={providerId}>
+		<select aria-label="Provider" bind:value={providerId}>
 			{#each providers as p (p.id)}
 				<option value={p.id}>{p.name}</option>
 			{/each}
@@ -107,7 +107,7 @@
 		<label>
 			<span>Base URL</span>
 			<div class="with-presets">
-				<input bind:value={baseUrl} placeholder="http://localhost:11434/v1" spellcheck="false" />
+				<input aria-label="Base URL" bind:value={baseUrl} placeholder="http://localhost:11434/v1" spellcheck="false" />
 				{#each PRESETS as preset (preset.name)}
 					<button type="button" class="chip" onclick={() => (baseUrl = preset.baseUrl)}>{preset.name}</button>
 				{/each}
@@ -118,7 +118,7 @@
 	<label>
 		<span>API key{custom ? " (optional)" : ""}</span>
 		<div class="with-presets">
-			<input type="password" bind:value={apiKey} autocomplete="off" spellcheck="false" placeholder={custom ? "Leave empty for local servers" : "Paste your key"} />
+			<input type="password" aria-label="API key" bind:value={apiKey} autocomplete="off" spellcheck="false" placeholder={custom ? "Leave empty for local servers" : "Paste your key"} />
 			{#if keyUrl}
 				<button type="button" class="chip" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>
 			{/if}
@@ -127,7 +127,7 @@
 
 	<label>
 		<span>Model</span>
-		<input bind:value={model} list="connect-models" placeholder="Pick or type a model id" spellcheck="false" />
+		<input aria-label="Model" bind:value={model} list="connect-models" placeholder="Pick or type a model id" spellcheck="false" />
 		<datalist id="connect-models">
 			{#each models as m (m.id)}
 				<option value={m.id}>{m.name}</option>
@@ -164,7 +164,7 @@
 	}
 	label {
 		display: grid;
-		grid-template-columns: 92px 1fr;
+		grid-template-columns: 82px minmax(0, 1fr);
 		align-items: center;
 		gap: 10px;
 	}
@@ -188,6 +188,7 @@
 		border-color: var(--focus);
 	}
 	.with-presets {
+		flex-wrap: wrap;
 		display: flex;
 		gap: 6px;
 		min-width: 0;
@@ -203,14 +204,17 @@
 		font-size: 12px;
 		cursor: pointer;
 	}
+	.with-presets input { flex: 1; width: 0; min-width: 120px; }
 	.actions {
+		justify-content: flex-end;
+		flex-wrap: wrap;
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		margin-top: 2px;
 	}
 	.status {
-		flex: 1;
+		flex: 1 0 100%;
 		margin: 0;
 		font-size: 12px;
 		color: var(--muted);

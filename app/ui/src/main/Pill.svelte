@@ -42,6 +42,7 @@
 	{onpointermove}
 	{onpointerup}
 	{oncontextmenu}
+	onclick={(event) => { if (event.detail === 0) void app.summon(); }}
 >
 	<Eyes
 		bind:this={eyes}

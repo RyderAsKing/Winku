@@ -161,7 +161,7 @@ const cases = [
 		name: "settings-tools",
 		path: "/settings.html?ask=1",
 		size: { width: 680, height: 1040 },
-		ready: "[placeholder=\"Brave Search API key\"]",
+		ready: '[placeholder="Brave Search API key"]',
 		prepare: async (page) => {
 			await page.getByRole("heading", { name: "Tools" }).waitFor();
 			await page.getByRole("heading", { name: "Tools" }).evaluate((el) => el.scrollIntoView());
@@ -211,7 +211,12 @@ const cases = [
 	},
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
 	{ name: "settings", path: "/settings.html", size: { width: 680, height: 1040 }, ready: "text=Leader key" },
-	{ name: "settings-keys-warnings", path: "/settings.html?altgr=1&taken=action2", size: { width: 680, height: 1040 }, ready: "text=Use Ctrl+Shift instead" },
+	{
+		name: "settings-keys-warnings",
+		path: "/settings.html?altgr=1&taken=action2",
+		size: { width: 680, height: 1040 },
+		ready: "text=Use Ctrl+Shift instead",
+	},
 	{
 		name: "history",
 		path: "/history.html",
@@ -219,9 +224,169 @@ const cases = [
 		ready: "role=button[name='Restore as current']",
 		prepare: async (page) => {
 			await page.getByText("Draft a polite reply").click();
+			await page.getByText("Quality 82 keeps text sharp", { exact: false }).waitFor();
 		},
 	},
 ];
+
+// Stress fixtures use the public mock hooks and URL options, just like the original cases.
+for (const heading of ["Model", "Conversation", "Tools", "Speech", "Memory and voice", "Actions", "Keys", "Eyes", "App"]) {
+	cases.push({
+		name: `settings-real-${heading.toLowerCase().replaceAll(" ", "-")}`,
+		path: "/settings.html?ask=1&altgr=1&taken=action2",
+		size: { width: 680, height: 520 },
+		ready: `role=heading[name='${heading}']`,
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: heading, exact: true }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+		},
+	});
+}
+cases.push(
+	{ name: "history-empty", path: "/history.html?empty=1", size: { width: 760, height: 560 }, ready: "text=No history yet." },
+	{ name: "history-many", path: "/history.html?many=1&long=1", size: { width: 760, height: 560 }, ready: "text=Archive 1:" },
+	{
+		name: "history-no-results",
+		path: "/history.html",
+		size: { width: 760, height: 560 },
+		ready: "text=No matches.",
+		prepare: async (page) => {
+			await page.getByRole("searchbox").fill("no-such-conversation");
+		},
+	},
+	{
+		name: "transcript-long",
+		path: "/?long=1",
+		ready: "text=Files ready for review",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Control+j");
+		},
+	},
+	{
+		name: "reply-long-tools",
+		path: "/",
+		ready: "text=Review complete",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("Review these files");
+			await page.keyboard.press("Enter");
+			await page.waitForTimeout(3500);
+			await ui(page, { kind: "action_started", id: "stress", slot: 4, name: "Review files", output: "show" });
+			for (let i = 0; i < 12; i++) {
+				await engine(page, {
+					type: "tool_start",
+					id: "stress",
+					toolCallId: `stress-${i}`,
+					name: "read",
+					summary: `C:\\Projects\\${"LongDirectory".repeat(12)}\\file-${i}.md`,
+				});
+				await engine(page, {
+					type: "tool_end",
+					id: "stress",
+					toolCallId: `stress-${i}`,
+					ok: i !== 5,
+					summary: `C:\\Projects\\${"LongDirectory".repeat(12)}\\file-${i}.md`,
+				});
+			}
+			await engine(page, { type: "action_delta", id: "stress", delta: "Review complete. " + "Unbroken".repeat(45) });
+		},
+	},
+	{
+		name: "error-long",
+		path: "/",
+		ready: "role=alert",
+		prepare: async (page) => {
+			await summon(page);
+			await engine(page, {
+				type: "error",
+				errorKind: "auth",
+				message: "Connection failed for https://example.com/" + "endpoint".repeat(35),
+			});
+		},
+	},
+	{
+		name: "connect-custom",
+		path: "/?connect=1",
+		ready: "text=Base URL",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("combobox").first().selectOption("__custom__");
+		},
+	},
+	{
+		name: "focus-message",
+		path: "/",
+		ready: "textarea:focus-visible",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Tab");
+			await page.keyboard.press("Shift+Tab");
+		},
+	},
+	{
+		name: "focus-settings",
+		path: "/settings.html",
+		size: { width: 680, height: 520 },
+		ready: ":focus-visible",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Model", exact: true }).waitFor();
+			await page.keyboard.press("Tab");
+			await page.keyboard.press("Tab");
+		},
+	},
+	{
+		name: "focus-pill",
+		path: "/",
+		ready: ".pill:focus-visible",
+		prepare: async (page) => {
+			await page.keyboard.press("Tab");
+		},
+	},
+);
+
+cases.push(
+	{
+		name: "streaming",
+		path: "/",
+		ready: ".md",
+		prepare: async (page) => {
+			await summon(page);
+			await page.clock.install();
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot?");
+			await page.keyboard.press("Enter");
+			await page.clock.runFor(1300);
+		},
+	},
+	{
+		name: "proposal-expanded",
+		path: "/",
+		ready: ".proposal details[open]",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("Remember my work sign-off");
+			await page.keyboard.press("Enter");
+			await page.getByText("Show the new profile").click();
+		},
+	},
+	{
+		name: "settings-custom",
+		path: "/settings.html",
+		size: { width: 680, height: 520 },
+		ready: "text=Context window",
+		prepare: async (page) => {
+			await page.getByRole("combobox").first().selectOption("__custom__");
+		},
+	},
+	{
+		name: "settings-quick-model",
+		path: "/settings.html",
+		size: { width: 680, height: 520 },
+		ready: "[placeholder='Model id']",
+		prepare: async (page) => {
+			await page.getByLabel("Quick actions model", { exact: true }).selectOption("false");
+		},
+	},
+);
 
 const viewports = [
 	{ name: "desktop", width: 1280, height: 800, deviceScaleFactor: 1 },
@@ -267,7 +432,13 @@ try {
 					width: Math.min(vp.width, box.width + 2 * m),
 					height: Math.min(vp.height, box.height + 2 * m),
 				};
-				await page.screenshot({ path: file, animations: "disabled", caret: "hide", fullPage: Boolean(item.fullPage), ...(clip ? { clip } : {}) });
+				await page.screenshot({
+					path: file,
+					animations: "disabled",
+					caret: "hide",
+					fullPage: Boolean(item.fullPage),
+					...(clip ? { clip } : {}),
+				});
 				console.log(file);
 			} finally {
 				await context.close();

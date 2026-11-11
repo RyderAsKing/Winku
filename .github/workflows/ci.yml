@@ -37,7 +37,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Tauri system dependencies
+        # Runner DNS has failed to resolve Ubuntu's mirrors, stalling apt for the whole job; add
+        # public resolvers as a fallback, retry slow downloads, and fail fast instead of hanging.
+        timeout-minutes: 10
         run: |
+          sudo mkdir -p /etc/systemd/resolved.conf.d
+          printf '[Resolve]\nFallbackDNS=1.1.1.1 8.8.8.8\nDNS=1.1.1.1 8.8.8.8\n' | sudo tee /etc/systemd/resolved.conf.d/winku-ci.conf >/dev/null
+          sudo systemctl restart systemd-resolved
+          getent hosts azure.archive.ubuntu.com || echo "still can't resolve the mirror"
+          echo 'Acquire::Retries "3"; Acquire::http::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/99winku-ci >/dev/null
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev libasound2-dev
 

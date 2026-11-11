@@ -41,7 +41,9 @@ export type UiEvent =
 	/** An update is downloaded (auto) or available (notify): the eyes show a small dot. */
 	| { kind: "update_ready"; version: string }
 	/** The pill moved across the screen: things now grow the other way. */
-	| ({ kind: "layout" } & Layout);
+	| ({ kind: "layout" } & Layout)
+	/** The hotkey prefix has been held alone (true), or that hold ended (false). */
+	| { kind: "hotkey_hint"; show: boolean };
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {

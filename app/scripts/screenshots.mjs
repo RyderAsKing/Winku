@@ -160,6 +160,24 @@ const cases = [
 		},
 	},
 	{
+		name: "hotkey-hints",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
+		name: "hotkey-hints-left-low",
+		path: "/?left&low",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
 		name: "permission",
 		path: "/?ask=1",
 		ready: "text=Always allow this command",

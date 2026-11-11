@@ -324,6 +324,28 @@ export function createMockShell(): ShellImpl {
 		timers.push(setTimeout(() => emit("ui", { kind: "talk_end", text }), ms));
 	};
 
+	// The shell's hotkey hints, in the browser: Ctrl+Alt held on its own for 450 ms.
+	let hintTimer: ReturnType<typeof setTimeout> | undefined;
+	let hintShown = false;
+	const endHint = () => {
+		clearTimeout(hintTimer);
+		hintTimer = undefined;
+		if (hintShown) emit("ui", { kind: "hotkey_hint", show: false });
+		hintShown = false;
+	};
+	window.addEventListener("keydown", (e) => {
+		const prefixOnly = e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && (e.key === "Control" || e.key === "Alt");
+		if (!prefixOnly) return endHint();
+		if (hintTimer === undefined && !hintShown) {
+			hintTimer = setTimeout(() => {
+				hintShown = true;
+				emit("ui", { kind: "hotkey_hint", show: true });
+			}, 450);
+		}
+	});
+	window.addEventListener("keyup", endHint);
+	window.addEventListener("blur", endHint);
+
 	// Hooks for the screenshot script: fire shell `ui` events or engine events by hand.
 	(window as unknown as { __winkuMock: unknown }).__winkuMock = {
 		ui: (event: unknown) => emit("ui", event),

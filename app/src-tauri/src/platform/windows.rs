@@ -391,6 +391,7 @@ pub fn window_title(window: WindowHandle) -> Option<String> {
 /// comes back all black.
 pub fn capture_window(window: WindowHandle) -> Result<RawImage, String> {
     use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows_sys::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
@@ -496,10 +497,30 @@ pub fn capture_window(window: WindowHandle) -> Result<RawImage, String> {
             px.swap(0, 2);
             px[3] = 255;
         }
-        Ok(RawImage {
+        let full = RawImage {
             width: w as u32,
             height: h as u32,
             rgba: pixels,
+        };
+        // On Windows 10/11 GetWindowRect includes the invisible resize border; DWM knows the
+        // visible frame. Crop to it so the image has no empty strip around the edges.
+        let mut frame: RECT = std::mem::zeroed();
+        let visible = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+            (&mut frame as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        ) == 0;
+        Ok(if visible {
+            super::crop(
+                full,
+                frame.left - rect.left,
+                frame.top - rect.top,
+                frame.right - frame.left,
+                frame.bottom - frame.top,
+            )
+        } else {
+            full
         })
     }
 }

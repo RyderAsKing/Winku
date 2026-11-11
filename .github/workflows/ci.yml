@@ -120,11 +120,15 @@ jobs:
 
       - name: Smoke test, idle memory and idle CPU
         working-directory: app
+        # About 45 s. Once hung for 28 minutes before printing anything (a stuck WMI query on the
+        # runner, not the app): fail fast instead of waiting out the job timeout.
+        timeout-minutes: 5
         shell: pwsh
         run: ./scripts/measure-memory.ps1
 
       - name: Screenshots on the Windows desktop
         working-directory: app
+        timeout-minutes: 3
         shell: pwsh
         continue-on-error: true
         run: ./scripts/windows-shots.ps1

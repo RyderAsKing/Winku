@@ -17,6 +17,13 @@ public static class Keys {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint flags);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll")] public static extern int GetWindowRgn(IntPtr hwnd, IntPtr region);
+  [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+  [DllImport("gdi32.dll")] public static extern int GetRgnBox(IntPtr region, out RECT box);
+  [DllImport("gdi32.dll")] public static extern bool PtInRegion(IntPtr region, int x, int y);
+  [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   public static void Tap(byte[] mods, byte key) {
     foreach (var m in mods) keybd_event(m, 0, 0, UIntPtr.Zero);
     keybd_event(key, 0, 0, UIntPtr.Zero);
@@ -72,6 +79,21 @@ $app = Start-Process -FilePath $Exe -PassThru
 try {
   Start-Sleep -Seconds 15
   Shot "1-pill"
+  # The window region follows the pill's rounded ends, so nothing shows in the corners of its box.
+  $hwnd = [Keys]::FindWindow($null, "Winku")
+  if ($hwnd -eq [IntPtr]::Zero) { throw "no Winku window" }
+  $rgn = [Keys]::CreateRectRgn(0, 0, 0, 0)
+  try {
+    $kind = [Keys]::GetWindowRgn($hwnd, $rgn)
+    $box = New-Object Keys+RECT
+    [Keys]::GetRgnBox($rgn, [ref]$box) | Out-Null
+    $midY = [int](($box.Top + $box.Bottom) / 2)
+    $corner = [Keys]::PtInRegion($rgn, $box.Left + 2, $box.Top + 2)
+    $end = [Keys]::PtInRegion($rgn, $box.Left + 2, $midY)
+    Write-Host "pill region: kind $kind, box $($box.Left),$($box.Top)-$($box.Right),$($box.Bottom), corner in: $corner, end in: $end"
+    # 3 is COMPLEXREGION; a plain rectangle is 2.
+    if ($kind -ne 3 -or $corner -or -not $end) { throw "the pill's window region is not rounded" }
+  } finally { [Keys]::DeleteObject($rgn) | Out-Null }
   # Ctrl+Alt+Space, tapped: opens the bar.
   [Keys]::Tap([byte[]](0x11, 0x12), 0x20)
   Burst "open" 24

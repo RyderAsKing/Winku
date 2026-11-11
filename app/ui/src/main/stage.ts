@@ -28,6 +28,9 @@ export const SIZES: Record<EyeSize, Dims> = {
 /** Space between the bar (or pill) and the bubble. */
 export const GAP = 8;
 
+/** The bubble's corner radius; App.svelte's .bubble matches it. */
+export const BUBBLE_RADIUS = 18;
+
 export const DEFAULT_LAYOUT: Layout = { alignRight: true, above: false };
 
 export function dimsFor(size: EyeSize | undefined): Dims {
@@ -42,11 +45,11 @@ export function stageSize(d: Dims): { w: number; h: number } {
 export function shapesFor(d: Dims, layout: Layout, headW: number, bubbleH: number): Shape[] {
 	const stage = stageSize(d);
 	const x = (w: number) => (layout.alignRight ? stage.w - w : 0);
-	const head: Shape = { x: x(headW), y: layout.above ? stage.h - d.pillH : 0, w: headW, h: d.pillH };
+	const head: Shape = { x: x(headW), y: layout.above ? stage.h - d.pillH : 0, w: headW, h: d.pillH, r: d.pillH / 2 };
 	if (bubbleH <= 0) return [head];
 	const h = Math.min(Math.ceil(bubbleH), d.bubbleMax);
 	const y = layout.above ? stage.h - d.pillH - GAP - h : d.pillH + GAP;
-	return [head, { x: x(d.barW), y, w: d.barW, h }];
+	return [head, { x: x(d.barW), y, w: d.barW, h, r: BUBBLE_RADIUS }];
 }
 
 /** How long a reply bubble under the resting pill stays after the reply and its speech end. */

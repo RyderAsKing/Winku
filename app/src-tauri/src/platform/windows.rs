@@ -26,7 +26,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SetForegroundWindow, ShowWindow, HWND_MESSAGE, SW_RESTORE,
 };
 
-use super::{RawImage, WindowHandle};
+use super::{RawImage, RoundRect, WindowHandle};
 
 pub fn mouse_button_down() -> bool {
     key_down(VK_LBUTTON)
@@ -1040,11 +1040,15 @@ pub fn set_window_rect(window: WindowHandle, x: i32, y: i32, w: i32, h: i32) -> 
     }
 }
 
-/// Clips `window` to the union of `rects` (left, top, right, bottom; window px). Outside the
-/// region nothing paints and clicks reach the windows underneath. Empty `rects` removes the clip.
-pub fn set_window_region(window: WindowHandle, rects: &[(i32, i32, i32, i32)]) {
+/// Clips `window` to the union of `rects` (window px). Outside the region nothing paints and clicks
+/// reach the windows underneath. Empty `rects` removes the clip.
+///
+/// Rounded rects are clipped one pixel outside their curve: a region has no anti-aliasing, so an
+/// exact one would cut into the shape's soft edge. Square corners let WebView2 show stray pixels
+/// in the transparent space between the curve and the box.
+pub fn set_window_region(window: WindowHandle, rects: &[RoundRect]) {
     use windows_sys::Win32::Graphics::Gdi::{
-        CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+        CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
     };
     // SAFETY: regions are created here; SetWindowRgn takes ownership of the one it is given, the
     // rest are deleted.
@@ -1054,8 +1058,22 @@ pub fn set_window_region(window: WindowHandle, rects: &[(i32, i32, i32, i32)]) {
             return;
         }
         let region = CreateRectRgn(0, 0, 0, 0);
-        for &(l, t, r, b) in rects {
-            let part = CreateRectRgn(l, t, r, b);
+        for rect in rects {
+            let part = if rect.radius > 0 {
+                // One pixel out on every side. The ellipse is a diameter, and the region leaves
+                // out its right and bottom edge, hence the extra pixel there.
+                let d = 2 * (rect.radius + 1);
+                CreateRoundRectRgn(
+                    rect.left - 1,
+                    rect.top - 1,
+                    rect.right + 2,
+                    rect.bottom + 2,
+                    d,
+                    d,
+                )
+            } else {
+                CreateRectRgn(rect.left, rect.top, rect.right, rect.bottom)
+            };
             CombineRgn(region, region, part, RGN_OR);
             DeleteObject(part);
         }

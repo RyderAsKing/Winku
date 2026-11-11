@@ -11,7 +11,7 @@ pub fn altgr_keys() -> Option<Vec<char>> {
     None
 }
 
-use super::{RawImage, WindowHandle};
+use super::{RawImage, RoundRect, WindowHandle};
 use std::time::Duration;
 
 pub fn foreground_window() -> WindowHandle {
@@ -69,4 +69,4 @@ pub fn set_window_rect(_window: WindowHandle, _x: i32, _y: i32, _w: i32, _h: i32
 }
 
 /// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.
-pub fn set_window_region(_window: WindowHandle, _rects: &[(i32, i32, i32, i32)]) {}
+pub fn set_window_region(_window: WindowHandle, _rects: &[RoundRect]) {}

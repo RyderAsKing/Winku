@@ -6,6 +6,17 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowHandle(#[allow(dead_code)] pub(crate) isize);
 
+/// A rectangle with rounded corners, window px; right and bottom are exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+    /// Corner radius; 0 for square corners.
+    pub radius: i32,
+}
+
 /// Captured pixels, RGBA, rows top to bottom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawImage {

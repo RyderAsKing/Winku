@@ -468,6 +468,9 @@ pub struct Shape {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Corner radius.
+    #[serde(default)]
+    pub r: f64,
 }
 
 /// The UI reports its stage size and the shapes it is drawing (pill or bar, bubble). The window
@@ -495,15 +498,14 @@ pub fn set_shape(app: &AppHandle, stage: (f64, f64), shapes: &[Shape]) -> Result
     apply_view(&window, &view, &monitor)?;
     if let Some(hwnd) = handle(&window) {
         let s = monitor.scale;
-        let rects: Vec<(i32, i32, i32, i32)> = shapes
+        let rects: Vec<crate::platform::RoundRect> = shapes
             .iter()
-            .map(|r| {
-                (
-                    (r.x * s).floor() as i32,
-                    (r.y * s).floor() as i32,
-                    ((r.x + r.w) * s).ceil() as i32,
-                    ((r.y + r.h) * s).ceil() as i32,
-                )
+            .map(|r| crate::platform::RoundRect {
+                left: (r.x * s).floor() as i32,
+                top: (r.y * s).floor() as i32,
+                right: ((r.x + r.w) * s).ceil() as i32,
+                bottom: ((r.y + r.h) * s).ceil() as i32,
+                radius: (r.r * s).round() as i32,
             })
             .collect();
         crate::platform::set_window_region(hwnd, &rects);

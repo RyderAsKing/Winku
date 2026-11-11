@@ -3,6 +3,7 @@
 	// into the bar in place, and replies show in a bubble under it, or over it low on the screen.
 	import { cubicIn, cubicOut } from "svelte/easing";
 	import { fly } from "svelte/transition";
+	import { ms } from "../lib/motion.ts";
 	import "../lib/theme.css";
 	import Connect from "./Connect.svelte";
 	import Head from "./Head.svelte";
@@ -98,7 +99,8 @@
 				onclick={onBubbleClick}
 				onpointerenter={() => app.holdBubble(true)}
 				onpointerleave={() => app.holdBubble(false)}
-				transition:fly={{ y: above ? 6 : -6, duration: 160 }}
+				in:fly={{ y: above ? 8 : -8, duration: ms(220), delay: ms(open ? 40 : 0), easing: cubicOut }}
+				out:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicIn }}
 			>
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>

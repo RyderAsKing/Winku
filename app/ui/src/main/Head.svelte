@@ -7,6 +7,7 @@
 	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
 	import { cubicOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
+	import { ms } from "../lib/motion.ts";
 	import Eyes from "../lib/eyes/Eyes.svelte";
 	import { shell } from "../lib/shell.ts";
 	import type { MainState } from "./state.svelte.ts";
@@ -110,7 +111,7 @@
 	</button>
 
 	{#if open}
-		<div class="body" in:fade={{ duration: 180, delay: 60, easing: cubicOut }} out:fade={{ duration: 110 }}>
+		<div class="body" in:fade={{ duration: ms(180), delay: ms(60), easing: cubicOut }} out:fade={{ duration: ms(110) }}>
 			<div class="field">
 				{#if app.selectionChip || app.imageChip}
 					<div class="chips">

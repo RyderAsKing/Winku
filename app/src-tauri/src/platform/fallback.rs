@@ -11,7 +11,7 @@ pub fn altgr_keys() -> Option<Vec<char>> {
     None
 }
 
-use super::WindowHandle;
+use super::{RawImage, WindowHandle};
 use std::time::Duration;
 
 pub fn foreground_window() -> WindowHandle {
@@ -38,4 +38,22 @@ pub fn selection_via_copy() -> Option<String> {
 
 pub fn paste_text(_text: &str) -> Result<(), String> {
     Err("pasting is only supported on Windows".into())
+}
+
+/// True for windows that belong to Winku itself.
+pub fn is_own_window(_window: WindowHandle) -> bool {
+    false
+}
+
+pub fn window_title(_window: WindowHandle) -> Option<String> {
+    None
+}
+
+/// Readable text of a window through UI Automation.
+pub fn window_text(_window: WindowHandle) -> Option<String> {
+    None
+}
+
+pub fn capture_window(_window: WindowHandle) -> Result<RawImage, String> {
+    Err("screen capture is not supported on this platform".into())
 }

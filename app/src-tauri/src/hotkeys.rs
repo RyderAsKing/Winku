@@ -401,8 +401,7 @@ fn dispatch(app: &AppHandle, binding: Binding, pressed: bool) {
         Binding::CycleThinking if pressed => emit_ui(app, json!({ "kind": "cycle_thinking" })),
         Binding::Action(slot) if pressed => crate::actions::on_action_hotkey(app, slot),
         Binding::AskSelection if pressed => crate::actions::on_ask_hotkey(app),
-        // The screenshot hotkey (step 6) is registered so conflicts show up in Settings, but
-        // does nothing yet.
+        Binding::Screenshot if pressed => crate::capture::on_screenshot_hotkey(app),
         _ => {}
     }
 }
@@ -442,6 +441,10 @@ fn summon(app: &AppHandle, pressed: bool) {
     match released {
         Some(Release::Tap) => {
             let showing = app.state::<WindowState>().mode() != Mode::Pill;
+            if !showing {
+                // Before the bar takes focus.
+                crate::capture::note_summon(app);
+            }
             emit_ui(
                 app,
                 json!({ "kind": if showing { "hide" } else { "summon" } }),

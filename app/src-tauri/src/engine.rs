@@ -4,7 +4,7 @@
 //! - Events and `permission` Requests go to the main window as the `engine` event.
 //!   `action_end` for a replace action also pastes the result (actions.rs).
 //! - Results are matched to `engine_call`s by id.
-//! - `screen_capture` Requests are answered with an error until step 6.
+//! - `screen_capture` Requests are answered by the shell (capture.rs) on a worker thread.
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
 
 use std::collections::HashMap;
@@ -187,10 +187,12 @@ pub fn configure(app: &AppHandle) -> bool {
         return engine.send(&smoke_configure(app)).is_ok();
     }
     let store = app.state::<settings::Store>();
-    let key = secrets::get();
-    let Some(message) = store
-        .get()
-        .configure_command(&store.data_dir, key.as_deref())
+    let key = secrets::get(secrets::Account::ApiKey);
+    let search_key = secrets::get(secrets::Account::SearchApiKey);
+    let Some(message) =
+        store
+            .get()
+            .configure_command(&store.data_dir, key.as_deref(), search_key.as_deref())
     else {
         return false;
     };
@@ -239,6 +241,8 @@ fn spawn_process() -> Result<(ChildStdin, Child, std::process::ChildStdout), Str
 enum Route {
     /// A Result for a waiting `engine_call`.
     Result(String),
+    /// Answer a `screen_capture` Request ourselves.
+    ScreenCapture { id: String, include_image: bool },
     /// Answer this Request ourselves with an error Response.
     Refuse { id: String, error: String },
     /// Forward to the main window.
@@ -252,9 +256,9 @@ fn route(record: &Value) -> Route {
             let id = record["id"].as_str().unwrap_or_default().to_string();
             match record["method"].as_str() {
                 Some("permission") => Route::Forward,
-                Some("screen_capture") => Route::Refuse {
+                Some("screen_capture") => Route::ScreenCapture {
                     id,
-                    error: "screen capture is not available yet".into(),
+                    include_image: record["params"]["includeImage"].as_bool() == Some(true),
                 },
                 other => Route::Refuse {
                     id,
@@ -297,6 +301,16 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                 if let Some(tx) = engine.take_pending(&id) {
                     let _ = tx.send(record);
                 }
+            }
+            Route::ScreenCapture { id, include_image } => {
+                // Capturing can take a while; keep reading.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let outcome = crate::capture::screen_capture(&app, include_image);
+                    let _ = app
+                        .state::<Engine>()
+                        .send(&crate::capture::response(&id, outcome));
+                });
             }
             Route::Refuse { id, error } => {
                 let _ = engine
@@ -408,9 +422,27 @@ mod tests {
             route(&json!({ "type": "request", "id": "r1", "method": "permission", "params": {} })),
             Route::Forward
         );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r2", "method": "screen_capture", "params": { "includeImage": true } })
+            ),
+            Route::ScreenCapture {
+                id: "r2".into(),
+                include_image: true
+            }
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r3", "method": "screen_capture", "params": {} })
+            ),
+            Route::ScreenCapture {
+                id: "r3".into(),
+                include_image: false
+            }
+        );
         assert!(matches!(
-            route(&json!({ "type": "request", "id": "r2", "method": "screen_capture", "params": {} })),
-            Route::Refuse { id, .. } if id == "r2"
+            route(&json!({ "type": "request", "id": "r4", "method": "nope" })),
+            Route::Refuse { id, .. } if id == "r4"
         ));
     }
 

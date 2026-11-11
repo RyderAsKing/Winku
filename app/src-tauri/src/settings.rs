@@ -278,6 +278,20 @@ impl Settings {
     }
 }
 
+impl VoiceProfiles {
+    /// The profile for an app (process name like "outlook.exe", any case), else the default.
+    pub fn for_app(&self, app: Option<&str>) -> String {
+        app.and_then(|app| {
+            self.by_app
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(app))
+                .map(|(_, profile)| profile.clone())
+        })
+        .filter(|profile| !profile.trim().is_empty())
+        .unwrap_or_else(|| self.default.clone())
+    }
+}
+
 pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
@@ -377,6 +391,18 @@ mod tests {
 
     /// Settings > Actions offers "Reset to default" using the UI's copy of the defaults
     /// (`app/ui/src/lib/defaults.ts`). Keep the two in step.
+    #[test]
+    fn voice_profile_follows_the_app() {
+        let mut profiles = VoiceProfiles::default();
+        profiles.default = "casual".into();
+        profiles.by_app.insert("OUTLOOK.EXE".into(), "work".into());
+        profiles.by_app.insert("slack.exe".into(), "".into());
+        assert_eq!(profiles.for_app(Some("outlook.exe")), "work");
+        assert_eq!(profiles.for_app(Some("slack.exe")), "casual");
+        assert_eq!(profiles.for_app(Some("notepad.exe")), "casual");
+        assert_eq!(profiles.for_app(None), "casual");
+    }
+
     #[test]
     fn ui_default_actions_match() {
         let ui = include_str!("../../ui/src/lib/defaults.ts");

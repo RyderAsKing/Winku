@@ -23,6 +23,8 @@ export interface ActionSetup {
 	model: Model<Api>;
 	thinking: ThinkingLevel;
 	assistantStyle: string;
+	/** Contents of voice\<name>.md, else of the default profile; undefined when neither exists. */
+	voiceProfile: (name: string | undefined) => string | undefined;
 	/** The current thread, for useThreadContext. */
 	transcript: () => TranscriptItem[];
 	/** Persist a finished action. */
@@ -104,7 +106,7 @@ export class Actions {
 		try {
 			const context = action.useThreadContext ? threadContext(setup.transcript()) : "";
 			const request: Context = {
-				systemPrompt: actionSystemPrompt(action.output, setup.assistantStyle, action.useVoice ? command.voiceProfile : undefined),
+				systemPrompt: actionSystemPrompt(action.output, setup.assistantStyle, action.useVoice ? setup.voiceProfile(command.voiceProfile) : undefined),
 				messages: [{ role: "user", content: actionUserMessage(command, context), timestamp: Date.now() }],
 			};
 			const stream = setup.runtime.streamSimple(setup.model, request, {

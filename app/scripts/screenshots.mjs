@@ -99,6 +99,29 @@ const cases = [
 		prepare: (page) => action(page, 2, ""),
 	},
 	{
+		name: "memory-saved",
+		path: "/",
+		ready: "text=Show the new profile",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("Remember that I sign off work emails with “Cheers, Sam”");
+			await page.keyboard.press("Enter");
+			await page.getByText("Show the new profile").waitFor();
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		name: "settings-memory",
+		path: "/settings.html",
+		size: { width: 680, height: 1040 },
+		ready: "text=Use a voice for this app",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Memory and voice" }).waitFor();
+			await page.getByRole("button", { name: "Forget everything" }).click();
+			await page.getByRole("heading", { name: "Memory and voice" }).evaluate((el) => el.scrollIntoView());
+		},
+	},
+	{
 		name: "settings-actions",
 		path: "/settings.html",
 		size: { width: 680, height: 1040 },

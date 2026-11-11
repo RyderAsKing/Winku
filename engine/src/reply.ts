@@ -39,6 +39,11 @@ export class Replies {
 		private readonly onCompacted: (ok: boolean) => void,
 	) {}
 
+	/** The reply currently being produced (tools run inside it). */
+	get activeId(): string | undefined {
+		return this.active?.id;
+	}
+
 	get busy(): boolean {
 		return !!this.active || this.queue.length > 0 || !!this.session?.isStreaming;
 	}

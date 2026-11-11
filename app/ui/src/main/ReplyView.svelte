@@ -47,9 +47,73 @@
 			{/if}
 		</p>
 	{/each}
+	{#each reply.proposals ?? [] as proposal (proposal.proposalId)}
+		<div class="proposal">
+			<p>
+				{proposal.current ? "Change" : "Create"} your <strong>{proposal.profile}</strong> voice: {proposal.reason}
+			</p>
+			<details>
+				<summary>Show the new profile</summary>
+				<pre class="mono">{proposal.content}</pre>
+			</details>
+			{#if proposal.decided}
+				<p class="note">{proposal.decided === "accepted" ? "Saved." : "Dismissed."}</p>
+			{:else}
+				<div class="choices">
+					<button type="button" class="accept" onclick={() => app.decideProposal(proposal, true)}>Accept</button>
+					<button type="button" class="dismiss" onclick={() => app.decideProposal(proposal, false)}>Dismiss</button>
+				</div>
+			{/if}
+		</div>
+	{/each}
 </div>
 
 <style>
+	.proposal {
+		display: grid;
+		gap: 6px;
+		padding-top: 8px;
+		border-top: 1px solid var(--line);
+		font-size: 13px;
+	}
+	.proposal p {
+		margin: 0;
+		text-wrap: pretty;
+	}
+	.proposal summary {
+		color: var(--muted);
+		font-size: 12px;
+		cursor: pointer;
+	}
+	.proposal pre {
+		margin: 6px 0 0;
+		max-height: 160px;
+		overflow: auto;
+		padding: 8px 10px;
+		border-radius: 8px;
+		background: var(--panel-raised);
+		font-size: 12px;
+		white-space: pre-wrap;
+	}
+	.choices {
+		display: flex;
+		gap: 8px;
+	}
+	.choices button {
+		height: 28px;
+		padding: 0 12px;
+		border-radius: 8px;
+		border: 1px solid var(--line-strong);
+		background: none;
+		font-size: 12px;
+		cursor: pointer;
+	}
+	.choices .accept {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #071012;
+		font-weight: 600;
+	}
 	.reply {
 		display: grid;
 		gap: 6px;

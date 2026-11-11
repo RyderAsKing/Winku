@@ -106,6 +106,13 @@ export interface ActionSpec {
 	useVoice: boolean;
 }
 
+export interface VoiceProfileInfo {
+	/** File stem: voice\<name>.md. */
+	name: string;
+	/** First non-empty line, without a leading "#", for a short label. */
+	summary: string;
+}
+
 export interface ToolPermissionRequest {
 	tool: string;
 	/** One-line, human-readable: "Run: Remove-Item C:\\tmp\\x -Recurse" */
@@ -134,7 +141,7 @@ export interface ConfigureCommand {
 	alwaysAllow: string[];
 	/** How the assistant talks to the user (settings: "Its voice"). Free text, may be empty. */
 	assistantStyle: string;
-	/** Voice profile chosen for the active app, by file stem (e.g. "casual"). */
+	/** settings.voiceProfiles.default: the profile (file stem in voice\) used when no app rule matches. */
 	defaultVoiceProfile?: string;
 }
 
@@ -149,7 +156,7 @@ export type Command =
 			images?: ImageAttachment[];
 			/** The user spoke this (hold-to-talk). The shell decides about TTS; the engine only records it. */
 			spoken?: boolean;
-			/** Voice profile for this message, picked by the shell from the active app. */
+			/** Voice profile name (file stem in voice\) for the active app, picked by the shell. */
 			voiceProfile?: string;
 	  }
 	| { type: "abort"; id?: string }
@@ -172,8 +179,9 @@ export type Command =
 	 *  - replace/show: a one-off call on the Quick model (Main if no Quick). Not added to the
 	 *    thread. Streams action_delta, then action_end; a failure sends error (with this id)
 	 *    then action_end with aborted: true. Recorded in engine\actions.jsonl for History.
-	 *    useThreadContext adds the current thread's messages as context; useVoice adds
-	 *    voiceProfile to the instructions. The mood tag is stripped and ignored.
+	 *    useThreadContext adds the current thread's messages as context; useVoice adds the
+	 *    contents of voice\<voiceProfile>.md (else the configured default profile) to the
+	 *    instructions. The mood tag is stripped and ignored.
 	 *  - agent: a normal prompt in the current thread with tools ("<prompt>\n\nSelected text: …"),
 	 *    with this id: thinking, text_delta, tool_*, reply_end. Queued like prompt if busy.
 	 * `abort` stops a running action too.
@@ -193,10 +201,14 @@ export type Command =
 	/** Sends a tiny request (and a tiny image, to detect image support).
 	 *  Result data: { ok: boolean; supportsImages: boolean; error?: string; errorKind?: ErrorKind }. */
 	| { type: "test_connection"; id: string; provider: ProviderConfig; apiKey?: string; model: string }
+	/** Undo one memory save: restores the index and topic file as they were before it. Emits memory_undone. */
 	| { type: "memory_undo"; id?: string; saveId: string }
-	/** Wipe memory\ entirely (Settings > Forget everything, after the shell's confirmation). */
+	/** Wipe memory\ entirely (Settings > Forget everything, after the UI's confirmation). Result data: { removed: number } (files). */
 	| { type: "memory_forget_all"; id?: string }
+	/** Accept writes voice\<profile>.md with the proposed content; Dismiss drops it. Result data: { written: boolean }. */
 	| { type: "voice_proposal_decision"; id?: string; proposalId: string; accept: boolean }
+	/** Result data: VoiceProfileInfo[] for the files in voice\, sorted by name. */
+	| { type: "voice_list"; id: string }
 	/** Result data: { rssBytes, heapUsedBytes, uptimeMs }. */
 	| { type: "stats"; id: string }
 	| { type: "shutdown" };
@@ -248,9 +260,11 @@ export type Event =
 	| { type: "thinking_changed"; role: ModelRole; level: ThinkingLevel }
 	| { type: "action_delta"; id: string; delta: string }
 	| { type: "action_end"; id: string; text: string; output: "replace" | "show"; aborted: boolean }
-	| { type: "memory_saved"; saveId: string; title: string }
+	/** The model saved a memory (memory_save tool) during reply `id`. */
+	| { type: "memory_saved"; id?: string; saveId: string; title: string }
 	| { type: "memory_undone"; saveId: string }
-	| { type: "voice_proposal"; proposalId: string; profile: string; content: string; reason: string }
+	/** The model proposed a change to a voice profile (voice_propose tool). `current` is the file as it is now ("" if new). */
+	| { type: "voice_proposal"; id?: string; proposalId: string; profile: string; content: string; current: string; reason: string }
 	| { type: "error"; id?: string; errorKind: ErrorKind; message: string };
 
 export type Request =

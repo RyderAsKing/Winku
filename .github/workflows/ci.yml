@@ -82,6 +82,13 @@ jobs:
   # and measurements, and the tests (which need their own debug build).
   windows-build:
     runs-on: windows-latest
+    env:
+      # CI only needs a working optimised app to smoke-test and measure, not the release's
+      # smallest binary: skip whole-program LTO, which is single-threaded and took about 2.5 of the
+      # job's 5.5 minutes. Releases (release.yml) keep the full Cargo.toml profile. Job-level, so
+      # rust-cache keys its cache on these too.
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4

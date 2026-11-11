@@ -1,18 +1,22 @@
 // The "now" line: what the user was looking at, appended to the end of the user message
 // (never the system prompt, so the prompt cache keeps hitting).
-import type { NowLine } from "./protocol.ts";
+import type { NowLine, SpeechLength } from "./protocol.ts";
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const unescape = (s: string) =>
 	s.replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 
-/** `\n\n<now app="…" window="…" spoken="yes">selection</now>`, or "" when there is nothing to say. */
-export function formatNow(now: NowLine | undefined, spoken = false): string {
-	if (!now && !spoken) return "";
+/**
+ * `\n\n<now app="…" window="…" spoken="yes" speak="enough">selection</now>`, or "" when there is
+ * nothing to say. `speak` asks for a <say> block of that length (prompt.ts).
+ */
+export function formatNow(now: NowLine | undefined, spoken = false, speak?: SpeechLength): string {
+	if (!now && !spoken && !speak) return "";
 	const attrs = [
 		now?.app ? ` app="${escape(now.app)}"` : "",
 		now?.windowTitle ? ` window="${escape(now.windowTitle)}"` : "",
 		spoken ? ` spoken="yes"` : "",
+		speak ? ` speak="${speak}"` : "",
 	].join("");
 	const selection = now?.selection ? escape(now.selection) : "";
 	if (!attrs && !selection) return "";

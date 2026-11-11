@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync
 import { join } from "node:path";
 import { type SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { stripMood } from "./mood.ts";
+import { splitSay } from "./say.ts";
 import { parseNow } from "./nowline.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
@@ -321,7 +322,11 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 			items.push({ kind: "user", id: entry.id, text, images, ...(now ? { now } : {}), ...(spoken ? { spoken } : {}), at });
 		} else if (message.role === "assistant") {
 			const blocks = (Array.isArray(message.content) ? message.content : []) as Block[];
-			const { text, mood } = stripMood(textOf(blocks));
+			// A spoken reply's <say> blocks aren't part of what was written; if nothing was, the
+			// last block was shown as the reply (reply.ts), so it is here too.
+			const { text: raw, mood } = stripMood(textOf(blocks));
+			const split = splitSay(raw);
+			const text = split.text.trim() ? split.text : (split.said.at(-1) ?? "");
 			const stopReason = message.stopReason as string | undefined;
 			if (text || stopReason === "aborted") {
 				items.push({

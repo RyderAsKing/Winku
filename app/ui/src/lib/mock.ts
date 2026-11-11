@@ -85,6 +85,9 @@ All files are ready. Review the changes before continuing.`;
 const EXPLAIN =
 	"**Idempotent** means doing it twice has the same effect as doing it once.\n\n- Setting a light switch to *on* is idempotent.\n- Flipping it is not: the second flip undoes the first.";
 
+/** What the mock says aloud for REPLY when the prompt asks for speech. */
+const SAID = "Press Windows, Shift and S, then drag over the part you want. It lands on your clipboard.";
+
 const REPLY =
 	"Sure. Press **Win+Shift+S**, drag over the area, and the capture lands on your clipboard. Paste it into Paint or any chat window to save or share it.";
 
@@ -130,13 +133,18 @@ export function createMockShell(): ShellImpl {
 		emit("engine", { type: "context", tokens: Math.round(ctx * 200_000), contextWindow: 200_000, percent: ctx * 100 });
 	};
 
-	const stream = (id: string) => {
+	const stream = (id: string, speak: boolean) => {
 		timers.forEach(clearTimeout);
 		timers = [];
 		streaming = id;
 		emit("engine", { type: "thinking", id });
 		const words = REPLY.split(/(?<= )/);
 		let t = 900;
+		// Like the engine for a spoken reply: the <say> block comes first, then the written part.
+		if (speak) {
+			timers.push(setTimeout(() => emit("engine", { type: "say", id, text: SAID }), t));
+			t += 500;
+		}
 		for (const word of words) {
 			timers.push(setTimeout(() => emit("engine", { type: "text_delta", id, delta: word }), t));
 			t += 45;
@@ -154,7 +162,7 @@ export function createMockShell(): ShellImpl {
 		if (message.type === "prompt") {
 			if (/\bremember\b/i.test(message.text)) memoryReply(message.id);
 			else if (/\bclean up\b/i.test(message.text)) askReply(message.id);
-			else stream(message.id);
+			else stream(message.id, Boolean(message.speak));
 		}
 		if (message.type === "abort" && streaming) {
 			timers.forEach(clearTimeout);
@@ -259,7 +267,7 @@ export function createMockShell(): ShellImpl {
 		actionCount += 1;
 		const id = `action-${actionCount}`;
 		emit("ui", { kind: "action_started", id, slot, name: spec.name, output: spec.output });
-		if (spec.output === "agent") return stream(id);
+		if (spec.output === "agent") return stream(id, false);
 		const words = EXPLAIN.split(/(?<= )/);
 		let t = 700;
 		for (const word of words) {
@@ -297,11 +305,14 @@ export function createMockShell(): ShellImpl {
 		}
 	};
 	let speechTimer: ReturnType<typeof setTimeout> | undefined;
-	const stopSpeech = () => {
+	let speechEnds = 0;
+	const speechLeft = () => Math.max(0, speechEnds - Date.now());
+	/** Stops the pretend speech; `quietly` (an append taking over) sends no playing: false. */
+	const stopSpeech = (quietly = false) => {
 		if (speechTimer === undefined) return;
 		clearTimeout(speechTimer);
 		speechTimer = undefined;
-		emit("ui", { kind: "speech", playing: false });
+		if (!quietly) emit("ui", { kind: "speech", playing: false });
 	};
 	/** Hold-to-talk by hand: talk_start, a few levels, then talk_end with `text` after `ms` (or never, if ms < 0). */
 	const talk = (text: string, ms = 1200) => {
@@ -391,13 +402,16 @@ export function createMockShell(): ShellImpl {
 					return undefined as T;
 				}
 				case "speak": {
-					stopSpeech();
-					emit("ui", { kind: "speech", playing: true });
 					const words = String(args?.text ?? "").split(/\s+/).length;
+					const append = Boolean(args?.append) && speechTimer !== undefined;
+					const extra = append ? speechLeft() : 0;
+					stopSpeech(append);
+					if (!append) emit("ui", { kind: "speech", playing: true });
+					speechEnds = Date.now() + extra + Math.min(8000, 400 + words * 280);
 					speechTimer = setTimeout(() => {
 						speechTimer = undefined;
 						emit("ui", { kind: "speech", playing: false });
-					}, Math.min(8000, 400 + words * 280));
+					}, speechEnds - Date.now());
 					return undefined as T;
 				}
 				case "stop_speaking":

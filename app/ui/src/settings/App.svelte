@@ -587,6 +587,14 @@
 					<option value="always_text">Never</option>
 				</select>
 			</label>
+			<label class="field">
+				<span>How much it says</span>
+				<select value={settings.voice.say} onchange={(e) => saveVoice({ say: e.currentTarget.value as Settings["voice"]["say"] })}>
+					<option value="brief">A sentence or two</option>
+					<option value="enough">Enough to follow without looking</option>
+					<option value="full">Everything it writes</option>
+				</select>
+			</label>
 			<div class="field top">
 				<span class="label-top">Reading voice</span>
 				<div class="stack">

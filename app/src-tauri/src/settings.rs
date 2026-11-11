@@ -133,7 +133,10 @@ pub struct Voice {
     #[serde(default)]
     pub tts_voice: Option<u8>,
     pub os_voice: Option<String>,
+    /// `"mirror"`, `"always_voice"` or `"always_text"` (SPEC §11).
     pub reply: String,
+    /// How much of a spoken reply is said: `"brief"`, `"enough"` or `"full"`.
+    pub say: String,
     pub listening_paused: bool,
     #[serde(flatten)]
     pub extra: Extra,
@@ -195,6 +198,7 @@ impl Default for Voice {
             tts_voice: Some(crate::voice::tts::DEFAULT_VOICE),
             os_voice: None,
             reply: "mirror".into(),
+            say: "enough".into(),
             listening_paused: false,
             extra: Extra::new(),
         }
@@ -225,8 +229,16 @@ impl Voice {
         {
             self.tts_voice = defaults.tts_voice;
         }
-        if !matches!(self.reply.as_str(), "mirror" | "always" | "never") {
-            self.reply = defaults.reply;
+        // Before v0.1.3 the shell only knew "always" and "never", and reset the UI's own
+        // values to "mirror".
+        match self.reply.as_str() {
+            "always" => self.reply = "always_voice".into(),
+            "never" => self.reply = "always_text".into(),
+            "mirror" | "always_voice" | "always_text" => {}
+            _ => self.reply = defaults.reply,
+        }
+        if !matches!(self.say.as_str(), "brief" | "enough" | "full") {
+            self.say = defaults.say;
         }
         if self
             .os_voice
@@ -462,16 +474,22 @@ mod tests {
         settings.voice.stt = "whisper-base-en".into();
         settings.voice.tts = "os".into();
         settings.voice.tts_voice = Some(7);
-        settings.voice.reply = "always".into();
+        settings.voice.reply = "always_voice".into();
+        settings.voice.say = "brief".into();
         settings.normalize();
         assert_eq!(settings.voice.stt, "whisper-base-en");
         assert_eq!(settings.voice.tts, "os");
         assert_eq!(settings.voice.tts_voice, Some(7));
-        assert_eq!(settings.voice.reply, "always");
+        assert_eq!(settings.voice.reply, "always_voice");
+        assert_eq!(settings.voice.say, "brief");
+        settings.voice.reply = "always_text".into();
+        settings.normalize();
+        assert_eq!(settings.voice.reply, "always_text");
         settings.voice.stt = "supertonic".into(); // a TTS model
         settings.voice.tts = "piper".into();
         settings.voice.tts_voice = Some(40);
         settings.voice.reply = "sometimes".into();
+        settings.voice.say = "everything".into();
         settings.voice.os_voice = Some(" ".into());
         settings.normalize();
         assert_eq!(settings.voice, Voice::default());
@@ -485,7 +503,7 @@ mod tests {
         old.normalize();
         assert_eq!(old.voice.tts, "supertonic");
         assert_eq!(old.voice.tts_voice, Some(crate::voice::tts::DEFAULT_VOICE));
-        assert_eq!(old.voice.reply, "always");
+        assert_eq!(old.voice.reply, "always_voice");
         // After that, choosing the OS voice sticks.
         old.voice.tts = "os".into();
         old.normalize();

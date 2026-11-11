@@ -593,20 +593,17 @@ pub fn apply_eyes_visibility(app: &AppHandle) {
     }
 }
 
-/// Called on every `Moved` of the main window. Once the pill has been still for a moment (and
-/// the mouse button is up), snap it to a nearby edge and save the position for this setup.
+/// Called on every `Moved` of the main window, resting or open. Once it has been still for a
+/// moment (and the mouse button is up), snap the pill to a nearby edge and save the position for
+/// this setup, so closing the bar leaves the eyes where they were dropped.
 pub fn on_moved(app: &AppHandle) {
     let state = app.state::<WindowState>();
-    if state.mode() != Mode::Pill {
-        return;
-    }
     let generation = state.move_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(SETTLE);
         let state = app.state::<WindowState>();
-        if state.move_generation.load(Ordering::SeqCst) != generation || state.mode() != Mode::Pill
-        {
+        if state.move_generation.load(Ordering::SeqCst) != generation {
             return;
         }
         if crate::platform::mouse_button_down() {

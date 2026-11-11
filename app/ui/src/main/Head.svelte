@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The pill, and the bar it stretches into. The eyes never move: the bar grows from the pill
-	// toward the middle of the screen. Resting: click to open, drag to move, right-click for the
-	// menu. Open: the message box, then the context meter and thinking level.
+	// toward the middle of the screen. Click the eyes to open or close, drag them to move Winku,
+	// right-click for the menu. Open: the message box, then the context meter and thinking level.
 	//
 	// The eyes are pinned to the anchored end and the body is laid out at the full bar width the
 	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
@@ -31,13 +31,15 @@
 
 	let start: { x: number; y: number } | null = null;
 
+	// A press doesn't focus the eyes (onmousedown): focus stays in the message box while the bar is
+	// dragged, and the next key press doesn't ring the eyes. Tab still reaches them.
 	function onpointerdown(event: PointerEvent) {
 		if (event.button !== 0) return;
 		start = { x: event.screenX, y: event.screenY };
 	}
 
 	function onpointermove(event: PointerEvent) {
-		if (!start || open) return;
+		if (!start) return;
 		if (Math.hypot(event.screenX - start.x, event.screenY - start.y) > 3) {
 			start = null;
 			void shell.startDrag();
@@ -87,6 +89,7 @@
 		type="button"
 		aria-label={open ? "Close Winku" : "Open Winku"}
 		{onpointerdown}
+		onmousedown={(event) => event.preventDefault()}
 		{onpointermove}
 		{onpointerup}
 		{oncontextmenu}

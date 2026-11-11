@@ -2,6 +2,7 @@
 # tap of the summon key (on a fresh profile it shows the Connect form in the bubble). Proves the
 # window shape and transparency on real Windows, which the browser mock can't. The open and the
 # close are also captured as bursts of frames (open-NN.png, close-NN.png) to check the transition.
+# The open bar is also dragged by its eyes, and must stay where it was dropped once closed.
 param(
   [string]$Exe = "$PSScriptRoot\..\src-tauri\target\release\winku.exe",
   [string]$OutDir = (Join-Path $env:RUNNER_TEMP "winku-shots")
@@ -30,6 +31,19 @@ public static class Keys {
     keybd_event(key, 0, 2, UIntPtr.Zero);
     for (int i = mods.Length - 1; i >= 0; i--) keybd_event(mods[i], 0, 2, UIntPtr.Zero);
   }
+}
+"@
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class Mouse {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(IntPtr cls, string title);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+  public static RECT Rect(IntPtr hwnd) { RECT r; GetWindowRect(hwnd, out r); return r; }
 }
 "@
 [Keys]::SetProcessDPIAware() | Out-Null
@@ -99,11 +113,39 @@ try {
   Burst "open" 24
   Start-Sleep -Seconds 3
   Shot "2-bar"
+  # Drag the open bar by its eyes. On a fresh profile the pill rests at the right edge with the
+  # bar growing left, so the eyes are at the window's top-right.
+  $hwnd = [Mouse]::FindWindow([IntPtr]::Zero, "Winku")
+  if ($hwnd -eq [IntPtr]::Zero) { throw "no Winku window" }
+  $scale = [Mouse]::GetDpiForWindow($hwnd) / 96.0
+  $before = [Mouse]::Rect($hwnd)
+  $x = [int]($before.Right - 46 * $scale); $y = [int]($before.Top + 28 * $scale)
+  [Mouse]::SetCursorPos($x, $y) | Out-Null
+  Start-Sleep -Milliseconds 200
+  [Mouse]::mouse_event(0x2, 0, 0, 0, [UIntPtr]::Zero)
+  for ($i = 1; $i -le 20; $i++) {
+    [Mouse]::SetCursorPos($x - 10 * $i, $y + 8 * $i) | Out-Null
+    Start-Sleep -Milliseconds 25
+  }
+  [Mouse]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 800
+  $moved = [Mouse]::Rect($hwnd)
+  Write-Host "bar drag: window $($before.Left),$($before.Top) -> $($moved.Left),$($moved.Top)"
+  Shot "2b-bar-dragged"
+  if (($before.Left - $moved.Left) -lt 80 -or ($moved.Top - $before.Top) -lt 60) {
+    throw "dragging the open bar by its eyes did not move it"
+  }
   # Esc closes it again.
   [Keys]::Tap([byte[]]@(), 0x1B)
   Burst "close" 24
   Start-Sleep -Seconds 2
   Shot "3-closed"
+  # Closing keeps the eyes where the open bar was dropped.
+  $closed = [Mouse]::Rect($hwnd)
+  Write-Host "after close: window $($closed.Left),$($closed.Top)"
+  if ($closed.Left -ne $moved.Left -or $closed.Top -ne $moved.Top) {
+    throw "closing the bar moved the eyes back from where they were dropped"
+  }
   # The taps above must not have sent a hint. Then Ctrl+Alt held on its own for about a second:
   # the shell must send hotkey_hint show, and hide on release.
   if (Test-Path $hintLog) { throw "hotkey_hint fired before any hold:`n$(Get-Content $hintLog -Raw)" }

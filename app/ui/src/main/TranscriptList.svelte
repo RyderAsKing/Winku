@@ -1,26 +1,20 @@
 <script lang="ts">
 	// The whole thread (Ctrl+J). Tool calls and the compaction summary are collapsed rows.
 	import type { TranscriptItem } from "../../../../engine/src/protocol.ts";
+	import { follow } from "../lib/follow.ts";
 	import Markdown from "../lib/Markdown.svelte";
 	import ReplyView from "./ReplyView.svelte";
 	import type { MainState } from "./state.svelte.ts";
 
 	let { app, items, live = true }: { app?: MainState; items: TranscriptItem[]; live?: boolean } = $props();
 
-	let scroller: HTMLElement | undefined = $state();
 	const showLive = $derived(live && app?.reply && app.reply.kind === "prompt" && !app.reply.done);
-
-	// Keep the newest message in view as the list grows or a reply streams.
-	$effect(() => {
-		void items.length;
-		void app?.reply?.text;
-		if (scroller) scroller.scrollTop = scroller.scrollHeight;
-	});
 </script>
 
+<!-- It follows the newest message while scrolled to the bottom (lib/follow.ts). -->
 <!-- Keyboard users need to focus this scroll region to read older messages. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="list" bind:this={scroller} tabindex="0" role="region" aria-label="Conversation">
+<div class="list" use:follow tabindex="0" role="region" aria-label="Conversation">
 	{#if items.length === 0 && !showLive}
 		<p class="empty">Nothing here yet.</p>
 	{/if}

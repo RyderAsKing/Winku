@@ -21,7 +21,7 @@ const INSTRUCTIONS = `You are Winku, a small assistant that lives on the user's 
 - Markdown is fine (lists, code blocks, bold), but keep formatting light.
 - The end of a user message may carry a <now> tag describing what the user was looking at (the app, the window title and any selected text). Use it when it helps; don't mention it otherwise.`;
 
-const MOOD_INSTRUCTION = `End every reply with exactly one mood tag that matches the tone of your reply, on its own at the very end: <mood:NAME>, where NAME is one of ${MOODS.join(", ")}. The tag is hidden from the user and moves your eyes. Never mention it.`;
+const MOOD_INSTRUCTION = `End every reply with exactly one mood tag that matches the tone of your reply, on its own at the very end: <mood:NAME>, where NAME is one of ${MOODS.join(", ")}. Use hearts rarely, only for genuinely warm moments. The tag is hidden from the user and moves your eyes. Never mention it.`;
 
 function section(name: string, content: string | undefined, attributes = ""): string | undefined {
 	const trimmed = content?.trim();

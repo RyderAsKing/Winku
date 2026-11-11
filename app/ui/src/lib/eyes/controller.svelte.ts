@@ -5,10 +5,10 @@
 // is showing. With the bar hidden or the eyes asleep everything is still, so the resting pill
 // costs nothing. One-off reactions (noted, yawn, wipe) still play because they mark events.
 import type { Mood } from "../../../../../engine/src/protocol.ts";
-import type { EyeState } from "./look.ts";
+import { afterReply, type EyeState, HeartsGate, type MoodLook, moodLook } from "./look.ts";
 
 export type Activity = "idle" | "listening" | "thinking" | "speaking" | "error";
-type Transient = "happy" | "hearts" | "cleared";
+type Transient = MoodLook | "cleared";
 
 interface EyeHandle {
 	blink(): void;
@@ -19,6 +19,15 @@ interface EyeHandle {
 }
 
 const SLEEP_AFTER_MS = 10 * 60_000;
+
+/** How long each mood shows after a reply, in ms. */
+const MOOD_MS: Record<MoodLook, number> = {
+	happy: 2000,
+	hearts: 2600,
+	sad: 2400,
+	surprised: 1600,
+	pondering: 2000,
+};
 
 export class EyeController {
 	activity: Activity = $state("idle");
@@ -36,6 +45,7 @@ export class EyeController {
 	#sleepTimer: ReturnType<typeof setTimeout> | undefined;
 	#idleTimer: ReturnType<typeof setTimeout> | undefined;
 	#errorTimer: ReturnType<typeof setTimeout> | undefined;
+	readonly #hearts = new HeartsGate();
 
 	constructor() {
 		const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -80,11 +90,14 @@ export class EyeController {
 		}, 6000);
 	}
 
-	/** A reply finished. Mood tag if the model gave one, else a short happy look (SPEC §4). */
-	replyFinished(mood: Mood | undefined, userSaidThanks: boolean) {
+	/**
+	 * A reply finished. The mood tag decides the look; without one, the fallback rules are a
+	 * short happy look, or hearts when the user said thanks (SPEC §4). `neutral` shows nothing.
+	 */
+	replyFinished(mood: Mood | undefined, userSaidThanks: boolean, now = Date.now()) {
 		this.setActivity("idle");
-		if (mood === "hearts" || (mood === undefined && userSaidThanks)) this.#flash("hearts", 2600);
-		else if (mood === undefined || mood === "happy") this.#flash("happy", 2000);
+		const look = afterReply(moodLook(mood, userSaidThanks), this.#hearts, now);
+		if (look) this.#flash(look, MOOD_MS[look]);
 	}
 
 	cleared() {
@@ -127,8 +140,4 @@ export class EyeController {
 			5000 + Math.random() * 7000,
 		);
 	}
-}
-
-export function saysThanks(text: string): boolean {
-	return /\b(thanks|thank you|thx|ty|cheers|much appreciated)\b/i.test(text);
 }

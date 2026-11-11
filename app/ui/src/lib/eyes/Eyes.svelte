@@ -177,14 +177,14 @@
 									<path d="M 90 64 Q 96 76 88 82 Q 84 72 90 64 Z" fill="#7FD4FF" opacity="0.9" />
 								{/if}
 							{:else if look.shape === "arc"}
-								<path d={filledArc(C, 62, 70, 26, 16)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
-								<path d={filledArc(C, 62, 70, 26, 16)} fill="url(#{uid}-fill-{side})" />
-								<path d={filledArc(C - 4, 58, 28, 16, 5)} fill="#fff" opacity="0.55" />
+								<path d={filledArc(C, 68, 74, 46, 30)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
+								<path d={filledArc(C, 68, 74, 46, 30)} fill="url(#{uid}-fill-{side})" />
+								<path d={filledArc(C - 6, 58, 30, 14, 6)} fill="#fff" opacity="0.6" />
 							{:else if look.shape === "heart"}
-								<path d={heartPath(C, 56, 46)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
-								<path d={heartPath(C, 56, 46)} fill="url(#{uid}-fill-{side})" />
-								<ellipse cx={C - 8} cy="46" rx="8" ry="6" fill="#fff" opacity="0.88" />
-								<circle cx={C + 8} cy="52" r="2.4" fill="#fff" opacity="0.95" />
+								<path d={heartPath(C, 56, 62)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
+								<path d={heartPath(C, 56, 62)} fill="url(#{uid}-fill-{side})" />
+								<ellipse cx={C - 13} cy="44" rx="9" ry="6.5" fill="#fff" opacity="0.88" />
+								<circle cx={C + 12} cy="49" r="2.8" fill="#fff" opacity="0.95" />
 							{:else}
 								<path d={filledArc(C, 64, 72, 16, 11)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.85" />
 								<path d={filledArc(C, 64, 72, 16, 11)} fill="url(#{uid}-fill-{side})" />

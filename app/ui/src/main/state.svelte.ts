@@ -6,8 +6,8 @@ import type {
 	ThinkingLevel,
 	TranscriptItem,
 } from "../../../../engine/src/protocol.ts";
-import { EyeController, saysThanks } from "../lib/eyes/controller.svelte.ts";
-import { TINTS } from "../lib/eyes/look.ts";
+import { EyeController } from "../lib/eyes/controller.svelte.ts";
+import { lidFor, saysThanks, TINTS } from "../lib/eyes/look.ts";
 import type { Settings } from "../lib/settings.ts";
 import { type EngineMessage, newId, onEngine, onSettingsChanged, onUi, shell, type UiEvent, type WindowMode } from "../lib/shell.ts";
 
@@ -72,10 +72,7 @@ export class MainState {
 	);
 	readonly thinking: ThinkingLevel = $derived(this.ready?.thinking ?? this.settings?.main?.thinking ?? "medium");
 	readonly tint: string = $derived(TINTS[this.thinking]);
-	/** Lids lower gradually once context passes 20%, up to 30% closed at the limit (SPEC §4). */
-	readonly lid: number = $derived(
-		this.contextPercent === null ? 0 : 0.3 * Math.min(1, Math.max(0, (this.contextPercent - 20) / 80)) ** 1.3,
-	);
+	readonly lid: number = $derived(lidFor(this.contextPercent));
 
 	#lastUserText = "";
 	#toastTimer: ReturnType<typeof setTimeout> | undefined;

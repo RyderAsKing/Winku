@@ -11,7 +11,9 @@
     "dev": "bun run engine && tauri dev",
     "build": "bun run engine && tauri build",
     "tauri": "tauri",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "motion-check": "node scripts/motion-check.mjs",
+    "test": "bun test ui/test"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

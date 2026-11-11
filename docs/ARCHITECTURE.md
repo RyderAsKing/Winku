@@ -178,9 +178,11 @@ app/ui/src/
 
 - Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index) get unit tests. Everything also runs against the compiled binary in CI.
 - Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing). Platform code is behind traits so the logic is testable on Linux.
-- UI: `svelte-check` and a Vite build.
-- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `settings`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
-- CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory. A Linux job runs the same checks faster.
+- UI: `svelte-check`, a Vite build, and `bun run test` for the pure eye logic (`ui/src/lib/eyes/look.ts`: mood looks, the hearts cooldown, lids, colours).
+- Eyes motion budget: `cd app && bun run motion-check` starts Vite and drives the mock shell in Chromium. It checks that the resting pill runs no animations, that the idle bar runs no endless loop, that the speaking bounce runs only while the bar shows, and that "reduce motion" stops every loop. Windows CI also samples idle CPU for the whole process tree with the pill showing (`scripts/measure-memory.ps1`).
+- Eyes gallery: `http://127.0.0.1:5173/eyes.html` under `bun run ui:dev` shows every state, tint and lid level at pill size (`?animate=1` turns the loops on). It is dev-only and not part of the build.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `eyes` (the gallery), `settings`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
+- CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory and CPU. A Linux job runs the same checks faster.
 
 ## Decisions not spelled out in the spec
 
@@ -189,3 +191,6 @@ app/ui/src/
 - **Frozen system prompt lives in the thread.** pi records the prompt as a system message in the session file; when a thread is reopened (restart, Undo, Restore) the engine reuses that preamble instead of rebuilding it, so a settings change only reaches the prompt after a clear or a compaction.
 - **Thread pointer file** (`engine\current.json`) instead of "most recent session file", so Restore survives a restart even before the restored thread gets a new message.
 - **Tap/hold threshold** of 250 ms on the summon key.
+- **Mood tags beyond the spec table.** The engine accepts `happy`, `hearts`, `neutral`, `sad`, `surprised` and `thinking`. After a reply: `happy` and `hearts` show those looks, `sad` droops the outer corners, `surprised` widens the eyes, `thinking` shows the thinking pose in the resting tint ("pondering"), and `neutral` shows nothing. Without a tag the fallback is happy, or hearts if the user said thanks.
+- **Hearts stay rare** with a 15-minute cooldown: hearts asked for again within it show as happy. The system prompt also tells the model to use hearts rarely.
+- **Sleeping is still.** The spec's table gives sleeping a slow breathing loop, but the motion budget freezes all animation while the eyes are asleep. The budget wins, so sleeping shows still crescents.

@@ -81,6 +81,7 @@ const cases = [
 			await page.waitForFunction(() => document.querySelector("select")?.value);
 		},
 	},
+	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
 	{ name: "settings", path: "/settings.html", size: { width: 680, height: 1040 }, ready: "text=Leader key" },
 	{ name: "settings-keys-warnings", path: "/settings.html?altgr=1&taken=action2", size: { width: 680, height: 1040 }, ready: "text=Use Ctrl+Shift instead" },
 	{
@@ -138,7 +139,7 @@ try {
 					width: Math.min(vp.width, box.width + 2 * m),
 					height: Math.min(vp.height, box.height + 2 * m),
 				};
-				await page.screenshot({ path: file, animations: "disabled", caret: "hide", ...(clip ? { clip } : {}) });
+				await page.screenshot({ path: file, animations: "disabled", caret: "hide", fullPage: Boolean(item.fullPage), ...(clip ? { clip } : {}) });
 				console.log(file);
 			} finally {
 				await context.close();

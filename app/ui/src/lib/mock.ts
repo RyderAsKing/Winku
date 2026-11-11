@@ -81,6 +81,7 @@ export function createMockShell(): ShellImpl {
 	}
 	const ctx = Number(params.get("ctx") ?? "0.23");
 	let timers: ReturnType<typeof setTimeout>[] = [];
+	let streaming: string | null = null;
 
 	const ready = () => {
 		if (!settings.provider || !settings.main) return;
@@ -99,6 +100,7 @@ export function createMockShell(): ShellImpl {
 	const stream = (id: string) => {
 		timers.forEach(clearTimeout);
 		timers = [];
+		streaming = id;
 		emit("engine", { type: "thinking", id });
 		const words = REPLY.split(/(?<= )/);
 		let t = 900;
@@ -108,6 +110,7 @@ export function createMockShell(): ShellImpl {
 		}
 		timers.push(
 			setTimeout(() => {
+				streaming = null;
 				emit("engine", { type: "reply_end", id, text: REPLY, aborted: false, mood: "happy" });
 				emit("engine", { type: "context", tokens: Math.round((ctx + 0.01) * 200_000), contextWindow: 200_000, percent: (ctx + 0.01) * 100 });
 			}, t + 100),
@@ -116,9 +119,12 @@ export function createMockShell(): ShellImpl {
 
 	const handleSend = (message: Command) => {
 		if (message.type === "prompt") stream(message.id);
-		if (message.type === "abort") {
+		if (message.type === "abort" && streaming) {
 			timers.forEach(clearTimeout);
 			timers = [];
+			// Like the engine: an aborted reply still ends with reply_end.
+			emit("engine", { type: "reply_end", id: streaming, text: "", aborted: true });
+			streaming = null;
 		}
 		if (message.type === "set_thinking") {
 			emit("engine", { type: "thinking_changed", role: message.role, level: message.level });

@@ -1,6 +1,6 @@
 [package]
 name = "winku"
-version = "0.1.3"
+version = "0.1.4"
 description = "A small desktop assistant that lives as a pair of eyes"
 license = "MIT"
 edition = "2021"

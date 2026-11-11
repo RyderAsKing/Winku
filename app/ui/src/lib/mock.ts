@@ -61,6 +61,9 @@ const MODELS: ModelInfo[] = [
 	{ id: "claude-opus-4-1", name: "Claude Opus 4.1", supportsImages: true, contextWindow: 200_000, thinkingLevels: ["off", "low", "medium", "high", "max"] },
 ];
 
+const EXPLAIN =
+	"**Idempotent** means doing it twice has the same effect as doing it once.\n\n- Setting a light switch to *on* is idempotent.\n- Flipping it is not: the second flip undoes the first.";
+
 const REPLY =
 	"Sure. Press **Win+Shift+S**, drag over the area, and the capture lands on your clipboard. Paste it into Paint or any chat window to save or share it.";
 
@@ -153,10 +156,35 @@ export function createMockShell(): ShellImpl {
 		}
 	};
 
+	/** What the shell does for an action hotkey (SPEC §6), with a canned result. */
+	let actionCount = 0;
+	const action = (slot: number, selection = "idempotent") => {
+		const spec = settings.actions[slot - 1];
+		if (!spec) return;
+		if (!selection) {
+			emit("ui", { kind: "action_error", slot, name: spec.name, message: "Select some text first" });
+			return;
+		}
+		actionCount += 1;
+		const id = `action-${actionCount}`;
+		emit("ui", { kind: "action_started", id, slot, name: spec.name, output: spec.output });
+		if (spec.output === "agent") return stream(id);
+		const words = EXPLAIN.split(/(?<= )/);
+		let t = 700;
+		for (const word of words) {
+			timers.push(setTimeout(() => emit("engine", { type: "action_delta", id, delta: word }), t));
+			t += 35;
+		}
+		timers.push(
+			setTimeout(() => emit("engine", { type: "action_end", id, text: EXPLAIN, output: spec.output, aborted: false }), t + 50),
+		);
+	};
+
 	// Hooks for the screenshot script: fire shell `ui` events or engine events by hand.
 	(window as unknown as { __winkuMock: unknown }).__winkuMock = {
 		ui: (event: unknown) => emit("ui", event),
 		engine: (event: unknown) => emit("engine", event),
+		action,
 	};
 
 	return {

@@ -9,6 +9,10 @@
 </script>
 
 <div class="reply">
+	{#if reply.title}
+		<p class="label">{reply.title}</p>
+	{/if}
+
 	{#each reply.tools as tool (tool.toolCallId)}
 		<p class="tool mono" class:failed={tool.ok === false}>
 			{tool.ok === null ? "Running" : tool.ok ? "Ran" : "Failed"}
@@ -49,6 +53,12 @@
 	.reply {
 		display: grid;
 		gap: 6px;
+	}
+	.label {
+		margin: 0;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--muted);
 	}
 	.tool {
 		margin: 0;

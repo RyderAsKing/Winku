@@ -5,7 +5,7 @@ import { RequestAborted } from "../requests.ts";
 import { resolveFromHome } from "./paths.ts";
 
 export const DECLINED = "The user declined to run this.";
-export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open"]);
+export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open", "desktop_act", "desktop_press", "desktop_window"]);
 
 export type Decision = "allow_once" | "always" | "deny";
 
@@ -83,13 +83,15 @@ export interface GateDeps {
 	home: string;
 	replyId: () => string | undefined;
 	ask: (request: ToolPermissionRequest, signal: AbortSignal | undefined) => Promise<unknown>;
+	/** Summaries for tools whose description needs live state (the desktop_* tools); undefined falls back to describeCall. */
+	describe?: (tool: string, args: Record<string, unknown>) => GateCheck | undefined;
 }
 
 /** Ask the user if needed. Resolves when the call may run; throws DECLINED otherwise. */
 export async function checkPermission(tool: string, args: Record<string, unknown>, deps: GateDeps, signal?: AbortSignal): Promise<void> {
 	const policy = deps.policy();
 	if (!policy.askBeforeRunning || !GATED_TOOLS.has(tool)) return;
-	const call = describeCall(tool, args, deps.home);
+	const call = deps.describe?.(tool, args) ?? describeCall(tool, args, deps.home);
 	const key = call.allowKey.toLowerCase();
 	if (call.coverable && policy.alwaysAllow.has(key)) return;
 	const replyId = deps.replyId();

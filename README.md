@@ -72,3 +72,5 @@ The update signing key's private half is the `TAURI_SIGNING_PRIVATE_KEY` secret,
 ## License
 
 [MIT](LICENSE)
+
+Winku bundles [agent-desktop](https://github.com/vercel-labs/agent-desktop) (Apache-2.0) for computer use; its licence is in [app/src-tauri/licenses/agent-desktop.txt](app/src-tauri/licenses/agent-desktop.txt) and is installed alongside the app.

@@ -126,6 +126,16 @@ jobs:
         shell: pwsh
         run: ./scripts/measure-memory.ps1
 
+      - name: Computer use end to end (agent-desktop drives Notepad)
+        # The desktop_* tool code with the bundled agent-desktop: launch Notepad, observe, set and
+        # type text, observe again to verify, abort a wait; prints CLI vs MCP latency.
+        working-directory: engine
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $env:WINKU_AGENT_DESKTOP_BIN = (Resolve-Path ../app/src-tauri/binaries/agent-desktop-x86_64-pc-windows-msvc.exe).Path
+          bun run test/desktop-e2e.ts
+
       - name: Screenshots on the Windows desktop
         working-directory: app
         timeout-minutes: 3
@@ -196,7 +206,8 @@ jobs:
         working-directory: app/src-tauri
         shell: pwsh
         run: |
-          # The sidecar only has to exist for tauri-build; the tests don't run it.
+          # The sidecars only have to exist for tauri-build; the tests don't run them.
           New-Item -ItemType Directory -Force binaries | Out-Null
           New-Item -ItemType File -Force binaries/winku-engine-x86_64-pc-windows-msvc.exe | Out-Null
+          New-Item -ItemType File -Force binaries/agent-desktop-x86_64-pc-windows-msvc.exe | Out-Null
           cargo test

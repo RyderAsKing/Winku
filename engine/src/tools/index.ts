@@ -11,6 +11,8 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { ShellRequests } from "../requests.ts";
+import type { DesktopRunner } from "./desktop/cli.ts";
+import { desktopTools } from "./desktop/index.ts";
 import { globFindOperations } from "./find.ts";
 import { type Launcher, launchDetached, openTool } from "./open.ts";
 import { gated, type PermissionPolicy } from "./permission.ts";
@@ -36,6 +38,8 @@ export interface AgentToolDeps {
 	web?: WebDeps;
 	launch?: Launcher;
 	platform?: NodeJS.Platform;
+	/** Computer use, when the agent-desktop CLI is bundled (cli.ts findAgentDesktop). */
+	desktop?: { run: DesktopRunner; ownPids: number[] };
 }
 
 const PERMISSION_TIMEOUT_MS = 30 * 60_000;
@@ -60,14 +64,17 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 				...((deps.platform ?? process.platform) === "win32" ? { shellPath: shells.bash } : {}),
 			}),
 		);
+	const desktop = deps.desktop ? desktopTools({ ...deps.desktop, requests: deps.requests }) : undefined;
 	tools.push(
 		openTool(home, deps.launch ?? launchDetached, deps.platform),
 		webFetchTool(deps.web ?? defaultWebDeps),
 		webSearchTool(deps.searchKey, deps.web ?? defaultWebDeps),
-		lookAtScreenTool(deps.requests, deps.supportsImages),
+		lookAtScreenTool(deps.requests, deps.supportsImages, desktop?.glance),
+		...((desktop?.tools ?? []) as AnyTool[]),
 	);
 	const gate = {
 		policy: deps.policy,
+		...(desktop ? { describe: desktop.describe } : {}),
 		home,
 		replyId: deps.replyId,
 		ask: (params: Parameters<ShellRequests["request"]>[1], signal: AbortSignal | undefined) =>

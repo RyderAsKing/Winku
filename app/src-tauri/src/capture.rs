@@ -4,7 +4,8 @@
 //!   summoned, and that window remembered as "the window before the bar";
 //! - **window capture**: a window's image, downscaled to a 1568 px long edge, as a PNG
 //!   `ImageAttachment` (screenshot command and hotkey, `screen_capture` Requests);
-//! - **screen_capture**: app, title, UI Automation text and (optionally) the image.
+//! - **screen_capture**: app, title, UI Automation text and (optionally) the image;
+//! - **screen_target**: the window the agent's desktop_* tools work in (computer use).
 //!
 //! The OS work is in `platform`; this module holds the state and the pure parts.
 
@@ -71,10 +72,33 @@ pub struct ScreenCapture {
     pub app: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
+    /// agent-desktop's id for the window, `w-<HWND>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+    /// A Chromium window (see `platform::uia_is_safe`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub chromium: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageAttachment>,
+}
+
+/// `ScreenTarget` in engine/src/protocol.ts.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenTarget {
+    pub window_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_title: Option<String>,
+    pub chromium: bool,
+}
+
+/// agent-desktop's window id: `w-` and the HWND as an unsigned number.
+pub fn agent_desktop_window_id(window: WindowHandle) -> String {
+    format!("w-{}", window.0 as usize)
 }
 
 /// Trims, drops empty strings, and caps at `cap` characters.
@@ -289,32 +313,72 @@ pub fn on_screenshot_hotkey(app: &AppHandle) {
     });
 }
 
-/// Answers an engine `screen_capture` Request (call off the reader thread).
-pub fn screen_capture(app: &AppHandle, include_image: bool) -> Result<ScreenCapture, String> {
+/// The window an engine Request is about: the window before the bar while the bar or
+/// transcript shows, else the foreground window. Never one of Winku's own.
+fn request_window(app: &AppHandle) -> Result<WindowHandle, String> {
     let showing = app.state::<WindowState>().mode() != Mode::Pill;
     let window = target_window(app, showing);
-    if window == WindowHandle(0) {
+    if window == WindowHandle(0) || platform::is_own_window(window) {
         return Err("no window to look at".into());
     }
+    Ok(window)
+}
+
+/// Answers an engine `screen_capture` Request (call off the reader thread). In a Chromium
+/// window the UI Automation text is skipped when there is a screenshot: reading it switches on
+/// the app's accessibility tree, which slows it until it restarts (`platform::uia_is_safe`).
+/// Without a screenshot the model would see nothing, so the text is read anyway.
+pub fn screen_capture(app: &AppHandle, include_image: bool) -> Result<ScreenCapture, String> {
+    let window = request_window(app)?;
+    let chromium = !platform::uia_is_safe(window);
     let image = if include_image {
         Some(capture_image(window)?)
+    } else {
+        None
+    };
+    let text = if read_text(chromium, image.is_some()) {
+        non_empty(platform::window_text(window), TEXT_CAP)
     } else {
         None
     };
     Ok(ScreenCapture {
         app: non_empty(platform::process_name(window), usize::MAX),
         window_title: non_empty(platform::window_title(window), 300),
-        text: non_empty(platform::window_text(window), TEXT_CAP),
+        window_id: Some(agent_desktop_window_id(window)),
+        chromium,
+        text,
         image,
     })
 }
 
-/// The Response for a `screen_capture` Request.
-pub fn response(id: &str, outcome: Result<ScreenCapture, String>) -> Value {
+/// Whether `screen_capture` reads UI Automation text: not in a Chromium window that has a screenshot.
+fn read_text(chromium: bool, has_image: bool) -> bool {
+    !(chromium && has_image)
+}
+
+/// Answers an engine `screen_target` Request: the window computer use works in. Win32 calls
+/// only (no UI Automation), so it is free in any app.
+pub fn screen_target(app: &AppHandle) -> Result<ScreenTarget, String> {
+    let window = request_window(app)?;
+    Ok(ScreenTarget {
+        window_id: agent_desktop_window_id(window),
+        app: non_empty(platform::process_name(window), usize::MAX),
+        window_title: non_empty(platform::window_title(window), 300),
+        chromium: !platform::uia_is_safe(window),
+    })
+}
+
+/// The Response for a Request answered with `data` (or an error).
+pub fn response_with<T: Serialize>(id: &str, outcome: Result<T, String>) -> Value {
     match outcome {
-        Ok(capture) => json!({ "type": "response", "id": id, "ok": true, "data": capture }),
+        Ok(data) => json!({ "type": "response", "id": id, "ok": true, "data": data }),
         Err(error) => json!({ "type": "response", "id": id, "ok": false, "error": error }),
     }
+}
+
+/// The Response for a `screen_capture` Request.
+pub fn response(id: &str, outcome: Result<ScreenCapture, String>) -> Value {
+    response_with(id, outcome)
 }
 
 #[cfg(test)]
@@ -380,6 +444,39 @@ mod tests {
         let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         let reader = decoder.read_info().unwrap();
         assert_eq!((reader.info().width, reader.info().height), (1568, 8));
+    }
+
+    #[test]
+    fn chromium_text_only_without_a_screenshot() {
+        assert!(read_text(false, true));
+        assert!(read_text(false, false));
+        assert!(read_text(true, false));
+        assert!(!read_text(true, true));
+    }
+
+    #[test]
+    fn targets_serialize_for_the_engine() {
+        assert_eq!(agent_desktop_window_id(WindowHandle(131_844)), "w-131844");
+        let target = ScreenTarget {
+            window_id: "w-1".into(),
+            app: Some("notepad.exe".into()),
+            window_title: None,
+            chromium: false,
+        };
+        assert_eq!(
+            response_with("r9", Ok(target)),
+            json!({ "type": "response", "id": "r9", "ok": true,
+                    "data": { "windowId": "w-1", "app": "notepad.exe", "chromium": false } })
+        );
+        let capture = ScreenCapture {
+            window_id: Some("w-2".into()),
+            chromium: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(capture).unwrap(),
+            json!({ "windowId": "w-2", "chromium": true })
+        );
     }
 
     #[test]

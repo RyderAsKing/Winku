@@ -52,17 +52,20 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `open_data_path` | `{ what: "about_me" \| "memory" \| "voice" }` → `()`: opens the file or folder (see "Memory and voice profiles") | 5 |
 | `now_line` | `()` → `NowLine` captured when the bar was summoned | 6 |
 | `screenshot` | `()` → `ImageAttachment` of the window that was active before the bar | 6 |
-| `speak` / `stop_speaking` | `{ text }` / `()` | 7 |
+| `speak` / `stop_speaking` | `{ text }` / `()`. `speak` replaces anything already playing, with the voice from `settings.voice.tts` (and `osVoice`). The UI strips markdown first. | 7 |
+| `voice_os_voices` | `()` → `{ id, name, language }[]`: the OS voices (Windows OneCore), `[]` where there are none | 7 |
+| `voice_models` | `()` → `{ id, kind: "stt" \| "tts", name, sizeMb, installed, downloading }[]` | 7 |
+| `voice_model_download` / `voice_model_remove` | `{ id }` → `()`. Download returns at once; progress comes as `download_progress` | 7 |
 
 ### Events (`listen`)
 
 | Event | Payload |
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
-| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }`, `{ kind: "talk_end", text }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
+| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
-| `download_progress` | `{ what: "stt" \| "tts", fraction }` (voice models, step 7) |
+| `download_progress` | `{ what: "stt" \| "tts", model, fraction }` while a voice model downloads; `fraction: 1` when it is installed. A failure sends `ui` `voice_error` and `{ ..., fraction: -1 }`. |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
 
@@ -187,6 +190,23 @@ SPEC §9. All plain markdown, editable in any editor; the engine re-reads the fi
 - **Voice profiles** live in `voice\<name>.md`. `settings.voiceProfiles.byApp` maps a process name (`outlook.exe`) to a profile, else `default`. The shell picks the profile from the foreground app when an action starts and sends its name with `run_action`; rewriting actions (`useVoice`) get its contents. The assistant can only propose changes: `voice_propose { profile, content, reason }` emits `voice_proposal`, the bar shows Accept / Dismiss, and `voice_proposal_decision` writes the file only on Accept. Pending proposals are dropped on clear.
 - **Forget everything** (Settings, after a confirmation in the UI): `memory_forget_all` deletes everything in `memory\` and recreates an empty `MEMORY.md`. About me and voice profiles stay.
 - **Opening the files.** The shell's `open_data_path { what: "about_me" | "memory" | "voice" }` opens `about-me.md` in the default editor, or the `memory\` / `voice\` folder in Explorer.
+
+## Voice
+
+Speech runs in the shell (`app/src-tauri/src/voice/`), with the official `sherpa-onnx` crate for speech-to-text and Kokoro, and the OS voices (Windows OneCore, `Windows.Media.SpeechSynthesis`) for the default text-to-speech.
+
+- **Hold to talk:** holding the summon key past the tap limit stops any speech, opens the microphone (16 kHz mono) and sends `talk_start`, then `talk_level` while it records. Release sends `talk_end` with the transcription; under about 0.3 s of audio, or silence, gives `""`. A recording stops at 60 s. While "Pause listening" is on, a hold acts like a tap.
+- **Models:** downloaded the first time they are needed into `models\<id>\` in the data folder, from the k2-fsa GitHub releases at pinned URLs, checked against a pinned SHA-256 and unpacked into a temporary folder that is renamed into place. A hold before the model exists starts the download (progress on the eyes) and keeps the recording; it is transcribed when the download finishes. The recogniser loads on first use and unloads after 3 idle minutes; so does Kokoro.
+
+| id | kind | default | notes |
+|---|---|---|---|
+| `moonshine-base` | stt | yes | English, int8 |
+| `whisper-base-en` | stt | | English, int8 |
+| `parakeet` | stt | | optional, larger and more accurate |
+| `kokoro` | tts | | optional; `os` (no download) is the default |
+
+- **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always` speaks every reply, `never` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
+- **Engine:** a spoken prompt carries `spoken: true`. The engine adds "(spoken)" to the now line so the model knows it was dictated and keeps the answer short and easy to listen to.
 
 ## Module layout
 

@@ -43,3 +43,11 @@ test("now line round-trips", () => {
 	expect(formatNow({})).toBe("");
 	expect(parseNow("plain")).toEqual({ text: "plain" });
 });
+
+test("a spoken prompt is marked on the now line and read back", () => {
+	expect(formatNow(undefined, true)).toBe('\n\n<now spoken="yes"></now>');
+	expect(parseNow(`hi${formatNow(undefined, true)}`)).toEqual({ text: "hi", spoken: true });
+	const now = { app: "notepad.exe", selection: "x" };
+	expect(parseNow(`hi${formatNow(now, true)}`)).toEqual({ text: "hi", now, spoken: true });
+	expect(parseNow(`hi${formatNow(now)}`)).toEqual({ text: "hi", now });
+});

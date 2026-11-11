@@ -800,34 +800,41 @@ pub fn paste_text(text: &str) -> Result<(), String> {
 // Foreground watching (fullscreen apps hide the pill)
 
 use crate::fullscreen::Bounds;
-use windows_sys::Win32::Foundation::RECT;
+use windows_sys::Win32::Foundation::{LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
-use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
+use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use windows_sys::Win32::UI::Shell::{SHAppBarMessage, ABM_NEW, ABN_FULLSCREENAPP, APPBARDATA};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetClassNameW, GetMessageW, EVENT_OBJECT_LOCATIONCHANGE,
-    EVENT_SYSTEM_FOREGROUND, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    DefWindowProcW, DispatchMessageW, GetClassNameW, GetMessageW, RegisterClassW,
+    EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 pub type ForegroundCallback = Box<dyn Fn(&str, bool, Bounds, Bounds) + Send + Sync>;
 
 static FOREGROUND_CALLBACK: std::sync::OnceLock<ForegroundCallback> = std::sync::OnceLock::new();
 
-thread_local! {
-    /// The location hook scoped to the current foreground window's thread.
-    static LOCATION_HOOK: std::cell::Cell<HWINEVENTHOOK> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
+/// The message Explorer sends the appbar window with its notifications.
+const APPBAR_CALLBACK: u32 = WM_APP + 1;
 
 /// Calls `callback` with the foreground window's class, whether it is Winku's, its rect and its
-/// monitor's rect, whenever the foreground changes or the foreground window moves or resizes.
-/// Runs a dedicated thread that sleeps in GetMessageW between events: no polling.
+/// monitor's rect whenever the foreground changes, and again whenever Explorer says a
+/// fullscreen app opened or closed (F11 or a video going fullscreen in the window that already
+/// has focus). Runs a dedicated thread that sleeps in GetMessageW between events: no polling.
+///
+/// Explorer's notice comes through an appbar: a hidden window registered with ABM_NEW that never
+/// claims any screen space. It replaces a location-change WinEvent hook on the foreground
+/// window's thread, which fired for every caret move, every child window move and every pixel
+/// of a window drag.
 pub fn watch_foreground(callback: ForegroundCallback) {
     if FOREGROUND_CALLBACK.set(callback).is_err() {
         return;
     }
     std::thread::spawn(|| {
-        // SAFETY: hooks are installed and serviced on this thread's message loop.
+        // SAFETY: the hook and the appbar window belong to this thread and are serviced by its
+        // message loop.
         unsafe {
             SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
@@ -838,7 +845,8 @@ pub fn watch_foreground(callback: ForegroundCallback) {
                 0,
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
             );
-            on_foreground(GetForegroundWindow());
+            register_appbar();
+            report(GetForegroundWindow());
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 DispatchMessageW(&msg);
@@ -847,47 +855,68 @@ pub fn watch_foreground(callback: ForegroundCallback) {
     });
 }
 
+/// A hidden tool window registered as an appbar, so Explorer tells it about fullscreen apps.
+/// It is never shown and never asks for space (no ABM_SETPOS). Explorer drops it when the
+/// process exits.
+unsafe fn register_appbar() {
+    let class: Vec<u16> = "WinkuFullscreenWatch\0".encode_utf16().collect();
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(appbar_proc),
+        lpszClassName: class.as_ptr(),
+        ..std::mem::zeroed()
+    };
+    RegisterClassW(&wc);
+    let hwnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        class.as_ptr(),
+        std::ptr::null(),
+        WS_POPUP,
+        0,
+        0,
+        0,
+        0,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null(),
+    );
+    if hwnd.is_null() {
+        return;
+    }
+    let mut data: APPBARDATA = std::mem::zeroed();
+    data.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+    data.hWnd = hwnd;
+    data.uCallbackMessage = APPBAR_CALLBACK;
+    SHAppBarMessage(ABM_NEW, &mut data);
+}
+
+unsafe extern "system" fn appbar_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == APPBAR_CALLBACK {
+        if wparam as u32 == ABN_FULLSCREENAPP {
+            report(GetForegroundWindow());
+        }
+        return 0;
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
 unsafe extern "system" fn on_win_event(
     _hook: HWINEVENTHOOK,
     event: u32,
     hwnd: HWND,
-    id_object: i32,
+    _id_object: i32,
     _id_child: i32,
     _thread: u32,
     _time: u32,
 ) {
     if event == EVENT_SYSTEM_FOREGROUND {
-        on_foreground(hwnd);
-    } else if id_object == OBJID_WINDOW && hwnd == GetForegroundWindow() {
         report(hwnd);
     }
-}
-
-/// Re-scopes the location hook to the new foreground window's thread, then reports it.
-unsafe fn on_foreground(hwnd: HWND) {
-    LOCATION_HOOK.with(|hook| {
-        let old = hook.replace(std::ptr::null_mut());
-        if !old.is_null() {
-            UnhookWinEvent(old);
-        }
-        if hwnd.is_null() || is_own_window(WindowHandle(hwnd as isize)) {
-            return;
-        }
-        let mut pid = 0u32;
-        let thread = GetWindowThreadProcessId(hwnd, &mut pid);
-        if thread != 0 {
-            hook.set(SetWinEventHook(
-                EVENT_OBJECT_LOCATIONCHANGE,
-                EVENT_OBJECT_LOCATIONCHANGE,
-                std::ptr::null_mut(),
-                Some(on_win_event),
-                pid,
-                thread,
-                WINEVENT_OUTOFCONTEXT,
-            ));
-        }
-    });
-    report(hwnd);
 }
 
 unsafe fn report(hwnd: HWND) {

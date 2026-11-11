@@ -22,10 +22,51 @@ pub fn apply_settings(app: &AppHandle, old: &Settings, new: &Settings) {
     if settings::engine_relevant_changed(old, new) {
         engine::configure(app);
     }
+    if old.launch_at_login != new.launch_at_login {
+        apply_launch_at_login(app, new.launch_at_login);
+    }
+    if old.updates != new.updates {
+        crate::update::on_policy_changed(app);
+    }
     if old.eyes.hidden != new.eyes.hidden {
         window::apply_eyes_visibility(app);
     }
     let _ = app.emit(SETTINGS_CHANGED, new);
+}
+
+/// Registers or removes Winku from launch at login. Release builds only: dev runs never
+/// register themselves.
+pub fn apply_launch_at_login(app: &AppHandle, enabled: bool) {
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autolaunch = app.autolaunch();
+        let result = match (enabled, autolaunch.is_enabled().unwrap_or(false)) {
+            (true, false) => autolaunch.enable(),
+            (false, true) => autolaunch.disable(),
+            _ => Ok(()),
+        };
+        if let Err(e) = result {
+            eprintln!("winku: launch at login: {e}");
+        }
+    }
+    #[cfg(debug_assertions)]
+    let _ = (app, enabled);
+}
+
+#[tauri::command]
+pub fn update_status(updates: State<'_, crate::update::Updates>) -> crate::update::UpdateStatus {
+    updates.status()
+}
+
+#[tauri::command]
+pub async fn update_check(app: AppHandle) -> crate::update::UpdateStatus {
+    crate::update::check(&app).await
+}
+
+#[tauri::command]
+pub async fn update_restart(app: AppHandle) -> Result<(), String> {
+    crate::update::restart(&app).await
 }
 
 #[tauri::command]

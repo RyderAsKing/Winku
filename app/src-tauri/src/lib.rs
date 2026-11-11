@@ -2,11 +2,13 @@ mod actions;
 mod capture;
 mod commands;
 mod engine;
+mod fullscreen;
 mod hotkeys;
 mod menu;
 mod platform;
 mod secrets;
 mod settings;
+mod update;
 mod voice;
 mod window;
 
@@ -15,6 +17,11 @@ use tauri::{Manager, RunEvent, WindowEvent};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(hotkeys::handle)
@@ -29,12 +36,16 @@ pub fn run() {
             app.manage(actions::Actions::default());
             app.manage(capture::NowState::default());
             app.manage(voice::Voice::default());
+            app.manage(update::Updates::default());
 
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
             hotkeys::register_all(handle, &current);
             window::set_mode(handle, window::Mode::Pill)?;
             engine::Engine::start(handle)?;
+            commands::apply_launch_at_login(handle, current.launch_at_login);
+            fullscreen::start(handle);
+            update::start(handle);
             Ok(())
         })
         .on_menu_event(menu::on_menu_event)
@@ -70,6 +81,9 @@ pub fn run() {
             commands::voice_models,
             commands::voice_model_download,
             commands::voice_model_remove,
+            commands::update_status,
+            commands::update_check,
+            commands::update_restart,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Winku")

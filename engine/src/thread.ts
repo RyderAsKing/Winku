@@ -289,6 +289,18 @@ export function toolSummary(name: string, args: unknown): string {
 			return clip(str("query")) || name;
 		case "look_at_screen":
 			return "the active window";
+		case "desktop_observe":
+			return clip(str("root") || str("window") || str("surface")) || "the active window";
+		case "desktop_act":
+			return clip([str("action").replace(/_/g, " "), str("ref")].filter(Boolean).join(" ")) || name;
+		case "desktop_press":
+			return clip(str("keys")) || name;
+		case "desktop_windows":
+			return "open windows";
+		case "desktop_window":
+			return clip([str("action"), str("app") || str("window")].filter(Boolean).join(" ")) || name;
+		case "desktop_wait":
+			return clip(str("text") || str("role") || (typeof a.ms === "number" ? `${a.ms} ms` : "")) || name;
 		case "memory_save":
 			return clip(str("title")) || name;
 		case "memory_read":

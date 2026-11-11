@@ -292,6 +292,9 @@ export type Request =
 	 *  bar is hidden). Screenshot downscaled to at most 1568 px on the long edge (only when
 	 *  includeImage), and up to ~8000 characters of its UI Automation text. Response data: ScreenCapture. */
 	| { type: "request"; id: string; method: "screen_capture"; params: { includeImage: boolean } }
+	/** Computer use (desktop_* tools): the same window look_at_screen uses, never one of Winku's own.
+	 *  Response data: ScreenTarget; an error Response when there is no such window. */
+	| { type: "request"; id: string; method: "screen_target"; params: Record<string, never> }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
@@ -299,8 +302,21 @@ export type Request =
 export interface ScreenCapture {
 	app?: string;
 	windowTitle?: string;
+	/** agent-desktop's id for the window (`w-<HWND>`), for desktop_* tools. */
+	windowId?: string;
+	/** A Chromium window: no UI Automation text when there is a screenshot (it slows the app). */
+	chromium?: boolean;
 	text?: string;
 	image?: ImageAttachment;
+}
+
+export interface ScreenTarget {
+	/** `w-<HWND>`, the id agent-desktop uses for the window. */
+	windowId: string;
+	app?: string;
+	windowTitle?: string;
+	/** Chrome, Edge, Electron or WebView2: reading it through UI Automation switches on its accessibility tree. */
+	chromium: boolean;
 }
 
 export type OutboundMessage = Event | Result | Request;

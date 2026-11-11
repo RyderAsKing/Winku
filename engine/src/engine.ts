@@ -22,6 +22,7 @@ import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
 import { clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
 import { Thread } from "./thread.ts";
+import { cliRunner, findAgentDesktop } from "./tools/desktop/cli.ts";
 import { installImageDrop } from "./tools/images.ts";
 import { activeToolNames, type AnyTool, agentTools } from "./tools/index.ts";
 import { type PermissionPolicy, policyFrom } from "./tools/permission.ts";
@@ -247,6 +248,15 @@ export class Engine {
 		session.setActiveToolsByName(wanted);
 	}
 
+	/** Computer use when agent-desktop is bundled beside the engine. Its state lives in engine\agent-desktop. */
+	private desktop() {
+		const bin = findAgentDesktop();
+		if (!bin || !this.config) return {};
+		const run = cliRunner(bin, join(this.config.dataDir, "engine", "agent-desktop"));
+		// The shell started the engine: its windows are Winku's.
+		return { desktop: { run, ownPids: [process.ppid] } };
+	}
+
 	private tools() {
 		this.agentToolList = agentTools({
 			home: homedir(),
@@ -257,6 +267,7 @@ export class Engine {
 			replyId: () => this.replies.activeId,
 			supportsImages: () => modelInfo(this.model).supportsImages,
 			searchKey: () => this.searchApiKey,
+			...this.desktop(),
 		});
 		const memory = memoryTools(
 			() => this.requireMemory(),

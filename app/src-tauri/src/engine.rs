@@ -4,7 +4,8 @@
 //! - Events and `permission` Requests go to the main window as the `engine` event.
 //!   `action_end` for a replace action also pastes the result (actions.rs).
 //! - Results are matched to `engine_call`s by id.
-//! - `screen_capture` Requests are answered by the shell (capture.rs) on a worker thread.
+//! - `screen_capture` and `screen_target` Requests are answered by the shell (capture.rs) on a
+//!   worker thread.
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
 
 use std::collections::HashMap;
@@ -243,6 +244,8 @@ enum Route {
     Result(String),
     /// Answer a `screen_capture` Request ourselves.
     ScreenCapture { id: String, include_image: bool },
+    /// Answer a `screen_target` Request ourselves (computer use).
+    ScreenTarget { id: String },
     /// Answer this Request ourselves with an error Response.
     Refuse { id: String, error: String },
     /// Forward to the main window.
@@ -260,6 +263,7 @@ fn route(record: &Value) -> Route {
                     id,
                     include_image: record["params"]["includeImage"].as_bool() == Some(true),
                 },
+                Some("screen_target") => Route::ScreenTarget { id },
                 other => Route::Refuse {
                     id,
                     error: format!("unknown request method {other:?}"),
@@ -310,6 +314,15 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                     let _ = app
                         .state::<Engine>()
                         .send(&crate::capture::response(&id, outcome));
+                });
+            }
+            Route::ScreenTarget { id } => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let outcome = crate::capture::screen_target(&app);
+                    let _ = app
+                        .state::<Engine>()
+                        .send(&crate::capture::response_with(&id, outcome));
                 });
             }
             Route::Refuse { id, error } => {
@@ -439,6 +452,12 @@ mod tests {
                 id: "r3".into(),
                 include_image: false
             }
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r5", "method": "screen_target", "params": {} })
+            ),
+            Route::ScreenTarget { id: "r5".into() }
         );
         assert!(matches!(
             route(&json!({ "type": "request", "id": "r4", "method": "nope" })),

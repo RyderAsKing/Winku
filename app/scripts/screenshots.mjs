@@ -21,6 +21,7 @@ const summon = async (page) => {
 const ui = (page, event) => page.evaluate((e) => window.__winkuMock.ui(e), event);
 const action = (page, slot, selection) => page.evaluate(([s, t]) => window.__winkuMock.action(s, t), [slot, selection]);
 const engine = (page, event) => page.evaluate((e) => window.__winkuMock.engine(e), event);
+const talk = (page, text, ms) => page.evaluate(([t, m]) => window.__winkuMock.talk(t, m), [text, ms]);
 
 const cases = [
 	{ name: "pill", path: "/", ready: "role=button[name='Open Winku']" },
@@ -36,6 +37,30 @@ const cases = [
 			await page.keyboard.press("Enter");
 			await page.getByText("Paste it into Paint").waitFor();
 			await page.waitForTimeout(400); // let reply_end land
+		},
+	},
+	{
+		name: "listening",
+		path: "/?voice=1",
+		ready: ".eyes[aria-label='Winku is listening']",
+		prepare: (page) => talk(page, "", -1),
+	},
+	{
+		name: "downloading",
+		path: "/?download=1",
+		ready: ".eyes[aria-label^='Downloading a voice model']",
+		prepare: (page) => talk(page, "", -1),
+	},
+	{
+		name: "spoken-reply",
+		path: "/?voice=1",
+		ready: ".eyes[aria-label='Winku is speaking']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await talk(page, "How do I take a screenshot of part of the screen?", 600);
+			await page.getByText("to save or share it.").waitFor();
+			// After reply_end the happy look plays, then text-to-speech takes over.
+			await page.locator(".eyes[aria-label='Winku is speaking']").waitFor();
 		},
 	},
 	{
@@ -129,6 +154,16 @@ const cases = [
 		prepare: async (page) => {
 			await page.getByRole("heading", { name: "Tools" }).waitFor();
 			await page.getByRole("heading", { name: "Tools" }).evaluate((el) => el.scrollIntoView());
+		},
+	},
+	{
+		name: "settings-speech",
+		path: "/settings.html",
+		size: { width: 680, height: 1040 },
+		ready: "role=heading[name='Speech']",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Speech" }).evaluate((el) => el.scrollIntoView());
+			await page.getByRole("option", { name: "Microsoft Zira (en-US)" }).waitFor({ state: "attached" });
 		},
 	},
 	{

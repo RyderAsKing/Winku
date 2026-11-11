@@ -205,7 +205,7 @@ Speech runs in the shell (`app/src-tauri/src/voice/`), with the official `sherpa
 | `parakeet` | stt | | optional, larger and more accurate |
 | `kokoro` | tts | | optional; `os` (no download) is the default |
 
-- **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always` speaks every reply, `never` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
+- **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always_voice` speaks every reply, `always_text` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
 - **Engine:** a spoken prompt carries `spoken: true`. The engine adds "(spoken)" to the now line so the model knows it was dictated and keeps the answer short and easy to listen to.
 
 ## Module layout

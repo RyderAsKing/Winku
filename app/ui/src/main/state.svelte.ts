@@ -9,7 +9,19 @@ import type {
 import { EyeController } from "../lib/eyes/controller.svelte.ts";
 import { lidFor, saysThanks, TINTS } from "../lib/eyes/look.ts";
 import type { Settings } from "../lib/settings.ts";
-import { type EngineMessage, newId, onEngine, onSettingsChanged, onUi, shell, type UiEvent, type WindowMode } from "../lib/shell.ts";
+import {
+	type DownloadProgress,
+	type EngineMessage,
+	newId,
+	onDownloadProgress,
+	onEngine,
+	onSettingsChanged,
+	onUi,
+	shell,
+	type UiEvent,
+	type WindowMode,
+} from "../lib/shell.ts";
+import { shouldSpeak, speakable } from "../lib/speech.ts";
 
 export interface LiveTool {
 	toolCallId: string;
@@ -27,7 +39,7 @@ export interface Reply {
 	done: boolean;
 	aborted: boolean;
 	tools: LiveTool[];
-	error?: { kind: ErrorKind | "action"; message: string };
+	error?: { kind: ErrorKind | "action" | "voice"; message: string };
 	saved?: { saveId: string; title: string; undone: boolean }[];
 	proposals?: VoiceProposal[];
 	permissions?: PermissionAsk[];
@@ -87,6 +99,14 @@ export class MainState {
 	toast: Toast | null = $state(null);
 	/** Bumped to ask the input to take focus. */
 	focusTick = $state(0);
+	/** The talk key is held and the microphone is open. */
+	listening = $state(false);
+	/** Microphone level while listening, 0…1. */
+	talkLevel = $state(0);
+	/** Text-to-speech is playing. */
+	speaking = $state(false);
+	/** A voice model downloading (SPEC §3: progress shows on the eyes). */
+	download: DownloadProgress | null = $state(null);
 
 	readonly needsConnect: boolean = $derived(
 		this.settings !== null &&
@@ -103,9 +123,16 @@ export class MainState {
 	readonly #replaceActions = new Set<string>();
 	readonly #replaceResults = new Map<string, string>();
 	#toastTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Prompt ids the user spoke, for mirror mode. */
+	readonly #spokenPrompts = new Set<string>();
 
 	async init() {
-		await Promise.all([onEngine((m) => this.#onEngine(m)), onUi((e) => this.#onUi(e)), onSettingsChanged((s) => this.#onSettings(s))]);
+		await Promise.all([
+			onEngine((m) => this.#onEngine(m)),
+			onUi((e) => this.#onUi(e)),
+			onSettingsChanged((s) => this.#onSettings(s)),
+			onDownloadProgress((p) => this.#onDownload(p)),
+		]);
 		const [settings, hasKey] = await Promise.all([shell.settingsGet(), shell.secretPresent()]);
 		this.hasKey = hasKey;
 		this.settings = settings;
@@ -141,14 +168,20 @@ export class MainState {
 		await shell.windowMode(mode);
 	}
 
-	/** Esc: first press stops the reply, a second press hides the bar (SPEC §5). */
+	/** Esc: first press stops the reply or the speech, a second press hides the bar (SPEC §5). */
 	async escape() {
-		if (this.busy) {
-			await shell.send({ type: "abort" });
-			await shell.stopSpeaking().catch(() => {});
+		if (this.busy || this.speaking) {
+			if (this.busy) await shell.send({ type: "abort" });
+			await this.stopSpeaking();
 			return;
 		}
 		await this.hide();
+	}
+
+	async stopSpeaking() {
+		this.speaking = false;
+		if (this.eyes.activity === "speaking" && !this.busy) this.eyes.setActivity("idle");
+		await shell.stopSpeaking().catch(() => {});
 	}
 
 	// ── conversation ──
@@ -157,6 +190,7 @@ export class MainState {
 		const trimmed = text.trim();
 		if (!trimmed && !this.imageChip) return;
 		const id = newId("p");
+		if (spoken) this.#spokenPrompts.add(id);
 		this.#lastUserText = trimmed;
 		this.eyes.touch();
 		const now = await shell.nowLine().catch(() => undefined);
@@ -169,7 +203,7 @@ export class MainState {
 		this.busy = true;
 		this.eyes.setActivity("thinking");
 		if (this.mode === "transcript") {
-			this.transcript = [...this.transcript, { kind: "user", id: `local-${id}`, text: prompt, images: images?.length ?? 0, at: Date.now() }];
+			this.transcript = [...this.transcript, { kind: "user", id: `local-${id}`, text: prompt, images: images?.length ?? 0, ...(spoken ? { spoken } : {}), at: Date.now() }];
 		}
 		await shell.send({ type: "prompt", id, text: prompt, now, images, spoken });
 	}
@@ -325,17 +359,66 @@ export class MainState {
 				break;
 			}
 			case "talk_start":
+				// The shell has already stopped any speech.
+				this.speaking = false;
+				this.listening = true;
+				this.talkLevel = 0;
 				this.eyes.setActivity("listening");
 				break;
+			case "talk_level":
+				this.talkLevel = event.level;
+				break;
 			case "talk_end":
-				if (event.text.trim()) void this.submit(event.text, true);
-				else this.eyes.setActivity("idle");
+				this.listening = false;
+				if (event.text.trim()) {
+					// The shell notes the window in front as the bar opens, for the now line.
+					void this.summon().then(() => this.submit(event.text, true));
+				} else if (this.eyes.activity === "listening") this.eyes.setActivity("idle");
+				break;
+			case "speech":
+				this.speaking = event.playing;
+				if (event.playing) this.eyes.setActivity("speaking");
+				else if (this.eyes.activity === "speaking" && !this.busy) this.eyes.setActivity("idle");
+				break;
+			case "voice_error":
+				this.listening = false;
+				this.speaking = false;
+				if (!this.busy) {
+					this.reply = {
+						id: newId("voice"),
+						kind: "prompt",
+						text: "",
+						done: true,
+						aborted: false,
+						tools: [],
+						error: { kind: "voice", message: event.message },
+					};
+					void this.summon();
+				}
+				this.eyes.error();
 				break;
 			case "menu":
 				break;
 			case "update_ready":
 				break;
 		}
+	}
+
+	/** Mirror mode and friends (SPEC §11): read a finished reply aloud. */
+	#speakReply(id: string, text: string, failed: boolean) {
+		const spoken = this.#spokenPrompts.delete(id);
+		const mode = this.settings?.voice.reply ?? "mirror";
+		if (failed || !shouldSpeak(mode, spoken)) return;
+		const words = speakable(text);
+		if (words) void shell.speak(words).catch(() => {});
+	}
+
+	#onDownload(progress: DownloadProgress) {
+		if (progress.fraction >= 1 || progress.fraction < 0) {
+			if (this.download?.model === progress.model) this.download = null;
+			return;
+		}
+		this.download = progress;
 	}
 
 	#onEngine(message: EngineMessage) {
@@ -382,6 +465,7 @@ export class MainState {
 				this.busy = false;
 				if (message.aborted) this.eyes.setActivity("idle");
 				else if (!reply?.error) this.eyes.replyFinished(message.mood, saysThanks(this.#lastUserText));
+				this.#speakReply(message.id, message.text, message.aborted || Boolean(reply?.error));
 				if (this.mode === "transcript") void this.loadTranscript();
 				break;
 			case "action_delta":

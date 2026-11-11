@@ -246,11 +246,54 @@ export function createMockShell(): ShellImpl {
 		);
 	};
 
+	// Voice: models, a fake download, and speech that "plays" for a moment.
+	const models = [
+		{ id: "moonshine-base", kind: "stt", name: "Moonshine base (English)", sizeMb: 274, installed: params.has("voice") },
+		{ id: "whisper-base-en", kind: "stt", name: "Whisper base (English)", sizeMb: 199, installed: false },
+		{ id: "parakeet", kind: "stt", name: "Parakeet (English, most accurate)", sizeMb: 631, installed: false },
+		{ id: "kokoro", kind: "tts", name: "Kokoro", sizeMb: 305, installed: false },
+	];
+	const downloading = new Set<string>();
+	const download = (id: string) => {
+		const model = models.find((m) => m.id === id);
+		if (!model || model.installed || downloading.has(id)) return;
+		downloading.add(id);
+		const what = model.kind;
+		for (let step = 0; step <= 20; step++) {
+			timers.push(
+				setTimeout(() => {
+					if (step === 20) {
+						downloading.delete(id);
+						model.installed = true;
+					}
+					emit("download_progress", { what, model: id, fraction: step / 20 });
+				}, step * 150),
+			);
+		}
+	};
+	let speechTimer: ReturnType<typeof setTimeout> | undefined;
+	const stopSpeech = () => {
+		if (speechTimer === undefined) return;
+		clearTimeout(speechTimer);
+		speechTimer = undefined;
+		emit("ui", { kind: "speech", playing: false });
+	};
+	/** Hold-to-talk by hand: talk_start, a few levels, then talk_end with `text` after `ms` (or never, if ms < 0). */
+	const talk = (text: string, ms = 1200) => {
+		stopSpeech();
+		emit("ui", { kind: "talk_start" });
+		if (params.has("download")) emit("download_progress", { what: "stt", model: "moonshine-base", fraction: 0.42 });
+		if (ms < 0) return;
+		for (let t = 100; t < ms; t += 100) timers.push(setTimeout(() => emit("ui", { kind: "talk_level", level: 0.3 + 0.4 * Math.abs(Math.sin(t)) }), t));
+		timers.push(setTimeout(() => emit("ui", { kind: "talk_end", text }), ms));
+	};
+
 	// Hooks for the screenshot script: fire shell `ui` events or engine events by hand.
 	(window as unknown as { __winkuMock: unknown }).__winkuMock = {
 		ui: (event: unknown) => emit("ui", event),
 		engine: (event: unknown) => emit("engine", event),
 		action,
+		talk,
 	};
 
 	return {
@@ -299,6 +342,35 @@ export function createMockShell(): ShellImpl {
 						: [];
 					return { altGr, keys: altGr ? ["Q", "E", "2", "3"] : [], conflicts, suggestion: "Ctrl+Shift" } as T;
 				}
+				case "voice_models":
+					return models.map((m) => ({ ...m, downloading: downloading.has(m.id) })) as T;
+				case "voice_os_voices":
+					return [
+						{ id: "MSTTS_V110_enUS_DavidM", name: "Microsoft David", language: "en-US" },
+						{ id: "MSTTS_V110_enUS_ZiraM", name: "Microsoft Zira", language: "en-US" },
+						{ id: "MSTTS_V110_enGB_HazelM", name: "Microsoft Hazel", language: "en-GB" },
+					] as T;
+				case "voice_model_download":
+					download(String(args?.id));
+					return undefined as T;
+				case "voice_model_remove": {
+					const model = models.find((m) => m.id === args?.id);
+					if (model) model.installed = false;
+					return undefined as T;
+				}
+				case "speak": {
+					stopSpeech();
+					emit("ui", { kind: "speech", playing: true });
+					const words = String(args?.text ?? "").split(/\s+/).length;
+					speechTimer = setTimeout(() => {
+						speechTimer = undefined;
+						emit("ui", { kind: "speech", playing: false });
+					}, Math.min(8000, 400 + words * 280));
+					return undefined as T;
+				}
+				case "stop_speaking":
+					stopSpeech();
+					return undefined as T;
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;
 				default:

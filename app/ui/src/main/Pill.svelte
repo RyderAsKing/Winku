@@ -48,6 +48,7 @@
 		expression={app.eyes.state}
 		tint={app.tint}
 		lid={app.lid}
+		progress={app.download?.fraction ?? null}
 		eyeSize={30}
 		spacing={40}
 		animate={app.eyes.animate}

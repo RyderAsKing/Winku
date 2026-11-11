@@ -17,7 +17,17 @@
 	import "../lib/theme.css";
 	import { defaultSettings } from "../lib/defaults.ts";
 	import type { Settings } from "../lib/settings.ts";
-	import { type AltGrReport, type HotkeysStatus, onHotkeysStatus, onSettingsChanged, shell } from "../lib/shell.ts";
+	import {
+		type AltGrReport,
+		type HotkeysStatus,
+		onDownloadProgress,
+		onHotkeysStatus,
+		onSettingsChanged,
+		type OsVoice,
+		shell,
+		type VoiceModel,
+		type VoiceModelId,
+	} from "../lib/shell.ts";
 
 	const OUTPUTS: { value: ActionSpec["output"]; label: string }[] = [
 		{ value: "replace", label: "Replace selection" },
@@ -35,6 +45,13 @@
 	let hotkeys: HotkeysStatus = $state({ failed: [] });
 	let profiles: VoiceProfileInfo[] = $state([]);
 	let hasSearchKey = $state(false);
+	let voiceModels: VoiceModel[] = $state([]);
+	let osVoices: OsVoice[] = $state([]);
+	/** Download progress by model id, 0…1. */
+	let downloads: Record<string, number> = $state({});
+	let voiceError = $state("");
+	const stt = $derived(voiceModels.find((m) => m.id === settings?.voice.stt));
+	const kokoro = $derived(voiceModels.find((m) => m.id === "kokoro"));
 	let searchKeyDraft = $state("");
 	let newApp = $state("");
 	let confirmForget = $state(false);
@@ -92,9 +109,18 @@
 		void shell.secretPresent("search-api-key").then((has) => (hasSearchKey = has)).catch(() => {});
 		void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		const unlistenHotkeys = onHotkeysStatus((s) => (hotkeys = s));
+		void loadVoice();
+		const unlistenDownloads = onDownloadProgress((p) => {
+			if (p.fraction >= 1 || p.fraction < 0) {
+				delete downloads[p.model];
+				if (p.fraction < 0) voiceError = "The download failed. Check your connection and try again.";
+				void loadVoice();
+			} else downloads[p.model] = p.fraction;
+		});
 		return () => {
 			void unlisten.then((u) => u());
 			void unlistenHotkeys.then((u) => u());
+			void unlistenDownloads.then((u) => u());
 		};
 	});
 
@@ -201,6 +227,42 @@
 		await shell.secretSet(key, "search-api-key");
 		hasSearchKey = true;
 		searchKeyDraft = "";
+	}
+
+	async function loadVoice() {
+		[voiceModels, osVoices] = await Promise.all([
+			shell.voiceModels().catch(() => []),
+			shell.voiceOsVoices().catch(() => []),
+		]);
+	}
+
+	function saveVoice(patch: Partial<Settings["voice"]>) {
+		if (!settings) return;
+		save({ voice: { ...settings.voice, ...patch } });
+	}
+
+	async function downloadModel(id: VoiceModelId) {
+		voiceError = "";
+		downloads[id] = 0;
+		await shell.voiceModelDownload(id).catch((e) => {
+			delete downloads[id];
+			voiceError = String(e);
+		});
+	}
+
+	async function removeModel(id: VoiceModelId) {
+		await shell.voiceModelRemove(id).catch((e) => (voiceError = String(e)));
+		await loadVoice();
+	}
+
+	/** One select for the reading voice: "os:" (system default), "os:<id>" or "kokoro". */
+	function readingVoice(v: Settings["voice"]): string {
+		return v.tts === "kokoro" ? "kokoro" : `os:${v.osVoice ?? ""}`;
+	}
+
+	function setReadingVoice(value: string) {
+		if (value === "kokoro") saveVoice({ tts: "kokoro" });
+		else saveVoice({ tts: "os", osVoice: value.slice(3) || null });
 	}
 
 	async function removeSearchKey() {
@@ -452,6 +514,87 @@
 					{/if}
 				</div>
 			</div>
+		</section>
+
+		<section>
+			<h2>Speech</h2>
+			<p class="hint intro">Hold {settings.hotkeys.summon} to talk, and let go to send. Speech is recognised on this computer.</p>
+			<div class="field top">
+				<span class="label-top">Speech to text</span>
+				<div class="stack">
+					<div class="inline">
+						<select aria-label="Speech to text" value={settings.voice.stt} onchange={(e) => saveVoice({ stt: e.currentTarget.value as Settings["voice"]["stt"] })}>
+							{#each voiceModels.filter((m) => m.kind === "stt") as model (model.id)}
+								<option value={model.id}>{model.name}</option>
+							{/each}
+						</select>
+						{#if stt}
+							{#if downloads[stt.id] !== undefined || stt.downloading}
+								<span class="mono value">{Math.round((downloads[stt.id] ?? 0) * 100)}%</span>
+							{:else if stt.installed}
+								<button type="button" class="quiet" onclick={() => removeModel(stt.id)}>Remove</button>
+							{:else}
+								<button type="button" class="quiet" onclick={() => downloadModel(stt.id)}>Download</button>
+							{/if}
+						{/if}
+					</div>
+					{#if stt}
+						<p class="hint">
+							{stt.installed
+								? `Downloaded, ${stt.sizeMb} MB.`
+								: `${stt.sizeMb} MB. It downloads the first time you hold the talk key, or now.`}
+						</p>
+					{/if}
+				</div>
+			</div>
+			<label class="field">
+				<span>Read replies aloud</span>
+				<select value={settings.voice.reply} onchange={(e) => saveVoice({ reply: e.currentTarget.value as Settings["voice"]["reply"] })}>
+					<option value="mirror">When I speak</option>
+					<option value="always_voice">Always</option>
+					<option value="always_text">Never</option>
+				</select>
+			</label>
+			<div class="field top">
+				<span class="label-top">Reading voice</span>
+				<div class="stack">
+					<div class="inline">
+						<select aria-label="Reading voice" value={readingVoice(settings.voice)} onchange={(e) => setReadingVoice(e.currentTarget.value)}>
+							<option value="os:">System voice</option>
+							{#each osVoices as voice (voice.id)}
+								<option value="os:{voice.id}">{voice.name} ({voice.language})</option>
+							{/each}
+							{#if kokoro}
+								<option value="kokoro">Kokoro, natural ({kokoro.sizeMb} MB download)</option>
+							{/if}
+						</select>
+						<button type="button" class="quiet" onclick={() => shell.speak("Hi, I'm Winku. This is how I sound.").catch((e) => (voiceError = String(e)))}>Test</button>
+					</div>
+					{#if settings.voice.tts === "kokoro" && kokoro}
+						<div class="inline">
+							{#if downloads.kokoro !== undefined || kokoro.downloading}
+								<p class="hint grow">Downloading Kokoro, {Math.round((downloads.kokoro ?? 0) * 100)}%</p>
+							{:else if kokoro.installed}
+								<p class="hint grow">Kokoro is downloaded, {kokoro.sizeMb} MB.</p>
+								<button type="button" class="quiet" onclick={() => removeModel("kokoro")}>Remove</button>
+							{:else}
+								<p class="hint grow">Kokoro downloads the first time it reads a reply, or now.</p>
+								<button type="button" class="quiet" onclick={() => downloadModel("kokoro")}>Download</button>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+			<label class="field check">
+				<span>Pause listening</span>
+				<span class="inline">
+					<input type="checkbox" checked={settings.voice.listeningPaused} onchange={(e) => saveVoice({ listeningPaused: e.currentTarget.checked })} />
+					Holding the key opens the bar instead of listening.
+				</span>
+			</label>
+			{#if voiceError}
+				<p class="hint danger-text" role="alert">{voiceError}</p>
+			{/if}
 		</section>
 
 		<section>
@@ -758,6 +901,9 @@
 	}
 	.intro {
 		margin-top: -4px;
+	}
+	.danger-text {
+		color: var(--error);
 	}
 	.action {
 		display: grid;

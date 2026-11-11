@@ -677,7 +677,7 @@ pub fn open_page(app: &AppHandle, page: Page) -> Result<(), String> {
             "settings",
             "settings.html",
             "Winku Settings",
-            (680.0, 520.0),
+            (860.0, 600.0),
         ),
         Page::History => ("history", "history.html", "Winku History", (720.0, 560.0)),
     };
@@ -689,7 +689,7 @@ pub fn open_page(app: &AppHandle, page: Page) -> Result<(), String> {
     tauri::WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(title)
         .inner_size(size.0, size.1)
-        .min_inner_size(480.0, 360.0)
+        .min_inner_size(520.0, 400.0)
         .center()
         .focused(true)
         .build()

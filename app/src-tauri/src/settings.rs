@@ -252,7 +252,12 @@ impl Settings {
 
     /// The `configure` command for the engine, or None while there is no provider or main model
     /// (the UI shows its Connect form).
-    pub fn configure_command(&self, data_dir: &Path, api_key: Option<&str>) -> Option<Value> {
+    pub fn configure_command(
+        &self,
+        data_dir: &Path,
+        api_key: Option<&str>,
+        search_api_key: Option<&str>,
+    ) -> Option<Value> {
         let provider = self.provider.as_ref().filter(|p| !p.is_null())?;
         let main = self.main.as_ref()?;
         let mut message = json!({
@@ -267,6 +272,9 @@ impl Settings {
         });
         if let Some(key) = api_key {
             message["apiKey"] = json!(key);
+        }
+        if let Some(key) = search_api_key {
+            message["searchApiKey"] = json!(key);
         }
         if let Some(quick) = &self.quick {
             message["quick"] = json!({ "id": quick.id, "thinking": quick.thinking });
@@ -334,7 +342,7 @@ pub fn save(data_dir: &Path, settings: &Settings) -> std::io::Result<()> {
 
 /// True when a change between `old` and `new` affects what the engine was configured with.
 pub fn engine_relevant_changed(old: &Settings, new: &Settings) -> bool {
-    let key = |s: &Settings| s.configure_command(Path::new(""), None);
+    let key = |s: &Settings| s.configure_command(Path::new(""), None, None);
     key(old) != key(new)
 }
 
@@ -520,11 +528,11 @@ mod tests {
     fn configure_needs_provider_and_main() {
         let mut settings = Settings::default();
         assert!(settings
-            .configure_command(Path::new("/d"), Some("k"))
+            .configure_command(Path::new("/d"), Some("k"), None)
             .is_none());
         settings.provider = Some(json!({ "kind": "catalog", "id": "openai" }));
         assert!(settings
-            .configure_command(Path::new("/d"), Some("k"))
+            .configure_command(Path::new("/d"), Some("k"), None)
             .is_none());
         settings.main = Some(ModelChoice {
             id: "gpt".into(),
@@ -533,8 +541,14 @@ mod tests {
         });
         settings.compaction_reserve_tokens = Some(20000);
         let message = settings
-            .configure_command(Path::new("/d"), Some("k"))
+            .configure_command(Path::new("/d"), Some("k"), Some("s"))
             .unwrap();
+        assert_eq!(message["searchApiKey"], "s");
+        assert!(settings
+            .configure_command(Path::new("/d"), Some("k"), None)
+            .unwrap()
+            .get("searchApiKey")
+            .is_none());
         assert_eq!(message["type"], "configure");
         assert_eq!(message["provider"]["id"], "openai");
         assert_eq!(

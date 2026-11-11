@@ -314,6 +314,10 @@ pub fn set_mode(app: &AppHandle, mode: Mode) -> Result<(), String> {
             apply_eyes_visibility(app);
         }
         Mode::Bar | Mode::Transcript => {
+            if previous == Mode::Pill {
+                // Pill click, or any other path to the bar: note what was in front first.
+                crate::capture::note_summon(app);
+            }
             let anchored = *state.bar.lock().unwrap_or_else(|e| e.into_inner());
             let (bar, monitor) = match anchored {
                 Some(anchor) if previous != Mode::Pill => anchor,

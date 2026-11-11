@@ -111,6 +111,27 @@ const cases = [
 		},
 	},
 	{
+		name: "permission",
+		path: "/?ask=1",
+		ready: "text=Always allow this command",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("Clean up the temp files in my Downloads folder");
+			await page.keyboard.press("Enter");
+			await page.getByText("Always allow this command").waitFor();
+		},
+	},
+	{
+		name: "settings-tools",
+		path: "/settings.html?ask=1",
+		size: { width: 680, height: 1040 },
+		ready: "[placeholder=\"Brave Search API key\"]",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Tools" }).waitFor();
+			await page.getByRole("heading", { name: "Tools" }).evaluate((el) => el.scrollIntoView());
+		},
+	},
+	{
 		name: "settings-memory",
 		path: "/settings.html",
 		size: { width: 680, height: 1040 },

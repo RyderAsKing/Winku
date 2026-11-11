@@ -1,4 +1,5 @@
 mod actions;
+mod capture;
 mod commands;
 mod engine;
 mod hotkeys;
@@ -25,6 +26,7 @@ pub fn run() {
             app.manage(hotkeys::HotkeyState::default());
             app.manage(engine::Engine::new());
             app.manage(actions::Actions::default());
+            app.manage(capture::NowState::default());
 
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
@@ -50,6 +52,8 @@ pub fn run() {
             commands::secret_set,
             commands::secret_clear,
             commands::secret_present,
+            commands::now_line,
+            commands::screenshot,
             commands::window_mode,
             commands::window_bar_height,
             commands::open_window,

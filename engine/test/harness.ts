@@ -1,14 +1,28 @@
 // Drives the engine over its real stdin/stdout protocol.
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FauxOptions } from "../src/faux.ts";
-import type { ConfigureCommand, InboundMessage, OutboundMessage, Result } from "../src/protocol.ts";
+import type { ConfigureCommand, InboundMessage, OutboundMessage, Request, Result } from "../src/protocol.ts";
 
 // Runs src/main.ts by default. Set WINKU_ENGINE_BIN to test a compiled binary instead.
 const command = process.env.WINKU_ENGINE_BIN
 	? [process.env.WINKU_ENGINE_BIN]
 	: [process.execPath, "run", join(import.meta.dir, "../src/main.ts")];
+
+const tempRoots: string[] = [];
+
+/** Remove every tempDir made so far. Test files call it from afterAll. */
+export function removeTempDirs(): void {
+	for (const dir of tempRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+}
+
+/** A temp folder, removed by removeTempDirs. */
+export function tempDir(prefix: string): string {
+	const dir = mkdtempSync(join(tmpdir(), prefix));
+	tempRoots.push(dir);
+	return dir;
+}
 
 export type Configure = ConfigureCommand & { faux?: FauxOptions };
 
@@ -27,6 +41,8 @@ export function fauxConfig(dataDir: string, extra: Partial<Configure> = {}): Con
 
 export class EngineProcess {
 	readonly records: OutboundMessage[] = [];
+	/** Answers engine Requests (the shell's part). Return undefined to leave a Request unanswered. */
+	onRequest: ((request: Request) => { ok: boolean; data?: unknown; error?: string } | undefined) | undefined;
 	private waiters: { pred: (r: OutboundMessage) => boolean; from: number; resolve: (r: OutboundMessage) => void }[] = [];
 	private nextId = 0;
 	readonly proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
@@ -48,7 +64,7 @@ export class EngineProcess {
 	}
 
 	static start(): EngineProcess {
-		const root = mkdtempSync(join(tmpdir(), "winku-test-"));
+		const root = tempDir("winku-test-");
 		const home = join(root, "home");
 		mkdirSync(home);
 		return new EngineProcess(root, home, join(root, "data"));
@@ -70,6 +86,10 @@ export class EngineProcess {
 				if (!line.trim()) continue;
 				const record = JSON.parse(line) as OutboundMessage;
 				this.records.push(record);
+				if (record.type === "request" && this.onRequest) {
+					const answer = this.onRequest(record);
+					if (answer) this.send({ type: "response", id: record.id, ...answer });
+				}
 				const index = this.records.length - 1;
 				this.waiters = this.waiters.filter((w) => {
 					if (index >= w.from && w.pred(record)) {

@@ -69,6 +69,8 @@ The design language comes from the user's research page (https://always-on-eyes-
 
 Everything is reachable with the left hand and everything is rebindable (the user has no Caps Lock key). Settings warns about conflicts and detects layouts where `Ctrl+Alt` acts as AltGr, suggesting `Ctrl+Shift` instead. An optional leader key (e.g. F13 on a programmable keyboard) can replace `Ctrl+Alt`.
 
+Holding the prefix (`Ctrl+Alt` or the leader key) alone for about 450 ms shows small hints next to the eyes saying what each key does; they go away as soon as another key goes down or the prefix is released, and never show over a fullscreen app.
+
 | Keys | Does |
 |---|---|
 | tap `Ctrl+Alt+Space` | open or hide the bar |

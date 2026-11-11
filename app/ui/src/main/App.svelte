@@ -27,7 +27,7 @@
 <svelte:window {onkeydown} />
 
 <div class="root" class:framed>
-	<div class="window" style:width={framed ? `${frame.w}px` : null} style:height={framed && frame.h ? `${frame.h}px` : null}>
+	<div class="window" style:width={framed ? `${frame.w}px` : null} style:height={framed ? (frame.h ? `${frame.h}px` : "auto") : null}>
 		{#if app.mode === "pill"}
 			<Pill {app} />
 		{:else}

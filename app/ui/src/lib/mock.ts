@@ -5,6 +5,9 @@
 //   ?thinking=high Main thinking level
 //   ?altgr=1       the keyboard layout has AltGr (Settings offers Ctrl+Shift)
 //   ?taken=action2 a hotkey another app already registered
+//   ?long=1        transcript with long paths, unbroken text, code and a table
+//   ?many=1        forty extra archived conversations
+//   ?empty=1       no History entries
 import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
@@ -13,7 +16,7 @@ import type { ShellImpl } from "./shell.ts";
 type Handler = (payload: unknown) => void;
 
 const params = new URLSearchParams(location.search);
-const now = Date.now();
+const now = Date.UTC(2026, 10, 11, 12);
 
 const SAMPLE_TRANSCRIPT: TranscriptItem[] = [
 	{ kind: "compaction", id: "c1", summary: "You planned a trip to Lisbon and asked for packing lists. We settled on carry-on only.", at: now - 3_600_000 },
@@ -60,6 +63,24 @@ const MODELS: ModelInfo[] = [
 	{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", supportsImages: true, contextWindow: 200_000, thinkingLevels: ["off", "low", "medium", "high"] },
 	{ id: "claude-opus-4-1", name: "Claude Opus 4.1", supportsImages: true, contextWindow: 200_000, thinkingLevels: ["off", "low", "medium", "high", "max"] },
 ];
+
+const LONG_REPLY = `## Files ready for review
+
+Here is a long path: C:\\Users\\Sam\\Documents\\${"project-with-a-long-name".repeat(12)}.md
+
+[Read the reference](https://example.com/${"reference".repeat(30)})
+
+${"Unbroken".repeat(45)}
+
+\`\`\`typescript
+const path = "${"long-path/".repeat(35)}";
+\`\`\`
+
+| File | Result |
+| --- | --- |
+| ${"filename".repeat(30)} | Ready |
+
+All files are ready. Review the changes before continuing.`;
 
 const EXPLAIN =
 	"**Idempotent** means doing it twice has the same effect as doing it once.\n\n- Setting a light switch to *on* is idempotent.\n- Flipping it is not: the second flip undoes the first.";
@@ -146,11 +167,11 @@ export function createMockShell(): ShellImpl {
 	const handleCall = (message: Command): unknown => {
 		switch (message.type) {
 			case "transcript":
-				return SAMPLE_TRANSCRIPT;
+				return params.has("long") ? [...SAMPLE_TRANSCRIPT, { kind: "assistant", id: "long", text: LONG_REPLY, at: now }] : SAMPLE_TRANSCRIPT;
 			case "history_list":
-				return SAMPLE_HISTORY.filter((h) => !message.query || h.title.toLowerCase().includes(message.query.toLowerCase()));
+				return (params.has("empty") ? [] : params.has("many") ? [...SAMPLE_HISTORY, ...Array.from({ length: 40 }, (_, i) => ({ ...SAMPLE_HISTORY[2], id: `archive-${i}`, title: `Archive ${i + 1}: ${"LongProjectPath".repeat(12)}`, updatedAt: now - (i + 4) * 86400000 }))] : SAMPLE_HISTORY).filter((h) => !message.query || h.title.toLowerCase().includes(message.query.toLowerCase()));
 			case "history_read":
-				return SAMPLE_TRANSCRIPT;
+				return params.has("long") ? [...SAMPLE_TRANSCRIPT, { kind: "assistant", id: "long", text: LONG_REPLY, at: now }] : SAMPLE_TRANSCRIPT;
 			case "clear":
 				setTimeout(() => emit("engine", { type: "thread_changed", reason: "clear", sessionId: "new" }), 10);
 				return { undoToken: "undo-1" };

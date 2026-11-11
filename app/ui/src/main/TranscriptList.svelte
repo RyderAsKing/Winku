@@ -18,7 +18,9 @@
 	});
 </script>
 
-<div class="list" bind:this={scroller}>
+<!-- Keyboard users need to focus this scroll region to read older messages. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="list" bind:this={scroller} tabindex="0" role="region" aria-label="Conversation">
 	{#if items.length === 0 && !showLive}
 		<p class="empty">Nothing here yet.</p>
 	{/if}
@@ -70,7 +72,7 @@
 		gap: 12px;
 		height: 100%;
 		overflow-y: auto;
-		padding: 4px 18px 18px;
+		padding: 16px 20px 20px;
 		scrollbar-width: thin;
 		scrollbar-color: var(--line-strong) transparent;
 	}
@@ -81,10 +83,8 @@
 	.user {
 		align-self: flex-end;
 		max-width: 85%;
-		padding: 7px 12px;
-		border-radius: 14px 14px 4px 14px;
-		background: var(--panel-raised);
-		border: 1px solid var(--line);
+		padding: 7px 0 7px 12px;
+		border-left: 2px solid var(--line-strong);
 	}
 	.user p {
 		margin: 0;
@@ -104,9 +104,8 @@
 		cursor: pointer;
 		color: var(--muted);
 		font-size: 12px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 	.row summary.mono {
 		font-size: 11px;

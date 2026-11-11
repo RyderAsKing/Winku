@@ -5,14 +5,14 @@
 	--face-lo: #07080c;
 	--panel: #0c0e13;
 	--panel-raised: #151820;
-	--line: rgb(255 255 255 / 0.07);
-	--line-strong: rgb(255 255 255 / 0.14);
+	--line: rgb(255 255 255 / 0.1);
+	--line-strong: rgb(255 255 255 / 0.22);
 	--text: #f4f1ea;
-	--muted: #9a9488;
-	--faint: #6b675f;
+	--muted: #aaaeb9;
+	--faint: #979daa;
 	--accent: #5ef6f0;
 	--error: #ff8b82;
-	--focus: rgb(94 246 240 / 0.55);
+	--focus: #5ef6f0;
 	--radius-bar: 36px;
 	--font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
 	--mono: "Cascadia Code", "Cascadia Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -121,4 +121,116 @@ textarea {
 .md td {
 	border: 1px solid var(--line);
 	padding: 3px 8px;
+}
+
+/* Shared interaction rules also apply to native controls in every window. */
+:root {
+	scrollbar-color: #515866 var(--panel);
+	scrollbar-width: thin;
+	caret-color: var(--accent);
+}
+::selection {
+	background: #275c65;
+	color: #fff;
+}
+:root :focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+:root :disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+input::placeholder,
+textarea::placeholder {
+	color: var(--faint);
+	opacity: 1;
+}
+button {
+	touch-action: manipulation;
+}
+button:not(:disabled):hover {
+	border-color: var(--muted);
+}
+button:not(:disabled):active {
+	opacity: 0.8;
+}
+button:not(:disabled):hover,
+summary:hover {
+	filter: brightness(1.12);
+}
+input,
+select,
+textarea {
+	accent-color: var(--accent);
+}
+input[type="checkbox"] {
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	flex: none;
+	cursor: pointer;
+}
+input[type="number"] {
+	font-variant-numeric: tabular-nums;
+}
+select {
+	cursor: pointer;
+	text-overflow: ellipsis;
+}
+select option {
+	background: var(--panel-raised);
+	color: var(--text);
+}
+textarea {
+	line-height: 1.5;
+}
+summary {
+	border-radius: 4px;
+}
+p,
+h1,
+h2,
+h3,
+label,
+.md {
+	overflow-wrap: anywhere;
+}
+.md {
+	min-width: 0;
+	max-width: 100%;
+}
+.md pre {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	max-width: 100%;
+	overflow-wrap: normal;
+}
+.md pre code {
+	white-space: pre;
+	flex: none;
+	min-width: 100%;
+	width: max-content;
+}
+.md table {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+}
+.md th,
+.md td {
+	min-width: 80px;
+}
+.md img {
+	max-width: 100%;
+	height: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+	}
 }

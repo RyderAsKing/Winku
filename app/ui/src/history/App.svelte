@@ -11,12 +11,17 @@
 	let items: TranscriptItem[] = $state([]);
 	let loading = $state(true);
 	let restoring = $state(false);
+	let reading = $state(false);
+	let error = $state("");
+	let readVersion = 0;
 
 	async function load() {
 		loading = true;
+		error = "";
 		try {
 			entries = await shell.call<HistoryEntry[]>({ type: "history_list", query: query.trim() || undefined });
 		} catch {
+			error = "Could not load history. Try again.";
 			entries = [];
 		}
 		loading = false;
@@ -25,15 +30,33 @@
 
 	async function open(entry: HistoryEntry | null) {
 		selected = entry;
-		items = entry ? await shell.call<TranscriptItem[]>({ type: "history_read", entryId: entry.id }).catch(() => []) : [];
+		if (entry) error = "";
+		const version = ++readVersion;
+		reading = true;
+		try {
+			const result = entry ? await shell.call<TranscriptItem[]>({ type: "history_read", entryId: entry.id }) : [];
+			if (version === readVersion) items = result;
+		} catch {
+			if (version === readVersion) {
+				items = [];
+				error = "Could not read this conversation. Try again.";
+			}
+		} finally {
+			if (version === readVersion) reading = false;
+		}
 	}
 
 	async function restore() {
 		if (!selected) return;
 		restoring = true;
-		await shell.call({ type: "history_restore", entryId: selected.id });
-		restoring = false;
-		await load();
+		try {
+			await shell.call({ type: "history_restore", entryId: selected.id });
+			await load();
+		} catch {
+			error = "Could not restore this conversation. Try again.";
+		} finally {
+			restoring = false;
+		}
 	}
 
 	$effect(() => {
@@ -58,7 +81,7 @@
 		<ul>
 			{#each entries as entry (entry.id)}
 				<li>
-					<button type="button" class:active={selected?.id === entry.id} onclick={() => open(entry)}>
+					<button type="button" class:active={selected?.id === entry.id} aria-current={selected?.id === entry.id ? "true" : undefined} title={entry.title || "Untitled"} onclick={() => open(entry)}>
 						<span class="title">{entry.title || "Untitled"}</span>
 						<span class="meta">
 							{entry.current ? "Current thread" : entry.kind === "action" ? "Action" : "Thread"}
@@ -72,7 +95,8 @@
 		</ul>
 	</aside>
 
-	<section>
+	<section aria-label="History preview">
+		{#if error}<p class="feedback" role="alert">{error}</p>{/if}
 		{#if selected}
 			<header>
 				<h1>{selected.title || "Untitled"}</h1>
@@ -80,7 +104,9 @@
 					<button type="button" class="primary" disabled={restoring} onclick={restore}>Restore as current</button>
 				{/if}
 			</header>
-			<div class="read"><TranscriptList {items} live={false} /></div>
+			<div class="read">{#if reading}<p class="feedback" role="status">Loading conversation…</p>{:else}<TranscriptList {items} live={false} />{/if}</div>
+		{:else}
+			<div class="placeholder"><h1>{query ? "No conversations found" : "Your history"}</h1><p>{query ? "Try a different search." : "Past conversations and quick actions will appear here."}</p></div>
 		{/if}
 	</section>
 </main>
@@ -104,6 +130,7 @@
 	input {
 		margin: 14px;
 		height: 32px;
+		flex: none;
 		padding: 0 10px;
 		border-radius: 9px;
 		border: 1px solid var(--line-strong);
@@ -140,6 +167,7 @@
 		background: var(--panel-raised);
 	}
 	.title {
+		overflow-wrap: anywhere;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;
@@ -157,6 +185,7 @@
 		font-size: 13px;
 	}
 	section {
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
@@ -175,8 +204,12 @@
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
+		overflow-wrap: anywhere;
 	}
+	.placeholder { margin: auto; padding: 28px; color: var(--muted); text-align: center; }
+	.placeholder h1 { color: var(--text); }
+	.feedback { margin: 0; padding: 18px; color: var(--muted); }
+	.feedback[role="alert"] { color: var(--error); }
 	.read {
 		flex: 1;
 		min-height: 0;
@@ -184,7 +217,7 @@
 	}
 	.primary {
 		flex: none;
-		height: 30px;
+		height: 32px;
 		padding: 0 14px;
 		border-radius: 999px;
 		border: 0;

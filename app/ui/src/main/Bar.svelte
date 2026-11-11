@@ -145,6 +145,7 @@
 
 <style>
 	.panel {
+		max-height: min(432px, 100dvh);
 		display: flex;
 		flex-direction: column;
 		width: 100%;
@@ -157,6 +158,7 @@
 		border-radius: 28px;
 	}
 	.panel.transcript {
+		max-height: 100%;
 		height: 100%;
 		border-radius: 22px;
 	}
@@ -183,6 +185,7 @@
 		padding: 12px 0;
 	}
 	textarea {
+		border-radius: 4px;
 		width: 100%;
 		resize: none;
 		border: 0;
@@ -213,6 +216,8 @@
 		color: var(--muted);
 	}
 	.chip button {
+		min-width: 24px;
+		min-height: 24px;
 		border: 0;
 		background: none;
 		color: var(--muted);
@@ -225,21 +230,24 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		flex: none;
-		color: var(--muted);
+		flex: 0 1 auto;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		max-width: 44%;
 	}
 	.level {
 		border: 1px solid var(--line);
 		border-radius: 999px;
 		background: none;
 		color: var(--muted);
-		padding: 1px 8px;
+		padding: 4px 8px;
 		cursor: pointer;
 	}
 	.body {
 		flex: 1;
 		min-height: 0;
 		border-top: 1px solid var(--line);
+		overflow: auto;
 	}
 	.pad {
 		padding: 14px 22px 18px 92px;
@@ -254,6 +262,7 @@
 		scrollbar-color: var(--line-strong) transparent;
 	}
 	.toast {
+		overflow-wrap: anywhere;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -265,9 +274,12 @@
 		flex: none;
 	}
 	.transcript .toast {
+		overflow-wrap: anywhere;
 		padding-left: 22px;
 	}
 	.toast button {
+		flex: none;
+		min-height: 28px;
 		border: 0;
 		background: none;
 		color: var(--accent);

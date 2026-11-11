@@ -39,16 +39,18 @@
 
 <style>
 	.md :global(pre .copy) {
-		position: absolute;
-		top: 6px;
-		right: 6px;
+		position: sticky;
+		order: -1;
+		align-self: flex-end;
+		margin-bottom: 8px;
+		right: 0;
 		padding: 2px 8px;
 		font-size: 11px;
 		border-radius: 6px;
 		border: 1px solid var(--line-strong);
 		background: var(--panel-raised);
 		color: var(--muted);
-		opacity: 0;
+		opacity: 1;
 		cursor: pointer;
 		transition: opacity 120ms ease;
 	}

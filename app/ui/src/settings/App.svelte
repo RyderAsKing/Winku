@@ -32,9 +32,9 @@
 	} from "../lib/shell.ts";
 
 	const OUTPUTS: { value: ActionSpec["output"]; label: string }[] = [
-		{ value: "replace", label: "Replace selection" },
-		{ value: "show", label: "Show in the bar" },
-		{ value: "agent", label: "Do it with tools" },
+		{ value: "replace", label: "Replace text" },
+		{ value: "show", label: "Show reply" },
+		{ value: "agent", label: "Use tools" },
 	];
 	const DEFAULT_ACTIONS = defaultSettings().actions;
 
@@ -391,7 +391,7 @@
 			<h2>Model</h2>
 			<label class="field">
 				<span>Provider</span>
-				<select bind:value={providerId}>
+				<select aria-label="Provider" bind:value={providerId}>
 					{#each providers as p (p.id)}
 						<option value={p.id}>{p.name}</option>
 					{/each}
@@ -403,7 +403,7 @@
 				<label class="field">
 					<span>Base URL</span>
 					<div class="inline">
-						<input bind:value={baseUrl} spellcheck="false" />
+						<input aria-label="Base URL" bind:value={baseUrl} spellcheck="false" />
 						{#each PRESETS as preset (preset.name)}
 							<button type="button" class="quiet" onclick={() => (baseUrl = preset.baseUrl)}>{preset.name}</button>
 						{/each}
@@ -421,7 +421,7 @@
 					</div>
 				{:else}
 					<div class="inline">
-						<input type="password" bind:value={keyDraft} autocomplete="off" spellcheck="false" placeholder={custom ? "Optional for local servers" : "Paste your key"} />
+						<input type="password" aria-label="API key" bind:value={keyDraft} autocomplete="off" spellcheck="false" placeholder={custom ? "Optional for local servers" : "Paste your key"} />
 						{#if keyUrl}<button type="button" class="quiet" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>{/if}
 					</div>
 				{/if}
@@ -434,7 +434,7 @@
 			<div class="field">
 				<span>Main model</span>
 				<div class="inline">
-					<input bind:value={mainId} list="models" spellcheck="false" placeholder="Pick or type a model id" />
+					<input aria-label="Main model" bind:value={mainId} list="models" spellcheck="false" placeholder="Pick or type a model id" />
 					<select bind:value={mainThinking} aria-label="Main thinking level" class="narrow">
 						{#each levelsFor(mainId) as level (level)}<option value={level}>{level}</option>{/each}
 					</select>
@@ -449,7 +449,7 @@
 						<option value={false}>A different model</option>
 					</select>
 					{#if !quickFollows}
-						<input bind:value={quickId} list="models" spellcheck="false" placeholder="Model id" />
+						<input aria-label="Quick model ID" bind:value={quickId} list="models" spellcheck="false" placeholder="Model id" />
 						<select bind:value={quickThinking} aria-label="Quick actions thinking level" class="narrow">
 							{#each levelsFor(quickId) as level (level)}<option value={level}>{level}</option>{/each}
 						</select>
@@ -828,7 +828,7 @@
 		overflow-y: auto;
 	}
 	main {
-		max-width: 640px;
+		width: 100%;
 		margin: 0 auto;
 		padding: 24px 28px 40px;
 	}
@@ -845,15 +845,13 @@
 	}
 	h2 {
 		margin: 0 0 4px;
-		font-size: 13px;
+		font-size: 15px;
 		font-weight: 600;
-		color: var(--muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
+		color: var(--text);
 	}
 	.field {
 		display: grid;
-		grid-template-columns: 170px 1fr;
+		grid-template-columns: 156px minmax(0, 1fr);
 		align-items: center;
 		gap: 12px;
 	}
@@ -892,12 +890,15 @@
 	textarea:focus {
 		border-color: var(--focus);
 	}
+	.inline:has(> select[aria-label="Quick actions model"]) { flex-wrap: wrap; }
+	select[aria-label="Quick actions model"] { flex-basis: 100%; }
+	input[aria-label="Quick model ID"] { flex: 1; width: 0; }
 	.narrow {
 		width: 120px;
 		flex: none;
 	}
 	.narrow-input {
-		width: 120px !important;
+		width: 108px !important;
 		flex: none;
 	}
 	.value,
@@ -910,12 +911,14 @@
 		font-size: 12px;
 	}
 	.grow {
+		min-width: 0;
 		flex: 1;
 	}
 	.bad {
 		color: var(--error);
 	}
 	.notice {
+		flex-wrap: wrap;
 		display: flex;
 		align-items: center;
 		gap: 12px;
@@ -931,7 +934,7 @@
 	}
 	.notice button {
 		flex: none;
-		height: 30px;
+		height: 32px;
 		padding: 0 12px;
 		border-radius: 8px;
 		border: 1px solid var(--line-strong);
@@ -981,7 +984,7 @@
 		min-height: 52px;
 	}
 	.output {
-		width: 170px !important;
+		width: 152px !important;
 		flex: none;
 	}
 	.stack {
@@ -994,15 +997,16 @@
 		gap: 6px 16px;
 	}
 	.check-inline {
+		min-height: 28px;
 		display: inline-flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 		font-size: 13px;
 		color: var(--muted);
 	}
 	.quiet {
 		flex: none;
-		height: 30px;
+		height: 32px;
 		padding: 0 10px;
 		border-radius: 8px;
 		border: 1px solid var(--line-strong);

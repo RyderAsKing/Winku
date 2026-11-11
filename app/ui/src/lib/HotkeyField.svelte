@@ -7,6 +7,7 @@
 
 	function onkeydown(event: KeyboardEvent) {
 		if (!capturing) return;
+		if (event.key === "Tab") { capturing = false; return; }
 		event.preventDefault();
 		event.stopPropagation();
 		if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
@@ -26,6 +27,7 @@
 	class="hotkey mono"
 	class:capturing
 	class:conflict
+	aria-pressed={capturing}
 	aria-label="{label}: {value}. Click to change"
 	onclick={() => (capturing = !capturing)}
 	onblur={() => (capturing = false)}
@@ -37,7 +39,7 @@
 <style>
 	.hotkey {
 		min-width: 140px;
-		height: 30px;
+		height: 32px;
 		padding: 0 12px;
 		border-radius: 8px;
 		border: 1px solid var(--line-strong);

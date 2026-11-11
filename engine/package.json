@@ -1,0 +1,22 @@
+{
+  "name": "winku-engine",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bun build --compile --minify --sourcemap src/main.ts --outfile dist/winku-engine",
+    "build:windows": "bun build --compile --minify --sourcemap --target=bun-windows-x64 src/main.ts --outfile dist/winku-engine.exe",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}

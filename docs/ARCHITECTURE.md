@@ -42,8 +42,9 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `secret_set` | `{ apiKey, account? }` → `()`. `account` is `"api-key"` (default, the provider key) or `"search-api-key"` (Brave Search). Stored in Credential Manager, then `configure` is re-sent. | 2, 6 |
 | `secret_clear` | `{ account? }` → `()` | 2, 6 |
 | `secret_present` | `{ account? }` → `boolean` | 2, 6 |
-| `window_mode` | `{ mode: "pill" \| "bar" \| "transcript" }` → `()` | 2 |
-| `window_bar_height` | `{ height: number }` → `()` (whole bar in logical px, input row plus reply; clamped to 72–432) | 2 |
+| `window_mode` | `{ mode: "pill" \| "bar" \| "transcript" }` → `()` (focus and visibility only) | 2 |
+| `window_shape` | `{ width, height, shapes: { x, y, w, h }[] }` → `{ alignRight, above }` (the stage size and the shapes drawn on it, logical px from the stage's top-left) | 2 |
+| `window_layout` | `{}` → `{ alignRight, above } \| null` (which way things grow from the pill) | 2 |
 | `open_window` | `{ name: "settings" \| "history" }` → `()` | 2 |
 | `context_menu` | `()` → `()` (native menu at the cursor) | 2 |
 | `open_external` | `{ url }` → `()`; http(s) only, opens the default browser | 2 |
@@ -65,7 +66,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | Event | Payload |
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
-| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot) |
+| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot), `{ kind: "layout", alignRight, above }` (the pill was moved across the screen's middle) |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
 | `update_status` | `UpdateStatus`, whenever it changes |
@@ -85,10 +86,11 @@ Actions (`Ctrl+Alt+1…5`, SPEC §6) start in the shell:
 ## Windows
 
 - **Main window** (label `main`): transparent, undecorated, always on top, skipped in the taskbar, no shadow. One webview that morphs, so only one renderer stays alive (the memory budget is 150 MB and WebView2 already takes about 62 MB).
-  - `pill`: 140×84 at the remembered position (default: right edge, a third of the way down the primary monitor). Doesn't take focus. Draggable; snaps to the nearest screen edge within 24 px on release; the position is saved per monitor setup.
-  - `bar`: 560 wide (640 max), 72 tall plus the streamed reply (up to 360), near the top centre of the monitor under the cursor (12% down). Takes focus.
-  - `transcript`: 420×560 (480 wide when the monitor is 2560 logical px or wider), anchored where the bar was.
-  - Hiding the bar returns to `pill` at its remembered position.
+  - Everything grows out of the pill. The window is a fixed **stage**, as wide as the open bar and as tall as the pill plus the tallest bubble, with the pill in one corner: the right corners when the pill is on the right half of its monitor, the bottom ones when it is in the lower 40% (`window::layout_for`). The bar stretches from the pill along the top (or bottom) edge and the bubble hangs under (or over) it.
+  - The UI reports the stage size and the shapes it draws (`window_shape`; `app/ui/src/main/stage.ts`). On Windows the window is always the stage and is clipped to those shapes with `SetWindowRgn`, so the transparent rest neither paints nor takes clicks, and nothing is resized while a reply streams. Growth is reported at once; shrinking after the close animation. Elsewhere there is no clipping, so a bare pill keeps a pill-sized window. Moves and resizes go through one `SetWindowPos` so no frame shows the old size at the new place.
+  - Sizes by `eyes.size` (logical px): small pill 92×56, bar 400, bubble up to 360; medium 116×70, 480, 420; large 140×84, 560, 480. The table lives in `stage.ts` and `EyeSize::pill`.
+  - `pill`: at the remembered position (default: right edge, a third of the way down the primary monitor). Doesn't take focus. Draggable; snaps to the nearest screen edge within 24 px on release; the pill's position is saved per monitor setup. Changing the size keeps a flush edge flush (otherwise the centre).
+  - `bar` and `transcript`: take focus. Replies under the resting pill (spoken prompts, actions, errors, permission asks) open the bubble without opening the bar.
 - **Settings** (`settings`) and **History** (`history`): ordinary decorated windows, created on demand and destroyed on close.
 - Pages are a multi-page Vite build: `index.html` (main), `settings.html`, `history.html`.
 
@@ -130,7 +132,7 @@ Owned by the shell (`app/src-tauri/src/settings.rs`); the TypeScript mirror is `
     "cycleThinking": "Ctrl+Alt+T"
   },
   "leaderKey": null,                      // e.g. "F13"; replaces Ctrl+Alt in every binding
-  "eyes": { "hidden": false, "positions": {} },   // positions keyed by monitor-layout signature
+  "eyes": { "hidden": false, "size": "small", "positions": {} },   // size: small | medium | large; positions keyed by monitor-layout signature
   "voice": { "stt": "moonshine-base", "tts": "os", "osVoice": null, "reply": "mirror", "listeningPaused": false },
   "updates": "auto",                      // "auto" | "notify" | "off"
   "launchAtLogin": true
@@ -263,7 +265,7 @@ app/src-tauri/src/
   settings.rs    schema, defaults, load/save
   secrets.rs     keyring
   hotkeys.rs     registration, tap/hold, leader key, AltGr check
-  window.rs      modes, geometry, cursor monitor, snapping, saved positions
+  window.rs      modes, the stage around the pill, shapes, snapping, saved positions
   menu.rs        context menu, tray (only while the eyes are hidden)
   commands.rs    #[tauri::command] functions
   platform/      foreground app, selection, paste, screenshot, UI Automation (windows.rs + fallback.rs)
@@ -292,7 +294,8 @@ app/ui/src/
 - UI audit: with Vite running, `cd app && BASE_URL=http://localhost:5173 bun run ui-audit` checks keyboard activation, Tab out of hotkey fields, accessible field names, long content staying inside its box, and AA text contrast. docs/research/design-review.md has the last full design review.
 - Eyes motion budget: `cd app && bun run motion-check` starts Vite and drives the mock shell in Chromium. It checks that the resting pill runs no animations, that the idle bar runs no endless loop, that the speaking bounce runs only while the bar shows, and that "reduce motion" stops every loop. Windows CI also samples idle CPU for the whole process tree with the pill showing (`scripts/measure-memory.ps1`).
 - Eyes gallery: `http://127.0.0.1:5173/eyes.html` under `bun run ui:dev` shows every state, tint and lid level at pill size (`?animate=1` turns the loops on). It is dev-only and not part of the build.
-- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `action-show`, `action-no-selection`, `memory-saved`, `eyes` (the gallery), `settings`, `settings-memory`, `settings-actions`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `action-show`, `action-no-selection`, `memory-saved`, `eyes` (the gallery), `settings`, `settings-memory`, `settings-actions`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout. Mock URL parameters `?size=medium|large`, `?left` and `?low` show the other eye sizes and growth directions.
+- Windows desktop screenshots: CI's `windows-build` job runs `app/scripts/windows-shots.ps1` against the release build (resting pill, the bar after a tap of the summon key, closed again) and uploads them as the `windows-shots` artifact.
 - CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory and CPU. A Linux job runs the same checks faster.
 
 ## Decisions not spelled out in the spec

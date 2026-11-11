@@ -40,9 +40,22 @@ const cases = [
 		},
 	},
 	{
+		name: "reply-low-left",
+		path: "/?left&low",
+		ready: "text=Paste it into Paint",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400);
+		},
+	},
+	{ name: "bar-large", path: "/?size=large", ready: "text=23% ctx", prepare: summon },
+	{
 		name: "pill-update",
 		path: "/?update=1",
-		ready: ".pill .dot",
+		ready: ".head .dot",
 	},
 	{
 		name: "bar-update",
@@ -337,7 +350,7 @@ cases.push(
 	{
 		name: "focus-pill",
 		path: "/",
-		ready: ".pill:focus-visible",
+		ready: ".head .eyes:focus-visible",
 		prepare: async (page) => {
 			await page.keyboard.press("Tab");
 		},
@@ -423,8 +436,16 @@ try {
 				await page.locator(item.ready).first().waitFor({ state: "visible" });
 				await page.evaluate(() => document.fonts.ready);
 				const file = path.join(out, `${item.name}-${vp.name}.png`);
-				// Clip to the window plus a margin of stand-in desktop; the rest of the viewport is empty.
-				const box = item.size ? null : await page.locator(".window").first().boundingBox();
+				// Clip to what the window draws (pill or bar, bubble) plus a margin of stand-in desktop.
+				const box = item.size
+					? null
+					: await page.evaluate(() => {
+							const rects = [...document.querySelectorAll(".head, .bubbles, .window")].map((el) => el.getBoundingClientRect());
+							if (rects.length === 0) return null;
+							const x = Math.min(...rects.map((r) => r.left));
+							const y = Math.min(...rects.map((r) => r.top));
+							return { x, y, width: Math.max(...rects.map((r) => r.right)) - x, height: Math.max(...rects.map((r) => r.bottom)) - y };
+						});
 				const m = 40;
 				const clip = box && {
 					x: Math.max(0, box.x - m),

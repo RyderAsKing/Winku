@@ -1,5 +1,5 @@
-// The main window's interaction state: pill ↔ bar ↔ transcript, the current reply, chips,
-// toasts and the eyes. Engine events and shell `ui` events come in here; components render it.
+// The main window's interaction state: pill ↔ bar ↔ transcript, the current reply and its
+// bubble, chips, toasts and the eyes. Engine events and shell `ui` events come in here; components render it.
 import type {
 	ErrorKind,
 	ImageAttachment,
@@ -22,6 +22,8 @@ import {
 	type WindowMode,
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
+import type { Layout } from "../lib/shell.ts";
+import { bubbleLinger, DEFAULT_LAYOUT, type Dims, dimsFor, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
 	toolCallId: string;
@@ -109,6 +111,11 @@ export class MainState {
 	download: DownloadProgress | null = $state(null);
 	/** Version of an update that is downloaded or available; the eyes show a dot. */
 	updateReady: string | null = $state(null);
+	/** Which way the bar and bubble grow from the pill. */
+	layout: Layout = $state(DEFAULT_LAYOUT);
+	/** The reply bubble under the resting pill (spoken prompts, actions, errors). The open bar
+	 * always shows its reply. */
+	bubbleOpen = $state(false);
 
 	readonly needsConnect: boolean = $derived(
 		this.settings !== null &&
@@ -119,6 +126,7 @@ export class MainState {
 	readonly thinking: ThinkingLevel = $derived(this.ready?.thinking ?? this.settings?.main?.thinking ?? "medium");
 	readonly tint: string = $derived(TINTS[this.thinking]);
 	readonly lid: number = $derived(lidFor(this.contextPercent));
+	readonly dims: Dims = $derived(dimsFor(this.settings?.eyes.size));
 
 	#lastUserText = "";
 	/** Replace actions in flight: their text is pasted by the shell, not shown. */
@@ -127,6 +135,8 @@ export class MainState {
 	#toastTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Prompt ids the user spoke, for mirror mode. */
 	readonly #spokenPrompts = new Set<string>();
+	#bubbleTimer: ReturnType<typeof setTimeout> | undefined;
+	#bubbleHeld = false;
 
 	async init() {
 		await Promise.all([
@@ -144,6 +154,8 @@ export class MainState {
 			.catch(() => {});
 		this.hasKey = hasKey;
 		this.settings = settings;
+		const layout = await shell.windowLayout().catch(() => null);
+		if (layout) this.layout = layout;
 	}
 
 	// ── window ──
@@ -155,9 +167,41 @@ export class MainState {
 	}
 
 	async hide() {
+		this.bubbleOpen = false;
+		clearTimeout(this.#bubbleTimer);
 		await this.#setMode("pill");
 		this.selectionChip = null;
 		this.imageChip = null;
+	}
+
+	/** The window is the stage around the pill; tell the shell what is drawn on it. */
+	async reportShape(dims: Dims, headW: number, bubbleH: number) {
+		const stage = stageSize(dims);
+		const layout = await shell.windowShape(stage.w, stage.h, shapesFor(dims, this.layout, headW, bubbleH)).catch(() => null);
+		if (layout && (layout.alignRight !== this.layout.alignRight || layout.above !== this.layout.above)) this.layout = layout;
+	}
+
+	/** Show something without opening the bar: under the resting pill it goes in the bubble. */
+	#surface() {
+		if (this.mode !== "pill") return;
+		clearTimeout(this.#bubbleTimer);
+		this.bubbleOpen = true;
+	}
+
+	/** The pointer is over the bubble: keep it until it leaves. */
+	holdBubble(held: boolean) {
+		this.#bubbleHeld = held;
+		if (held) clearTimeout(this.#bubbleTimer);
+		else this.#armBubble();
+	}
+
+	/** Once a reply under the pill is finished and read out, let the bubble go after a while. */
+	#armBubble() {
+		clearTimeout(this.#bubbleTimer);
+		if (this.mode !== "pill" || !this.bubbleOpen || this.busy || this.speaking || this.#bubbleHeld) return;
+		this.#bubbleTimer = setTimeout(() => {
+			this.bubbleOpen = false;
+		}, bubbleLinger(this.reply?.text ?? ""));
 	}
 
 	async toggleTranscript() {
@@ -172,7 +216,6 @@ export class MainState {
 
 	async #setMode(mode: WindowMode) {
 		this.mode = mode;
-		this.eyes.setBarVisible(mode !== "pill");
 		await shell.windowMode(mode);
 	}
 
@@ -341,7 +384,7 @@ export class MainState {
 						tools: [],
 					};
 					this.busy = true;
-					void this.summon();
+					this.#surface();
 				}
 				break;
 			case "action_error": {
@@ -363,7 +406,8 @@ export class MainState {
 					error: { kind: "action", message: event.message },
 				};
 				this.busy = false;
-				void this.summon();
+				this.#surface();
+				this.#armBubble();
 				break;
 			}
 			case "talk_start":
@@ -379,14 +423,18 @@ export class MainState {
 			case "talk_end":
 				this.listening = false;
 				if (event.text.trim()) {
-					// The shell notes the window in front as the bar opens, for the now line.
-					void this.summon().then(() => this.submit(event.text, true));
+					// Talking keeps the eyes where they are: the reply comes in the bubble.
+					this.#surface();
+					void this.submit(event.text, true);
 				} else if (this.eyes.activity === "listening") this.eyes.setActivity("idle");
 				break;
 			case "speech":
 				this.speaking = event.playing;
 				if (event.playing) this.eyes.setActivity("speaking");
-				else if (this.eyes.activity === "speaking" && !this.busy) this.eyes.setActivity("idle");
+				else {
+					if (this.eyes.activity === "speaking" && !this.busy) this.eyes.setActivity("idle");
+					this.#armBubble();
+				}
 				break;
 			case "voice_error":
 				this.listening = false;
@@ -401,7 +449,8 @@ export class MainState {
 						tools: [],
 						error: { kind: "voice", message: event.message },
 					};
-					void this.summon();
+					this.#surface();
+					this.#armBubble();
 				}
 				this.eyes.error();
 				break;
@@ -409,6 +458,9 @@ export class MainState {
 				break;
 			case "update_ready":
 				this.updateReady = event.version;
+				break;
+			case "layout":
+				this.layout = { alignRight: event.alignRight, above: event.above };
 				break;
 		}
 	}
@@ -476,6 +528,7 @@ export class MainState {
 				else if (!reply?.error) this.eyes.replyFinished(message.mood, saysThanks(this.#lastUserText));
 				this.#speakReply(message.id, message.text, message.aborted || Boolean(reply?.error));
 				if (this.mode === "transcript") void this.loadTranscript();
+				this.#armBubble();
 				break;
 			case "action_delta":
 				if (reply?.id === message.id) reply.text += message.delta;
@@ -502,6 +555,7 @@ export class MainState {
 				if (message.aborted) {
 					if (!reply?.error) this.eyes.setActivity("idle");
 				} else this.eyes.replyFinished(undefined, false);
+				this.#armBubble();
 				break;
 			case "context":
 				this.contextPercent = message.percent;
@@ -541,7 +595,7 @@ export class MainState {
 					else {
 						this.reply = { id: message.params.replyId ?? newId("ask"), kind: "prompt", text: "", done: false, aborted: false, tools: [], permissions: [ask] };
 					}
-					void this.summon();
+					this.#surface();
 				}
 				break;
 			case "voice_proposal": {
@@ -571,7 +625,8 @@ export class MainState {
 						tools: [],
 						error: { kind: message.errorKind, message: message.message },
 					};
-					void this.summon();
+					this.#surface();
+					this.#armBubble();
 					break;
 				}
 				if (reply && (!message.id || message.id === reply.id)) {
@@ -588,6 +643,8 @@ export class MainState {
 					};
 				}
 				this.busy = false;
+				this.#surface();
+				this.#armBubble();
 				break;
 			default:
 				break;

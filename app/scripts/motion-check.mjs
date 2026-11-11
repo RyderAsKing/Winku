@@ -29,7 +29,7 @@ const running = (page) =>
 			.getAnimations()
 			.filter((a) => a.playState === "running")
 			.map((a) => ({
-				name: a.animationName ?? a.constructor.name,
+				name: a.animationName ?? (a.id || a.constructor.name),
 				endless: a.effect?.getComputedTiming().iterations === Infinity,
 			})),
 	);

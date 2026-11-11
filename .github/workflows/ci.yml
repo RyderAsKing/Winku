@@ -116,6 +116,19 @@ jobs:
         shell: pwsh
         run: ./scripts/measure-memory.ps1
 
+      - name: Screenshots on the Windows desktop
+        working-directory: app
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/windows-shots.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-shots
+          path: ${{ runner.temp }}/winku-shots
+          if-no-files-found: ignore
+
   windows-tests:
     runs-on: windows-latest
     timeout-minutes: 40

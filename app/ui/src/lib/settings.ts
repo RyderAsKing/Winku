@@ -14,6 +14,8 @@ export interface Hotkeys {
 	cycleThinking: string;
 }
 
+export type EyeSize = "small" | "medium" | "large";
+
 export interface Settings {
 	version: 1;
 	provider: ProviderConfig | null;
@@ -29,7 +31,7 @@ export interface Settings {
 	actions: ActionSpec[];
 	hotkeys: Hotkeys;
 	leaderKey: string | null;
-	eyes: { hidden: boolean; positions: Record<string, { x: number; y: number }> };
+	eyes: { hidden: boolean; size: EyeSize; positions: Record<string, { x: number; y: number }> };
 	voice: {
 		stt: "moonshine-base" | "whisper-base-en" | "parakeet";
 		tts: "os" | "kokoro";

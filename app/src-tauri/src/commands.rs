@@ -31,6 +31,9 @@ pub fn apply_settings(app: &AppHandle, old: &Settings, new: &Settings) {
     if old.eyes.hidden != new.eyes.hidden {
         window::apply_eyes_visibility(app);
     }
+    if old.eyes.size != new.eyes.size {
+        window::on_size_changed(app);
+    }
     let _ = app.emit(SETTINGS_CHANGED, new);
 }
 
@@ -146,9 +149,20 @@ pub fn window_mode(app: AppHandle, mode: Mode) -> Result<(), String> {
     window::set_mode(&app, mode)
 }
 
+/// The UI's stage size and the shapes it draws, logical px; returns which way things grow.
 #[tauri::command]
-pub fn window_bar_height(app: AppHandle, height: f64) -> Result<(), String> {
-    window::set_bar_height(&app, height)
+pub fn window_shape(
+    app: AppHandle,
+    width: f64,
+    height: f64,
+    shapes: Vec<window::Shape>,
+) -> Result<window::Layout, String> {
+    window::set_shape(&app, (width, height), &shapes)
+}
+
+#[tauri::command]
+pub fn window_layout(app: AppHandle) -> Option<window::Layout> {
+    window::layout(&app)
 }
 
 /// Async: creating a window from a synchronous command deadlocks on Windows.

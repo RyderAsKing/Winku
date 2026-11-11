@@ -1,7 +1,11 @@
 <script lang="ts">
 	// The eyes. Each eye is its own compositor layer (will-change: transform), so the glow is
 	// rasterised once per state and every animation only moves transform or opacity.
-	// Continuous loops run only while `animate` is true; everything else is a one-off.
+	// Continuous loops run only while `animate` is true; everything else is a one-off. State
+	// changes ease: colours cross-fade, the eye opening tweens and a loop settles instead of
+	// snapping back.
+	import { cubicOut } from "svelte/easing";
+	import { Tween } from "svelte/motion";
 	import { lookFor, type EyeState } from "./look.ts";
 
 	interface Props {
@@ -44,7 +48,8 @@
 
 	// The eye body sits in 20..88 of a 108-unit box; the margin leaves room for the glow.
 	const C = 54;
-	const bodyH = $derived(68 * look.open);
+	const opening = Tween.of(() => look.open, { duration: 260, easing: cubicOut });
+	const bodyH = $derived(68 * opening.current);
 	const bodyY = $derived(20 + (68 - bodyH) * 0.35);
 
 	function filledArc(cx: number, cy: number, w: number, h: number, t: number): string {
@@ -63,6 +68,36 @@
 			`C ${p(0.52, -0.02)}, ${p(0.08, 0.18)}, ${p(0, 0.38)} Z`,
 		].join(" ");
 	}
+
+	// ── loops ──
+	// Driven from script so that stopping one eases back to rest from wherever it was.
+	let pair: HTMLElement | undefined = $state();
+	const LOOPS = {
+		pulse: { duration: 1500, frames: [{ scale: "1" }, { scale: "1.06" }, { scale: "1" }] },
+		bounce: {
+			duration: 720,
+			frames: [
+				{ translate: "0 0", scale: "1 1" },
+				{ translate: "0 -8%", scale: "1.05 0.93", offset: 0.4 },
+				{ translate: "0 2%", scale: "0.98 1.05", offset: 0.7 },
+				{ translate: "0 0", scale: "1 1" },
+			],
+		},
+	} as const;
+
+	$effect(() => {
+		const el = pair;
+		const kind = loop;
+		if (!el || kind === "none") return;
+		const spec = LOOPS[kind];
+		const running = el.animate(spec.frames as unknown as Keyframe[], { id: kind, duration: spec.duration, iterations: Infinity, easing: "ease-in-out" });
+		return () => {
+			const now = getComputedStyle(el);
+			const from = { scale: now.scale === "none" ? "1" : now.scale, translate: now.translate === "none" ? "0 0" : now.translate };
+			running.cancel();
+			el.animate([from, { scale: "1", translate: "0 0" }], { duration: 200, easing: "ease-out" });
+		};
+	});
 
 	// ── one-off animations ──
 	let blinkers: HTMLElement[] = $state([]);
@@ -135,7 +170,8 @@
 	aria-label={label}
 >
 	<div
-		class="pair {loop}"
+		class="pair"
+		bind:this={pair}
 		style:transform="rotate({look.tilt}deg) translate({look.gaze[0] * eyeSize}px, {look.gaze[1] * eyeSize}px)"
 	>
 		<div class="glancer" bind:this={glancer}>
@@ -160,8 +196,8 @@
 								<linearGradient id="{uid}-fill-{side}" x1="0" y1="0" x2="0" y2="1">
 									<stop offset="0%" stop-color="#FFFFFF" />
 									<stop offset="22%" stop-color="#E8FFFC" />
-									<stop offset="55%" stop-color={look.colour} />
-									<stop offset="100%" stop-color={look.colour} />
+									<stop offset="55%" style:stop-color={look.colour} />
+									<stop offset="100%" style:stop-color={look.colour} />
 								</linearGradient>
 								<linearGradient id="{uid}-sheen-{side}" x1="0" y1="0" x2="0" y2="1">
 									<stop offset="0%" stop-color="#fff" stop-opacity="0.95" />
@@ -179,9 +215,9 @@
 
 							{#if look.shape === "rect"}
 								{#if look.ring}
-									<rect x="13" y={bodyY - 7} width="82" height={bodyH + 14} rx="25" fill="none" stroke={look.colour} stroke-width="2" opacity="0.35" />
+									<rect x="13" y={bodyY - 7} width="82" height={bodyH + 14} rx="25" fill="none" style:stroke={look.colour} stroke-width="2" opacity="0.35" />
 								{/if}
-								<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
+								<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
 								<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" fill="url(#{uid}-fill-{side})" />
 								<rect x="26" y={bodyY + 5} width="56" height={bodyH * 0.46} rx="14" fill="url(#{uid}-sheen-{side})" opacity="0.65" />
 								<ellipse cx={C - 12} cy={bodyY + 18} rx="14" ry="10" fill="#fff" opacity="0.82" />
@@ -190,16 +226,16 @@
 									<path d="M 90 64 Q 96 76 88 82 Q 84 72 90 64 Z" fill="#7FD4FF" opacity="0.9" />
 								{/if}
 							{:else if look.shape === "arc"}
-								<path d={filledArc(C, 68, 74, 46, 30)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
+								<path d={filledArc(C, 68, 74, 46, 30)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
 								<path d={filledArc(C, 68, 74, 46, 30)} fill="url(#{uid}-fill-{side})" />
 								<path d={filledArc(C - 6, 58, 30, 14, 6)} fill="#fff" opacity="0.6" />
 							{:else if look.shape === "heart"}
-								<path d={heartPath(C, 56, 62)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
+								<path d={heartPath(C, 56, 62)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
 								<path d={heartPath(C, 56, 62)} fill="url(#{uid}-fill-{side})" />
 								<ellipse cx={C - 13} cy="44" rx="9" ry="6.5" fill="#fff" opacity="0.88" />
 								<circle cx={C + 12} cy="49" r="2.8" fill="#fff" opacity="0.95" />
 							{:else}
-								<path d={filledArc(C, 64, 72, 16, 11)} fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.85" />
+								<path d={filledArc(C, 64, 72, 16, 11)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.85" />
 								<path d={filledArc(C, 64, 72, 16, 11)} fill="url(#{uid}-fill-{side})" />
 							{/if}
 						</svg>
@@ -251,35 +287,19 @@
 		transition: none;
 	}
 
-	.pair.pulse {
-		animation: pulse 1.5s ease-in-out infinite;
+	/* State colours cross-fade rather than switch. */
+	stop,
+	rect,
+	path {
+		transition:
+			stop-color 320ms ease,
+			fill 320ms ease,
+			stroke 320ms ease;
 	}
-	.pair.bounce {
-		animation: bounce 0.72s ease-in-out infinite;
-	}
-	@keyframes pulse {
-		0%,
-		100% {
-			scale: 1;
-		}
-		50% {
-			scale: 1.06;
-		}
-	}
-	@keyframes bounce {
-		0%,
-		100% {
-			translate: 0 0;
-			scale: 1 1;
-		}
-		40% {
-			translate: 0 -8%;
-			scale: 1.05 0.93;
-		}
-		70% {
-			translate: 0 2%;
-			scale: 0.98 1.05;
-		}
+	.still stop,
+	.still rect,
+	.still path {
+		transition: none;
 	}
 
 	.blush span {

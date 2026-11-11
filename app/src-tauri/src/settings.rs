@@ -99,14 +99,27 @@ pub struct Point {
     pub y: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Eyes {
     pub hidden: bool,
-    /// Pill positions (physical px) keyed by monitor-layout signature.
+    /// "small" | "medium" | "large"; anything else reads as small.
+    pub size: String,
+    /// Pill positions (physical px, top-left) keyed by monitor-layout signature.
     pub positions: BTreeMap<String, Point>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+impl Default for Eyes {
+    fn default() -> Self {
+        Self {
+            hidden: false,
+            size: "small".into(),
+            positions: BTreeMap::new(),
+            extra: Extra::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -479,7 +492,10 @@ mod tests {
         assert_eq!(value["hotkeys"]["summon"], "Ctrl+Alt+Space");
         assert_eq!(value["hotkeys"]["cycleThinking"], "Ctrl+Alt+T");
         assert_eq!(value["hotkeys"]["actions"][4], "Ctrl+Alt+5");
-        assert_eq!(value["eyes"], json!({ "hidden": false, "positions": {} }));
+        assert_eq!(
+            value["eyes"],
+            json!({ "hidden": false, "size": "small", "positions": {} })
+        );
         assert_eq!(value["voice"]["osVoice"], Value::Null);
         assert_eq!(value["voice"]["listeningPaused"], false);
         assert_eq!(value["updates"], "auto");

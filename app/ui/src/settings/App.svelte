@@ -56,8 +56,8 @@
 	let version = $state("");
 	const stt = $derived(voiceModels.find((m) => m.id === settings?.voice.stt));
 	const neural = $derived(voiceModels.find((m) => m.id === "supertonic"));
-	/** Supertonic voice numbers: 0–4 male, 5–9 female. */
-	const neuralVoices = [5, 6, 7, 8, 9, 0, 1, 2, 3, 4].map((n) => ({ n, name: `${n >= 5 ? "Female" : "Male"} ${(n % 5) + 1}` }));
+	/** Supertonic voice numbers: 0–4 female, 5–9 male. The default, 5, is listed first. */
+	const neuralVoices = [5, 6, 7, 8, 9, 0, 1, 2, 3, 4].map((n) => ({ n, name: `${n >= 5 ? "Male" : "Female"} ${(n % 5) + 1}` }));
 	let searchKeyDraft = $state("");
 	let newApp = $state("");
 	let confirmForget = $state(false);

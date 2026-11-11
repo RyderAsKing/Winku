@@ -128,7 +128,7 @@ pub struct Voice {
     pub stt: String,
     /// `"supertonic"` (downloaded neural voice, the default) or `"os"` (the system voice).
     pub tts: String,
-    /// Supertonic voice, 0-4 male and 5-9 female. Absent in files written before the neural
+    /// Supertonic voice, 0-4 female and 5-9 male. Absent in files written before the neural
     /// voice became the default; `normalize` uses that to move them off the OS voice once.
     #[serde(default)]
     pub tts_voice: Option<u8>,

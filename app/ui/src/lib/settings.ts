@@ -35,7 +35,7 @@ export interface Settings {
 	voice: {
 		stt: "moonshine-base" | "whisper-base-en" | "parakeet";
 		tts: "os" | "supertonic";
-		/** Natural voice, 0–4 male and 5–9 female; null in files from before it existed. */
+		/** Natural voice, 0–4 female and 5–9 male; null in files from before it existed. */
 		ttsVoice: number | null;
 		osVoice: string | null;
 		reply: ReplyMode;

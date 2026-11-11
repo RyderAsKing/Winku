@@ -157,7 +157,8 @@ where
 
 // ───────────────────────────── Supertonic ─────────────────────────────
 
-/// Supertonic ships ten voices: 0-4 are male, 5-9 female.
+/// Supertonic ships ten voices: 0-4 are female, 5-9 male (checked by pitch: 160-230 Hz vs
+/// 90-130 Hz).
 pub const VOICES: u8 = 10;
 pub const DEFAULT_VOICE: u8 = 5;
 

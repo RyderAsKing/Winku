@@ -1,6 +1,6 @@
 // The one persistent thread: which session file is current, clear/undo, history, transcripts.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { stripMood } from "./mood.ts";
@@ -175,7 +175,12 @@ export class Thread {
 		return transcriptItems(this.manager.getBranch());
 	}
 
-	/** engine\actions.jsonl, written by one-off actions from step 4. */
+	/** Append one finished one-off action to engine\actions.jsonl. */
+	recordAction(line: ActionLogLine): void {
+		appendFileSync(this.actionsPath, `${JSON.stringify(line)}\n`);
+	}
+
+	/** engine\actions.jsonl, written by recordAction. */
 	private readActions(): ActionLogLine[] {
 		if (!existsSync(this.actionsPath)) return [];
 		const lines: ActionLogLine[] = [];
@@ -192,12 +197,13 @@ export class Thread {
 	}
 }
 
-/** One line of engine\actions.jsonl. The writer arrives in step 4; this reader is lenient. */
-interface ActionLogLine {
+/** One line of engine\actions.jsonl. The reader is lenient: only id is required. */
+export interface ActionLogLine {
 	id: string;
 	name?: string;
 	selection?: string;
 	text?: string;
+	output?: "replace" | "show";
 	at?: number;
 }
 

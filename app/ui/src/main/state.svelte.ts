@@ -21,11 +21,13 @@ export interface LiveTool {
 export interface Reply {
 	id: string;
 	kind: "prompt" | "action";
+	/** The action's name, for action replies. */
+	title?: string;
 	text: string;
 	done: boolean;
 	aborted: boolean;
 	tools: LiveTool[];
-	error?: { kind: ErrorKind; message: string };
+	error?: { kind: ErrorKind | "action"; message: string };
 	saved?: { saveId: string; title: string; undone: boolean }[];
 }
 
@@ -75,6 +77,9 @@ export class MainState {
 	readonly lid: number = $derived(lidFor(this.contextPercent));
 
 	#lastUserText = "";
+	/** Replace actions in flight: their text is pasted by the shell, not shown. */
+	readonly #replaceActions = new Set<string>();
+	readonly #replaceResults = new Map<string, string>();
 	#toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async init() {
@@ -241,13 +246,47 @@ export class MainState {
 				void this.cycleThinking();
 				break;
 			case "action_started":
-				if (event.output !== "replace") {
-					this.reply = { id: `action-${event.slot}`, kind: "action", text: "", done: false, aborted: false, tools: [] };
+				this.eyes.touch();
+				this.eyes.setActivity("thinking");
+				if (event.output === "replace") {
+					// Pasted straight back into the app; the bar stays closed (SPEC §6).
+					this.#replaceActions.add(event.id);
+				} else {
+					this.reply = {
+						id: event.id,
+						kind: event.output === "show" ? "action" : "prompt",
+						title: event.name,
+						text: "",
+						done: false,
+						aborted: false,
+						tools: [],
+					};
 					this.busy = true;
 					void this.summon();
 				}
-				this.eyes.setActivity("thinking");
 				break;
+			case "action_error": {
+				// Nothing selected, or the paste failed: then show the result here instead.
+				const text = (event.id && this.#replaceResults.get(event.id)) || "";
+				if (event.id) {
+					this.#replaceActions.delete(event.id);
+					this.#replaceResults.delete(event.id);
+				}
+				this.eyes.error();
+				this.reply = {
+					id: event.id ?? newId("action-error"),
+					kind: "action",
+					title: event.name,
+					text,
+					done: true,
+					aborted: false,
+					tools: [],
+					error: { kind: "action", message: event.message },
+				};
+				this.busy = false;
+				void this.summon();
+				break;
+			}
 			case "talk_start":
 				this.eyes.setActivity("listening");
 				break;
@@ -307,17 +346,30 @@ export class MainState {
 				if (this.mode === "transcript") void this.loadTranscript();
 				break;
 			case "action_delta":
-				if (reply?.kind === "action") reply.text += message.delta;
-				this.eyes.setActivity("speaking");
+				if (reply?.id === message.id) reply.text += message.delta;
+				if (!this.#replaceActions.has(message.id)) this.eyes.setActivity("speaking");
 				break;
 			case "action_end":
-				if (reply?.kind === "action") {
+				if (this.#replaceActions.delete(message.id)) {
+					// The shell pastes the text; only the eyes react. A failed paste comes as
+					// action_error, so keep the text briefly to show it then.
+					if (message.aborted) this.eyes.setActivity("idle");
+					else {
+						this.eyes.replyFinished(undefined, false);
+						this.#replaceResults.set(message.id, message.text);
+						setTimeout(() => this.#replaceResults.delete(message.id), 10_000);
+					}
+					break;
+				}
+				if (reply?.id === message.id) {
 					reply.text = message.text;
 					reply.done = true;
 					reply.aborted = message.aborted;
 				}
 				this.busy = false;
-				this.eyes.replyFinished(undefined, false);
+				if (message.aborted) {
+					if (!reply?.error) this.eyes.setActivity("idle");
+				} else this.eyes.replyFinished(undefined, false);
 				break;
 			case "context":
 				this.contextPercent = message.percent;
@@ -349,6 +401,20 @@ export class MainState {
 				break;
 			case "error":
 				this.eyes.error();
+				// A replace action failed: open the bar so the error is seen.
+				if (message.id && this.#replaceActions.delete(message.id)) {
+					this.reply = {
+						id: message.id,
+						kind: "action",
+						text: "",
+						done: true,
+						aborted: false,
+						tools: [],
+						error: { kind: message.errorKind, message: message.message },
+					};
+					void this.summon();
+					break;
+				}
 				if (reply && (!message.id || message.id === reply.id)) {
 					reply.error = { kind: message.errorKind, message: message.message };
 				} else {

@@ -58,14 +58,21 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | Event | Payload |
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
-| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", slot, name, output }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }`, `{ kind: "talk_end", text }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
+| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }`, `{ kind: "talk_end", text }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
 | `download_progress` | `{ what: "stt" \| "tts", fraction }` (voice models, step 7) |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
 
-Actions (`Ctrl+Alt+1…5`) run in the shell: it captures the selection, sends `run_action`, and on `action_end` either pastes (replace) or summons the bar to show the result (show). Agent actions go into the thread like a prompt.
+Actions (`Ctrl+Alt+1…5`, SPEC §6) start in the shell:
+
+1. Remember the foreground window, wait (up to 600 ms) for the hotkey's modifiers to be released, then capture the selection: UI Automation's TextPattern first, then a simulated `Ctrl+C` that saves every clipboard format first and restores them after.
+2. Nothing selected: emit `ui` `action_error` ("Select some text first"). Otherwise send `run_action` with a fresh id (`action-<n>`) and emit `ui` `action_started` with that id.
+3. replace: on `action_end` for that id (not aborted, non-empty), bring the remembered window back to the front, put the text on the clipboard, send `Ctrl+V`, and restore the previous clipboard about 500 ms later. The target app's own `Ctrl+Z` undoes the paste. If pasting fails, emit `action_error` and the UI shows the result in the bar instead.
+4. show and agent: the UI opens the bar with the reply (`action_delta`/`action_end` for show; the usual prompt events for agent).
+
+`Ctrl+Alt+Q` (ask about the selection) uses the same capture and emits `ask_selection`. The bar is not opened for replace actions; the eyes on the pill show thinking, then happy or error.
 
 ## Windows
 
@@ -181,7 +188,7 @@ app/ui/src/
 - UI: `svelte-check`, a Vite build, and `bun run test` for the pure eye logic (`ui/src/lib/eyes/look.ts`: mood looks, the hearts cooldown, lids, colours).
 - Eyes motion budget: `cd app && bun run motion-check` starts Vite and drives the mock shell in Chromium. It checks that the resting pill runs no animations, that the idle bar runs no endless loop, that the speaking bounce runs only while the bar shows, and that "reduce motion" stops every loop. Windows CI also samples idle CPU for the whole process tree with the pill showing (`scripts/measure-memory.ps1`).
 - Eyes gallery: `http://127.0.0.1:5173/eyes.html` under `bun run ui:dev` shows every state, tint and lid level at pill size (`?animate=1` turns the loops on). It is dev-only and not part of the build.
-- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `eyes` (the gallery), `settings`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `action-show`, `action-no-selection`, `eyes` (the gallery), `settings`, `settings-actions`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
 - CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory and CPU. A Linux job runs the same checks faster.
 
 ## Decisions not spelled out in the spec

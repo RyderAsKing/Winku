@@ -399,8 +399,10 @@ fn dispatch(app: &AppHandle, binding: Binding, pressed: bool) {
         Binding::Summon => summon(app, pressed),
         Binding::Clear if pressed => emit_ui(app, json!({ "kind": "clear" })),
         Binding::CycleThinking if pressed => emit_ui(app, json!({ "kind": "cycle_thinking" })),
-        // Actions (step 4), ask about the selection and screenshot (step 6) are registered so
-        // conflicts show up in Settings, but do nothing yet.
+        Binding::Action(slot) if pressed => crate::actions::on_action_hotkey(app, slot),
+        Binding::AskSelection if pressed => crate::actions::on_ask_hotkey(app),
+        // The screenshot hotkey (step 6) is registered so conflicts show up in Settings, but
+        // does nothing yet.
         _ => {}
     }
 }

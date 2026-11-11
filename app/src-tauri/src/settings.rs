@@ -374,6 +374,22 @@ impl Store {
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
+
+    /// Settings > Actions offers "Reset to default" using the UI's copy of the defaults
+    /// (`app/ui/src/lib/defaults.ts`). Keep the two in step.
+    #[test]
+    fn ui_default_actions_match() {
+        let ui = include_str!("../../ui/src/lib/defaults.ts");
+        for action in default_actions() {
+            for text in [&action.name, &action.prompt, &action.output] {
+                assert!(
+                    ui.contains(&format!("\"{text}\"")),
+                    "defaults.ts is missing {text:?}"
+                );
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

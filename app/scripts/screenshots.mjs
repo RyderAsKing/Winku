@@ -19,6 +19,7 @@ const summon = async (page) => {
 	await page.getByRole("textbox", { name: "Message" }).waitFor();
 };
 const ui = (page, event) => page.evaluate((e) => window.__winkuMock.ui(e), event);
+const action = (page, slot, selection) => page.evaluate(([s, t]) => window.__winkuMock.action(s, t), [slot, selection]);
 const engine = (page, event) => page.evaluate((e) => window.__winkuMock.engine(e), event);
 
 const cases = [
@@ -79,6 +80,33 @@ const cases = [
 		prepare: async (page) => {
 			await summon(page);
 			await page.waitForFunction(() => document.querySelector("select")?.value);
+		},
+	},
+	{
+		name: "action-show",
+		path: "/",
+		ready: "text=the second flip undoes the first",
+		prepare: async (page) => {
+			await action(page, 4);
+			await page.getByText("the second flip undoes the first").waitFor();
+			await page.waitForTimeout(300); // let action_end land
+		},
+	},
+	{
+		name: "action-no-selection",
+		path: "/",
+		ready: "text=Select some text first",
+		prepare: (page) => action(page, 2, ""),
+	},
+	{
+		name: "settings-actions",
+		path: "/settings.html",
+		size: { width: 680, height: 1040 },
+		ready: "text=Use the conversation as context",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Actions" }).waitFor();
+			await page.getByRole("textbox", { name: "Action 2 prompt" }).fill("Fix spelling and grammar. Keep British spelling.");
+			await page.getByRole("heading", { name: "Actions" }).evaluate((el) => el.scrollIntoView());
 		},
 	},
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },

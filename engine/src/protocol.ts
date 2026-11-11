@@ -166,7 +166,18 @@ export type Command =
 	| { type: "history_read"; id: string; entryId: string }
 	/** Archive the current thread, make entryId current. Emits thread_changed. */
 	| { type: "history_restore"; id?: string; entryId: string }
-	/** One-off (replace/show) or agent action. Emits action_* events for replace/show. */
+	/**
+	 * Run an action on a selection (SPEC §6). The shell sends this from an action hotkey, with
+	 * an id of its own ("action-…"). Result data: { queued: boolean }, as soon as it starts.
+	 *  - replace/show: a one-off call on the Quick model (Main if no Quick). Not added to the
+	 *    thread. Streams action_delta, then action_end; a failure sends error (with this id)
+	 *    then action_end with aborted: true. Recorded in engine\actions.jsonl for History.
+	 *    useThreadContext adds the current thread's messages as context; useVoice adds
+	 *    voiceProfile to the instructions. The mood tag is stripped and ignored.
+	 *  - agent: a normal prompt in the current thread with tools ("<prompt>\n\nSelected text: …"),
+	 *    with this id: thinking, text_delta, tool_*, reply_end. Queued like prompt if busy.
+	 * `abort` stops a running action too.
+	 */
 	| {
 			type: "run_action";
 			id: string;

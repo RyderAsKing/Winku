@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Settings: one column of grouped fields (SPEC §3). The Model group applies with an explicit
 	// Save after a connection test; everything else saves as you change it.
-	import type { ModelInfo, ProviderInfo, ThinkingLevel } from "../../../../engine/src/protocol.ts";
+	import type { ActionSpec, ModelInfo, ProviderInfo, ThinkingLevel } from "../../../../engine/src/protocol.ts";
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
@@ -15,8 +15,16 @@
 	import HotkeyField from "../lib/HotkeyField.svelte";
 	import { duplicates } from "../lib/hotkey.ts";
 	import "../lib/theme.css";
+	import { defaultSettings } from "../lib/defaults.ts";
 	import type { Settings } from "../lib/settings.ts";
 	import { type AltGrReport, type HotkeysStatus, onHotkeysStatus, onSettingsChanged, shell } from "../lib/shell.ts";
+
+	const OUTPUTS: { value: ActionSpec["output"]; label: string }[] = [
+		{ value: "replace", label: "Replace selection" },
+		{ value: "show", label: "Show in the bar" },
+		{ value: "agent", label: "Do it with tools" },
+	];
+	const DEFAULT_ACTIONS = defaultSettings().actions;
 
 	const ALL_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -179,6 +187,15 @@
 		save({ hotkeys });
 	}
 
+	function setAction(index: number, patch: Partial<ActionSpec>, debounce = 0) {
+		if (!settings) return;
+		const actions = structuredClone($state.snapshot(settings.actions));
+		actions[index] = { ...(actions[index] as ActionSpec), ...patch };
+		save({ actions }, debounce);
+	}
+
+	const isDefault = (action: ActionSpec, index: number) => JSON.stringify(action) === JSON.stringify(DEFAULT_ACTIONS[index]);
+
 	/** The settings field a row's binding lives in, as `hotkeys_status` names it. */
 	const fieldName = (key: (typeof hotkeyRows)[number]["key"]) => (typeof key === "number" ? `action${key + 1}` : key);
 	const failedFor = (key: (typeof hotkeyRows)[number]["key"]) => hotkeys.failed.find((f) => f.name === fieldName(key));
@@ -326,6 +343,59 @@
 					oninput={(e) => save({ assistantStyle: e.currentTarget.value }, 500)}
 				></textarea>
 			</label>
+		</section>
+
+		<section>
+			<h2>Actions</h2>
+			<p class="hint intro">Select text in any app, then press the action's key.</p>
+			{#each settings.actions as action, i (i)}
+				{@const key = settings.hotkeys.actions[i] || "No key"}
+				<div class="action">
+					<div class="field">
+						<span>Action {i + 1}<br /><span class="mono key">{key}</span></span>
+						<div class="inline">
+							<input
+								class="grow"
+								aria-label="Action {i + 1} name"
+								value={action.name}
+								oninput={(e) => setAction(i, { name: e.currentTarget.value }, 400)}
+							/>
+							<select class="output" aria-label="Action {i + 1} result" value={action.output} onchange={(e) => setAction(i, { output: e.currentTarget.value as ActionSpec["output"] })}>
+								{#each OUTPUTS as o (o.value)}
+									<option value={o.value}>{o.label}</option>
+								{/each}
+							</select>
+						</div>
+					</div>
+					<div class="field top">
+						<span>
+							{#if DEFAULT_ACTIONS[i] && !isDefault(action, i)}
+								<button type="button" class="quiet" onclick={() => setAction(i, structuredClone(DEFAULT_ACTIONS[i] as ActionSpec))}>Reset to default</button>
+							{/if}
+						</span>
+						<div class="stack">
+							<textarea
+								rows="2"
+								aria-label="Action {i + 1} prompt"
+								value={action.prompt}
+								oninput={(e) => setAction(i, { prompt: e.currentTarget.value }, 500)}
+							></textarea>
+							<div class="inline wrap">
+								{#if action.output !== "agent"}
+									<label class="check-inline">
+										<input type="checkbox" checked={action.useThreadContext} onchange={(e) => setAction(i, { useThreadContext: e.currentTarget.checked })} />
+										Use the conversation as context
+									</label>
+								{/if}
+								<label class="check-inline">
+									<input type="checkbox" checked={action.useVoice} onchange={(e) => setAction(i, { useVoice: e.currentTarget.checked })} />
+									Write in your voice
+								</label>
+							</div>
+						</div>
+					</div>
+				</div>
+			{/each}
 		</section>
 
 		<section>
@@ -488,6 +558,45 @@
 		background: var(--panel-raised);
 		font-size: 12px;
 		cursor: pointer;
+	}
+	.intro {
+		margin-top: -4px;
+	}
+	.action {
+		display: grid;
+		gap: 8px;
+		padding: 10px 0 12px;
+	}
+	.action + .action {
+		border-top: 1px dashed var(--line);
+	}
+	.key {
+		font-size: 11px;
+		color: var(--muted);
+	}
+	.stack textarea {
+		field-sizing: content;
+		min-height: 52px;
+	}
+	.output {
+		width: 170px !important;
+		flex: none;
+	}
+	.stack {
+		display: grid;
+		gap: 8px;
+		min-width: 0;
+	}
+	.wrap {
+		flex-wrap: wrap;
+		gap: 6px 16px;
+	}
+	.check-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		color: var(--muted);
 	}
 	.quiet {
 		flex: none;

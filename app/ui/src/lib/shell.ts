@@ -22,7 +22,10 @@ export type UiEvent =
 	| { kind: "attach_screenshot"; image: ImageAttachment }
 	| { kind: "clear" }
 	| { kind: "cycle_thinking" }
-	| { kind: "action_started"; slot: number; name: string; output: "replace" | "show" | "agent" }
+	/** An action hotkey captured a selection and sent run_action with this id. */
+	| { kind: "action_started"; id: string; slot: number; name: string; output: "replace" | "show" | "agent" }
+	/** An action hotkey couldn't run: nothing selected, or the paste-back failed. */
+	| { kind: "action_error"; id?: string; slot: number; name: string; message: string }
 	| { kind: "talk_start" }
 	| { kind: "talk_level"; level: number }
 	| { kind: "talk_end"; text: string }

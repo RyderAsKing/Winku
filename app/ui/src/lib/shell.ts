@@ -107,7 +107,7 @@ export interface AltGrReport {
 	suggestion: string;
 }
 
-export type VoiceModelId = "moonshine-base" | "whisper-base-en" | "parakeet" | "kokoro";
+export type VoiceModelId = "moonshine-base" | "whisper-base-en" | "parakeet" | "supertonic";
 
 export interface VoiceModel {
 	id: VoiceModelId;

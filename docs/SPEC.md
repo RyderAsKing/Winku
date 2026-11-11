@@ -17,7 +17,7 @@ Confirmed with the user on 2026-11-11, including the four points that were first
 │ global hotkeys (tap/hold), windows, tray,     │
 │ selection capture + paste-back, screenshots,  │      ┌──── winku-engine (Bun binary) ───┐
 │ UI Automation text, Credential Manager,       │◀────▶│ pi SDK, pinned version           │
-│ sherpa-onnx STT, OS/Kokoro TTS, updater       │ JSON │ our ResourceLoader, our tools,    │
+│ sherpa-onnx STT, Supertonic/OS TTS, updater       │ JSON │ our ResourceLoader, our tools,    │
 │                                               │ lines│ our sessions, compaction, caching │
 │ webview: eyes + bar + transcript + settings   │      └──────────────────────────────────┘
 └───────────────────────────────────────────────┘
@@ -144,7 +144,7 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 
 - **Engine:** sherpa-onnx (Apache-2.0) running inside the Rust shell. It loads on first use and unloads after about 3 idle minutes.
 - **Speech-to-text:** Moonshine base or Whisper base.en by default. Parakeet is an optional download.
-- **Text-to-speech:** the voices built into the OS by default (Windows OneCore). Kokoro is an optional download. Piper isn't used because it is GPL.
+- **Text-to-speech:** Supertonic (MIT, about 85 MB) by default, an offline neural voice that downloads on first use; ten voices to choose from. The voices built into the OS (Windows OneCore) read while it downloads and stay a Settings option. Piper isn't used because it is GPL. Kokoro was dropped: with sherpa-onnx 2.x it skips numbers, symbols and plural forms.
 - **When it speaks:** replies mirror how you asked, so if you spoke it answers with voice and text, and if you typed it answers with text only. A setting can force always voice or always text. Holding the talk key interrupts speech.
 
 ## 12. Not in v1

@@ -126,7 +126,12 @@ impl Default for Eyes {
 #[serde(rename_all = "camelCase", default)]
 pub struct Voice {
     pub stt: String,
+    /// `"supertonic"` (downloaded neural voice, the default) or `"os"` (the system voice).
     pub tts: String,
+    /// Supertonic voice, 0-4 male and 5-9 female. Absent in files written before the neural
+    /// voice became the default; `normalize` uses that to move them off the OS voice once.
+    #[serde(default)]
+    pub tts_voice: Option<u8>,
     pub os_voice: Option<String>,
     pub reply: String,
     pub listening_paused: bool,
@@ -186,7 +191,8 @@ impl Default for Voice {
     fn default() -> Self {
         Self {
             stt: "moonshine-base".into(),
-            tts: "os".into(),
+            tts: "supertonic".into(),
+            tts_voice: Some(crate::voice::tts::DEFAULT_VOICE),
             os_voice: None,
             reply: "mirror".into(),
             listening_paused: false,
@@ -196,14 +202,28 @@ impl Default for Voice {
 }
 
 impl Voice {
+    pub fn tts_voice(&self) -> u8 {
+        self.tts_voice.unwrap_or(crate::voice::tts::DEFAULT_VOICE)
+    }
+
     /// Unknown voice choices fall back to the defaults.
     pub fn normalize(&mut self) {
         let defaults = Voice::default();
         if !crate::voice::models::is_stt(&self.stt) {
             self.stt = defaults.stt;
         }
-        if !matches!(self.tts.as_str(), "os" | "kokoro") {
-            self.tts = defaults.tts;
+        if self.tts_voice.is_none() && self.tts == "os" {
+            // v0.1.0 saved "os" without the user choosing it; the neural voice is the default now.
+            self.tts = defaults.tts.clone();
+        }
+        if !matches!(self.tts.as_str(), "os" | "supertonic") {
+            self.tts = defaults.tts; // includes the old "kokoro" option
+        }
+        if self
+            .tts_voice
+            .is_none_or(|v| v >= crate::voice::tts::VOICES)
+        {
+            self.tts_voice = defaults.tts_voice;
         }
         if !matches!(self.reply.as_str(), "mirror" | "always" | "never") {
             self.reply = defaults.reply;
@@ -440,18 +460,40 @@ mod tests {
     fn unknown_voice_choices_fall_back_to_defaults() {
         let mut settings = Settings::default();
         settings.voice.stt = "whisper-base-en".into();
-        settings.voice.tts = "kokoro".into();
+        settings.voice.tts = "os".into();
+        settings.voice.tts_voice = Some(7);
         settings.voice.reply = "always".into();
         settings.normalize();
         assert_eq!(settings.voice.stt, "whisper-base-en");
-        assert_eq!(settings.voice.tts, "kokoro");
+        assert_eq!(settings.voice.tts, "os");
+        assert_eq!(settings.voice.tts_voice, Some(7));
         assert_eq!(settings.voice.reply, "always");
-        settings.voice.stt = "kokoro".into(); // a TTS model
+        settings.voice.stt = "supertonic".into(); // a TTS model
         settings.voice.tts = "piper".into();
+        settings.voice.tts_voice = Some(40);
         settings.voice.reply = "sometimes".into();
         settings.voice.os_voice = Some(" ".into());
         settings.normalize();
         assert_eq!(settings.voice, Voice::default());
+    }
+
+    #[test]
+    fn old_settings_move_off_the_os_voice_once() {
+        // A v0.1.0 file: "os" was the default, and there was no voice number.
+        let mut old: Settings =
+            serde_json::from_str(r#"{"voice":{"tts":"os","reply":"always"}}"#).unwrap();
+        old.normalize();
+        assert_eq!(old.voice.tts, "supertonic");
+        assert_eq!(old.voice.tts_voice, Some(crate::voice::tts::DEFAULT_VOICE));
+        assert_eq!(old.voice.reply, "always");
+        // After that, choosing the OS voice sticks.
+        old.voice.tts = "os".into();
+        old.normalize();
+        assert_eq!(old.voice.tts, "os");
+        // The removed Kokoro option becomes the new default.
+        let mut kokoro: Settings = serde_json::from_str(r#"{"voice":{"tts":"kokoro"}}"#).unwrap();
+        kokoro.normalize();
+        assert_eq!(kokoro.voice.tts, "supertonic");
     }
 
     #[test]

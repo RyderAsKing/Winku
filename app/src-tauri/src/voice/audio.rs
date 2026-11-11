@@ -109,41 +109,112 @@ pub fn has_speech(samples: &[f32], rate: u32) -> bool {
         .any(|chunk| rms(chunk) >= SILENCE_RMS)
 }
 
-/// Linear resampler for a stream of chunks (playback), keeping its position between chunks.
+/// Input taps on each side of the interpolation point (at a ratio of 1; more when downsampling).
+const SINC_HALF: usize = 24;
+/// Sub-sample positions the kernel is tabulated at; in between, two rows are blended.
+const SINC_PHASES: usize = 512;
+
+/// Windowed-sinc resampler for a stream of chunks (playback), keeping its position between
+/// chunks. Linear interpolation was audibly dull and leaked images of the voice above the old
+/// Nyquist; this is a Blackman-windowed sinc with the cutoff at the lower of the two Nyquists,
+/// tabulated so each output sample costs `2 * half` multiply-adds.
 #[derive(Debug)]
 pub struct StreamResampler {
     step: f64,
+    half: usize,
+    /// `SINC_PHASES + 1` rows of `2 * half` taps; row `p` is the kernel at sub-sample `p / SINC_PHASES`.
+    table: Vec<f32>,
+    /// Input history; index `pos` is where the next output sample sits.
+    buf: Vec<f32>,
     pos: f64,
-    prev: Option<f32>,
+    passthrough: bool,
+    flushed: bool,
 }
 
 impl StreamResampler {
     pub fn new(from: u32, to: u32) -> Self {
+        let step = from.max(1) as f64 / to.max(1) as f64;
+        let scale = (1.0 / step).min(1.0);
+        let half = (SINC_HALF as f64 / scale).ceil() as usize;
+        let taps = 2 * half;
+        let mut table = Vec::with_capacity((SINC_PHASES + 1) * taps);
+        for phase in 0..=SINC_PHASES {
+            let frac = phase as f64 / SINC_PHASES as f64;
+            let row: Vec<f64> = (0..taps)
+                .map(|j| {
+                    let x = (j as f64 + 1.0 - half as f64) - frac;
+                    sinc_kernel(x, scale, half as f64)
+                })
+                .collect();
+            let sum: f64 = row.iter().sum();
+            table.extend(row.iter().map(|t| (t / sum) as f32));
+        }
         Self {
-            step: from as f64 / to.max(1) as f64,
-            pos: 0.0,
-            prev: None,
+            step,
+            half,
+            table,
+            buf: vec![0.0; half],
+            pos: half as f64,
+            passthrough: from == to,
+            flushed: false,
         }
     }
 
     /// Resamples one chunk, appending to `out`.
     pub fn push(&mut self, chunk: &[f32], out: &mut Vec<f32>) {
-        if chunk.is_empty() {
+        if self.passthrough {
+            out.extend_from_slice(chunk);
             return;
         }
-        // Index 0 is the previous chunk's last sample, so interpolation continues across chunks.
-        let seq: Vec<f32> = self.prev.into_iter().chain(chunk.iter().copied()).collect();
-        let last = (seq.len() - 1) as f64;
-        while self.pos <= last {
-            let left = self.pos.floor() as usize;
-            let frac = (self.pos - left as f64) as f32;
-            let right = if frac > 0.0 { seq[left + 1] } else { seq[left] };
-            out.push(seq[left] + (right - seq[left]) * frac);
+        self.buf.extend_from_slice(chunk);
+        self.drain(out);
+    }
+
+    /// Plays out the last few input samples still held back; call once when no more is coming.
+    pub fn finish(&mut self, out: &mut Vec<f32>) {
+        if self.passthrough || std::mem::replace(&mut self.flushed, true) {
+            return;
+        }
+        self.buf.resize(self.buf.len() + self.half, 0.0);
+        self.drain(out);
+    }
+
+    fn drain(&mut self, out: &mut Vec<f32>) {
+        let taps = 2 * self.half;
+        while (self.pos as usize) + self.half < self.buf.len() {
+            let i0 = self.pos.floor() as usize;
+            let at = (self.pos - i0 as f64) * SINC_PHASES as f64;
+            let row = (at as usize).min(SINC_PHASES - 1);
+            let mix = (at - row as f64) as f32;
+            let (a, b) = (
+                &self.table[row * taps..(row + 1) * taps],
+                &self.table[(row + 1) * taps..(row + 2) * taps],
+            );
+            let window = &self.buf[i0 + 1 - self.half..i0 + 1 + self.half];
+            let mut sum = 0.0f32;
+            for ((x, ka), kb) in window.iter().zip(a).zip(b) {
+                sum += x * (ka + (kb - ka) * mix);
+            }
+            out.push(sum);
             self.pos += self.step;
         }
-        self.pos -= last;
-        self.prev = chunk.last().copied();
+        // Keep only what the next output sample can still read.
+        let keep_from = (self.pos as usize + 1).saturating_sub(self.half);
+        if keep_from > 0 {
+            self.buf.drain(..keep_from);
+            self.pos -= keep_from as f64;
+        }
     }
+}
+
+/// `scale * sinc(scale * x)` under a Blackman window `half` samples wide.
+fn sinc_kernel(x: f64, scale: f64, half: f64) -> f64 {
+    use std::f64::consts::PI;
+    let t = PI * scale * x;
+    let sinc = if x == 0.0 { 1.0 } else { t.sin() / t };
+    let w = (PI * x / half).cos().mul_add(0.5, 0.0);
+    let blackman = 0.42 + w + 0.08 * (2.0 * PI * x / half).cos();
+    scale * sinc * blackman.max(0.0)
 }
 
 /// PCM decoded from a WAV file.
@@ -273,23 +344,120 @@ mod tests {
         assert!(has_speech(&sine(200.0, STT_RATE, 1.0, 0.1), STT_RATE));
     }
 
-    #[test]
-    fn stream_resampler_matches_whole_buffer_resampling() {
-        let input = sine(300.0, 24_000, 0.2, 0.5);
-        let mut stream = StreamResampler::new(24_000, 48_000);
+    /// What `StreamResampler` should produce for a sine, sampled at the output instants.
+    fn ideal(freq: f32, to: u32, n: usize, amp: f32) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / to as f64;
+                amp * (2.0 * std::f64::consts::PI * freq as f64 * t).sin() as f32
+            })
+            .collect()
+    }
+
+    fn stream(input: &[f32], from: u32, to: u32, chunk: usize) -> Vec<f32> {
+        let mut resampler = StreamResampler::new(from, to);
         let mut out = Vec::new();
-        for chunk in input.chunks(377) {
-            stream.push(chunk, &mut out);
+        for c in input.chunks(chunk) {
+            resampler.push(c, &mut out);
         }
-        let whole = resample(&input, 24_000, 48_000);
-        assert!((out.len() as isize - whole.len() as isize).abs() <= 2);
-        for (a, b) in out.iter().zip(&whole) {
-            assert!((a - b).abs() < 1e-4);
+        resampler.finish(&mut out);
+        out
+    }
+
+    /// Largest difference from the ideal tone, skipping the filter's warm-up and tail.
+    fn worst_error(out: &[f32], want: &[f32]) -> f32 {
+        let edge = 80;
+        out.iter()
+            .zip(want)
+            .skip(edge)
+            .take(out.len().saturating_sub(2 * edge))
+            .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()))
+    }
+
+    #[test]
+    fn stream_resampler_reproduces_tones_at_playback_rates() {
+        // Kokoro/Supertonic/OneCore rates to the usual device rates, through uneven chunks.
+        for (from, to) in [
+            (44_100, 48_000),
+            (24_000, 48_000),
+            (22_050, 48_000),
+            (24_000, 44_100),
+        ] {
+            // Well below the source Nyquist, where the filter has not started to roll off.
+            for freq in [200.0, 1_000.0, 6_000.0, 10_000.0]
+                .into_iter()
+                .filter(|f| *f < from as f32 * 0.4)
+            {
+                let input = sine(freq, from, 0.3, 0.5);
+                let out = stream(&input, from, to, 997);
+                let want = ideal(freq, to, out.len(), 0.5);
+                let err = worst_error(&out, &want);
+                assert!(err < 4e-3, "{from}->{to} {freq} Hz: worst error {err}");
+            }
         }
+    }
+
+    #[test]
+    fn stream_resampler_ignores_how_the_input_is_chunked() {
+        let input = sine(440.0, 44_100, 0.2, 0.5);
+        let whole = stream(&input, 44_100, 48_000, input.len());
+        for chunk in [1, 7, 333, 4_096] {
+            let out = stream(&input, 44_100, 48_000, chunk);
+            assert_eq!(out.len(), whole.len(), "chunk {chunk}");
+            for (a, b) in out.iter().zip(&whole) {
+                assert!((a - b).abs() < 1e-5, "chunk {chunk}");
+            }
+        }
+        // Length follows the ratio, and nothing is lost at the end.
+        let expect = (input.len() as f64 * 48_000.0 / 44_100.0) as isize;
+        assert!(
+            (whole.len() as isize - expect).abs() <= 2,
+            "{} vs {expect}",
+            whole.len()
+        );
+    }
+
+    #[test]
+    fn stream_resampler_has_no_clicks_at_chunk_joins() {
+        let input = sine(300.0, 24_000, 0.5, 0.8);
+        let mut resampler = StreamResampler::new(24_000, 48_000);
+        let mut out = Vec::new();
+        let mut joins = Vec::new();
+        for c in input.chunks(2_400) {
+            resampler.push(c, &mut out);
+            joins.push(out.len());
+        }
+        // A 300 Hz tone at 48 kHz changes by at most about 0.8 * 2 pi * 300 / 48000 per sample.
+        let max_step = 0.8 * 2.0 * std::f32::consts::PI * 300.0 / 48_000.0 * 1.05;
+        for &j in &joins[..joins.len() - 1] {
+            let step = (out[j] - out[j - 1]).abs();
+            assert!(step <= max_step, "step {step} at {j}");
+        }
+    }
+
+    #[test]
+    fn stream_resampler_does_not_leak_images_or_clip() {
+        // A 9 kHz tone at 24 kHz, taken to 48 kHz, must not grow a mirror image at 15 kHz
+        // (linear interpolation leaves one only about 9 dB down).
+        let input = sine(9_000.0, 24_000, 0.5, 0.9);
+        let out = stream(&input, 24_000, 48_000, 1_024);
+        let tone = rms(&out[200..out.len() - 200]);
+        assert!((tone - 0.9 / 2f32.sqrt()).abs() < 0.01, "{tone}");
+        let fundamental = ideal(9_000.0, 48_000, out.len(), 0.9);
+        let residue: Vec<f32> = out
+            .iter()
+            .zip(&fundamental)
+            .skip(200)
+            .map(|(a, b)| a - b)
+            .collect();
+        let residue = &residue[..residue.len() - 400];
+        assert!(rms(residue) < 0.003, "residue {}", rms(residue));
+        assert!(out.iter().all(|s| s.abs() <= 1.0));
         let mut same = StreamResampler::new(22_050, 22_050);
         let mut copy = Vec::new();
         same.push(&[0.1, 0.2], &mut copy);
         same.push(&[0.3], &mut copy);
+        same.finish(&mut copy);
         assert_eq!(copy, vec![0.1, 0.2, 0.3]);
     }
 

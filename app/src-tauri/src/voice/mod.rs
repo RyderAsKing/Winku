@@ -1,6 +1,6 @@
 //! Voice (SPEC §11, ARCHITECTURE "Voice"): hold-to-talk recording and transcription, model
 //! downloads, and text-to-speech. Nothing here runs or loads until it is first used: the
-//! recogniser and Kokoro load on demand and unload after `stt::IDLE_UNLOAD` idle.
+//! recogniser and the reading voice load on demand and unload after `stt::IDLE_UNLOAD` idle.
 //!
 //! Threads: each hold records on its own thread (cpal streams stay on the thread that made them)
 //! and transcribes there afterwards; each download and each `speak` gets a thread too. The hotkey
@@ -58,7 +58,7 @@ pub struct Voice {
     session: Mutex<Option<Session>>,
     pending: Mutex<Option<Pending>>,
     stt: Mutex<Slot<OfflineRecognizer>>,
-    kokoro: Mutex<Slot<OfflineTts>>,
+    tts: Mutex<Slot<OfflineTts>>,
     downloads: Downloads,
     speaking: Mutex<Option<Speaking>>,
     janitor: AtomicBool,
@@ -252,7 +252,7 @@ pub fn remove_model(app: &AppHandle, id: &str) -> Result<(), String> {
         Kind::Stt => lock(&voice.stt).unload(id),
         Kind::Tts => {
             stop_speaking(app);
-            lock(&voice.kokoro).unload(id);
+            lock(&voice.tts).unload(id);
         }
     }
     let dir = model.dir(&models_dir(app));
@@ -347,13 +347,13 @@ pub fn speak(app: &AppHandle, text: String) {
                     emit_ui(&app, json!({ "kind": "speech", "playing": true }));
                 }
             };
-            let kokoro = models::find("kokoro").expect("kokoro is in the table");
-            let result = if settings.tts == "kokoro" && kokoro.installed(&models_dir(&app)) {
-                speak_kokoro(&app, kokoro, &text, &stop, on_start)
+            let neural = models::find("supertonic").expect("supertonic is in the table");
+            let result = if settings.tts == "supertonic" && neural.installed(&models_dir(&app)) {
+                speak_neural(&app, neural, settings.tts_voice(), &text, &stop, on_start)
             } else {
-                if settings.tts == "kokoro" {
+                if settings.tts == "supertonic" {
                     // Not downloaded yet: fetch it for next time, and use the OS voice now.
-                    ensure_download(&app, kokoro);
+                    ensure_download(&app, neural);
                 }
                 tts::os_speak(&text, settings.os_voice.as_deref(), &stop, on_start)
             };
@@ -374,23 +374,26 @@ pub fn speak(app: &AppHandle, text: String) {
     }
 }
 
-fn speak_kokoro(
+fn speak_neural(
     app: &AppHandle,
     model: &'static Model,
+    voice_id: u8,
     text: &str,
     stop: &Arc<AtomicBool>,
     on_start: impl FnOnce() + Send,
 ) -> Result<(), String> {
     let voice = app.state::<Voice>();
     let dir = model.dir(&models_dir(app));
-    let mut slot = lock(&voice.kokoro);
+    let mut slot = lock(&voice.tts);
     let result = slot
-        .get_or_load(model.id, Instant::now(), || tts::load_kokoro(model, &dir))
+        .get_or_load(model.id, Instant::now(), || {
+            tts::load_supertonic(model, &dir)
+        })
         .and_then(|engine| {
-            let feed = tts::Feed::new(tts::kokoro_rate(engine));
+            let feed = tts::Feed::new(tts::engine_rate(engine));
             std::thread::scope(|s| {
                 let player = s.spawn(|| tts::play(&feed, stop, on_start));
-                tts::kokoro_speak(engine, text, &feed, stop);
+                tts::supertonic_speak(engine, text, voice_id, &feed, stop);
                 feed.finish();
                 player
                     .join()
@@ -460,10 +463,10 @@ impl Voice {
             }
             Err(_) => loaded = true,
         }
-        match self.kokoro.try_lock() {
+        match self.tts.try_lock() {
             Ok(mut slot) => {
                 if slot.unload_if_idle(now) {
-                    eprintln!("winku: Kokoro unloaded after idling");
+                    eprintln!("winku: reading voice unloaded after idling");
                 }
                 loaded |= slot.is_loaded();
             }
@@ -479,17 +482,19 @@ mod e2e {
 
     /// Real models over the network, so not part of `cargo test`. Run with
     /// `WINKU_VOICE_E2E=/some/dir cargo test --release e2e -- --ignored --nocapture`: downloads
-    /// moonshine-base and Kokoro into that folder (through `download::install`), has Kokoro say a
-    /// sentence, resamples it to 16 kHz and transcribes it with Moonshine.
+    /// moonshine-base and Supertonic into that folder (through `download::install`), has
+    /// Supertonic read sentences with numbers, pushes them through the playback resampler (the
+    /// path `tts::play` uses, at 48 kHz in awkward chunks), writes WAVs next to the models and
+    /// transcribes them with Moonshine.
     #[test]
     #[ignore]
-    fn kokoro_speech_round_trips_through_moonshine() {
+    fn supertonic_speech_round_trips_through_moonshine() {
         let Some(dir) = std::env::var_os("WINKU_VOICE_E2E").map(PathBuf::from) else {
             eprintln!("WINKU_VOICE_E2E not set; skipping");
             return;
         };
         std::fs::create_dir_all(&dir).unwrap();
-        for id in ["moonshine-base", "kokoro"] {
+        for id in ["moonshine-base", "supertonic"] {
             let model = models::find(id).unwrap();
             if !model.installed(&dir) {
                 let started = Instant::now();
@@ -497,27 +502,61 @@ mod e2e {
                 eprintln!("installed {id} in {:.1}s", started.elapsed().as_secs_f32());
             }
         }
-        let kokoro = models::find("kokoro").unwrap();
-        let engine = tts::load_kokoro(kokoro, &kokoro.dir(&dir)).unwrap();
-        let feed = tts::Feed::new(tts::kokoro_rate(&engine));
-        let stop = Arc::new(AtomicBool::new(false));
-        let sentence = "The quick brown fox jumps over the lazy dog. Winku can hear you now.";
-        tts::kokoro_speak(&engine, sentence, &feed, &stop);
-        let spoken = feed.take_all();
-        eprintln!(
-            "kokoro: {} samples at {} Hz",
-            spoken.len(),
-            tts::kokoro_rate(&engine)
-        );
-        let samples = audio::resample(&spoken, feed.rate, audio::STT_RATE);
-        assert!(audio::has_speech(&samples, audio::STT_RATE));
-
+        let neural = models::find("supertonic").unwrap();
+        let engine = tts::load_supertonic(neural, &neural.dir(&dir)).unwrap();
         let moonshine = models::find("moonshine-base").unwrap();
         let recognizer = stt::load(moonshine, &moonshine.dir(&dir)).unwrap();
+        let stop = AtomicBool::new(false);
+        let sentence = "Here are three things: first, 12 apples at $4.50 each. Second, a 15% discount. Third, delivery by 9:30 on March 3rd.";
+        let feed = tts::Feed::new(tts::engine_rate(&engine));
+        let started = Instant::now();
+        tts::supertonic_speak(&engine, sentence, tts::DEFAULT_VOICE, &feed, &stop);
+        let spoken = feed.take_all();
+        let secs = spoken.len() as f32 / feed.rate as f32;
+        eprintln!(
+            "supertonic: {secs:.1}s of audio at {} Hz in {:.1}s",
+            feed.rate,
+            started.elapsed().as_secs_f32()
+        );
+        // The playback path: stream-resample to the device rate in uneven chunks.
+        let mut resampler = audio::StreamResampler::new(feed.rate, 48_000);
+        let mut played = Vec::new();
+        for chunk in spoken.chunks(1021) {
+            resampler.push(chunk, &mut played);
+        }
+        let peak = played.iter().fold(0f32, |m, s| m.max(s.abs()));
+        let jump = played
+            .windows(2)
+            .fold(0f32, |m, w| m.max((w[1] - w[0]).abs()));
+        eprintln!(
+            "played: {} samples at 48000 Hz, peak {peak:.2}, largest step {jump:.3}",
+            played.len()
+        );
+        assert!(peak > 0.05 && peak <= 1.0);
+        let out = dir.join("playback-48k.wav");
+        let pcm: Vec<u8> = played
+            .iter()
+            .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+            .collect();
+        let mut wav = b"RIFF".to_vec();
+        wav.extend((36 + pcm.len() as u32).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend([16, 0, 0, 0, 1, 0, 1, 0]);
+        wav.extend(48_000u32.to_le_bytes());
+        wav.extend(96_000u32.to_le_bytes());
+        wav.extend([2, 0, 16, 0]);
+        wav.extend(b"data");
+        wav.extend((pcm.len() as u32).to_le_bytes());
+        wav.extend(pcm);
+        std::fs::write(&out, wav).unwrap();
+        eprintln!("wrote {}", out.display());
+
+        let samples = audio::resample(&played, 48_000, audio::STT_RATE);
         let text = stt::transcribe(&recognizer, &samples);
         eprintln!("transcript: {text:?}");
         let lower = text.to_lowercase();
-        assert!(lower.contains("quick brown fox"), "{text}");
-        assert!(lower.contains("lazy dog"), "{text}");
+        assert!(lower.contains("12 apples"), "{text}");
+        assert!(lower.contains("15%"), "{text}");
+        assert!(lower.contains("march"), "{text}");
     }
 }

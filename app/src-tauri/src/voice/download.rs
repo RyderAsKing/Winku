@@ -334,11 +334,14 @@ mod tests {
             kind: Kind::Tts,
             name: "Test voice",
             assets,
-            recipe: Recipe::Kokoro {
-                model: "model.onnx",
-                voices: "model.onnx",
-                tokens: "tokens.txt",
-                lexicon: "lexicon.txt",
+            recipe: Recipe::Supertonic {
+                duration_predictor: "model.onnx",
+                text_encoder: "model.onnx",
+                vector_estimator: "model.onnx",
+                vocoder: "model.onnx",
+                tts_json: "tokens.txt",
+                unicode_indexer: "tokens.txt",
+                voice_style: "lexicon.txt",
             },
         }));
         let server = Memory(HashMap::from([
@@ -394,7 +397,10 @@ mod tests {
         let downloads = Downloads::default();
         assert!(downloads.begin("moonshine-base"));
         assert!(!downloads.begin("moonshine-base"));
-        assert!(downloads.begin("kokoro"), "other models are independent");
+        assert!(
+            downloads.begin("supertonic"),
+            "other models are independent"
+        );
         assert!(downloads.is_active("moonshine-base"));
         downloads.finish("moonshine-base");
         assert!(!downloads.is_active("moonshine-base"));

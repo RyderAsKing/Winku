@@ -1,5 +1,5 @@
-//! Text-to-speech: Windows OneCore voices (WinRT `SpeechSynthesizer`) or Kokoro through
-//! sherpa-onnx, both played with cpal. Elsewhere the "os" voice is `spd-say` when present.
+//! Text-to-speech: Supertonic through sherpa-onnx (the default) or Windows OneCore voices (WinRT
+//! `SpeechSynthesizer`, the fallback), both played with cpal. Elsewhere the "os" voice is `spd-say` when present.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -10,7 +10,9 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use serde::Serialize;
-use sherpa_onnx::{GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig};
+use sherpa_onnx::{
+    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsSupertonicModelConfig,
+};
 
 use super::audio::StreamResampler;
 use super::models::{Model, Recipe};
@@ -100,14 +102,19 @@ pub fn play(feed: &Feed, stop: &AtomicBool, on_start: impl FnOnce()) -> Result<(
         // Read `finished` before draining, so nothing pushed after the drain is missed.
         let finished = feed.finished.load(Ordering::SeqCst);
         let chunk = feed.take();
-        if !chunk.is_empty() {
+        if !chunk.is_empty() || finished {
             buf.clear();
             resampler.push(&chunk, &mut buf);
+            if finished {
+                resampler.finish(&mut buf); // the last few samples the filter held back
+            }
             out.lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .extend(buf.iter().copied());
-            if let Some(start) = on_start.take() {
-                start();
+            if !buf.is_empty() {
+                if let Some(start) = on_start.take() {
+                    start();
+                }
             }
         }
         let empty = out.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
@@ -148,30 +155,38 @@ where
         .map_err(|e| format!("Couldn't use the speakers: {e}"))
 }
 
-// ───────────────────────────── Kokoro ─────────────────────────────
+// ───────────────────────────── Supertonic ─────────────────────────────
 
-pub fn load_kokoro(model: &Model, dir: &Path) -> Result<OfflineTts, String> {
-    let Recipe::Kokoro {
-        model: onnx,
-        voices,
-        tokens,
-        lexicon,
+/// Supertonic ships ten voices: 0-4 are male, 5-9 female.
+pub const VOICES: u8 = 10;
+pub const DEFAULT_VOICE: u8 = 5;
+
+pub fn load_supertonic(model: &Model, dir: &Path) -> Result<OfflineTts, String> {
+    let Recipe::Supertonic {
+        duration_predictor,
+        text_encoder,
+        vector_estimator,
+        vocoder,
+        tts_json,
+        unicode_indexer,
+        voice_style,
     } = model.recipe
     else {
         return Err(format!("{} is not a text-to-speech model", model.id));
     };
     let path = |f: &str| Some(dir.join(f).to_string_lossy().into_owned());
     let mut config = OfflineTtsConfig::default();
-    config.model.kokoro = OfflineTtsKokoroModelConfig {
-        model: path(onnx),
-        voices: path(voices),
-        tokens: path(tokens),
-        lexicon: path(lexicon),
-        ..Default::default()
+    config.model.supertonic = OfflineTtsSupertonicModelConfig {
+        duration_predictor: path(duration_predictor),
+        text_encoder: path(text_encoder),
+        vector_estimator: path(vector_estimator),
+        vocoder: path(vocoder),
+        tts_json: path(tts_json),
+        unicode_indexer: path(unicode_indexer),
+        voice_style: path(voice_style),
     };
     config.model.num_threads = super::stt::threads();
     config.model.provider = Some("cpu".into());
-    config.max_num_sentences = 1;
     OfflineTts::create(&config).ok_or_else(|| {
         format!(
             "{} couldn't be loaded; try removing and downloading it again",
@@ -180,37 +195,142 @@ pub fn load_kokoro(model: &Model, dir: &Path) -> Result<OfflineTts, String> {
     })
 }
 
-/// Synthesises `text` into `feed` sentence by sentence, stopping early when `stop` is set.
-pub fn kokoro_speak(tts: &OfflineTts, text: &str, feed: &Arc<Feed>, stop: &Arc<AtomicBool>) {
+/// Synthesises `text` into `feed` one sentence at a time (so the first one starts playing while
+/// the rest are still being made), stopping early when `stop` is set.
+pub fn supertonic_speak(
+    tts: &OfflineTts,
+    text: &str,
+    voice: u8,
+    feed: &Arc<Feed>,
+    stop: &AtomicBool,
+) {
     let config = GenerationConfig {
-        sid: 0,
+        sid: i32::from(voice.min(VOICES - 1)),
         speed: 1.0,
         ..Default::default()
     };
-    let streamed = Arc::new(AtomicBool::new(false));
-    let (cb_feed, cb_stop, cb_streamed) =
-        (Arc::clone(feed), Arc::clone(stop), Arc::clone(&streamed));
-    let audio = tts.generate_with_config(
-        text,
-        &config,
-        Some(move |samples: &[f32], _progress: f32| {
-            if !samples.is_empty() {
-                cb_feed.push(samples);
-                cb_streamed.store(true, Ordering::SeqCst);
+    for piece in split_sentences(text) {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some(audio) =
+            tts.generate_with_config(&piece, &config, None::<fn(&[f32], f32) -> bool>)
+        {
+            if !stop.load(Ordering::SeqCst) {
+                let mut samples = audio.samples().to_vec();
+                make_up_gain(&mut samples);
+                feed.push(&samples);
             }
-            !cb_stop.load(Ordering::SeqCst)
-        }),
-    );
-    if !streamed.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
-        if let Some(audio) = audio {
-            feed.push(audio.samples());
         }
     }
 }
 
-/// Kokoro's output rate, for the feed.
-pub fn kokoro_rate(tts: &OfflineTts) -> u32 {
+/// Supertonic's output is quiet (about -28 dBFS RMS, peaks near 0.4), so people turn the volume
+/// up and then get blasted by the next notification. Lifts a sentence towards -22 dBFS RMS, by at
+/// most 3x and never past a 0.95 peak.
+fn make_up_gain(samples: &mut [f32]) {
+    const TARGET_RMS: f32 = 0.08;
+    let rms = super::audio::rms(samples);
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if rms < 1e-4 || peak <= 0.0 {
+        return;
+    }
+    let gain = (TARGET_RMS / rms).clamp(1.0, 3.0).min(0.95 / peak).max(0.0);
+    if gain > 1.0 {
+        samples.iter_mut().for_each(|s| *s *= gain);
+    }
+}
+
+/// The synthesiser's output rate, for the feed.
+pub fn engine_rate(tts: &OfflineTts) -> u32 {
     tts.sample_rate().max(1) as u32
+}
+
+/// Words that end in a period without ending the sentence.
+const ABBREVIATIONS: &[&str] = &[
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e", "approx", "no",
+    "fig", "inc", "ltd", "co",
+];
+/// A piece shorter than this is joined to the next, so "Yes." isn't synthesised on its own.
+const MIN_PIECE: usize = 24;
+/// A piece longer than this is cut at a comma or semicolon.
+const MAX_PIECE: usize = 280;
+
+/// Cuts `text` into sentence-sized pieces for synthesis: at newlines and after `.`, `!` or `?`
+/// followed by a space (not after "3.5", "e.g." or "Dr."), with short pieces merged forward and
+/// very long ones cut at clause breaks.
+pub fn split_sentences(text: &str) -> Vec<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let chars: Vec<char> = line.trim().chars().collect();
+        let mut start = 0;
+        for (i, &c) in chars.iter().enumerate() {
+            let boundary = matches!(c, '.' | '!' | '?')
+                && chars.get(i + 1).is_none_or(|n| n.is_whitespace())
+                && !(c == '.' && {
+                    let word: String = chars[start..i]
+                        .iter()
+                        .rev()
+                        .take_while(|ch| !ch.is_whitespace())
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    ABBREVIATIONS.contains(&word.to_lowercase().as_str())
+                });
+            if boundary {
+                sentences.push(chars[start..=i].iter().collect());
+                start = i + 1;
+            }
+        }
+        if start < chars.len() {
+            sentences.push(chars[start..].iter().collect());
+        }
+    }
+    let mut pieces: Vec<String> = Vec::new();
+    let mut carry = String::new();
+    for sentence in sentences.iter().flat_map(|s| cut_long(s.trim())) {
+        if sentence.is_empty() {
+            continue;
+        }
+        if !carry.is_empty() {
+            carry.push(' ');
+        }
+        carry.push_str(&sentence);
+        if carry.chars().count() >= MIN_PIECE {
+            pieces.push(std::mem::take(&mut carry));
+        }
+    }
+    if !carry.is_empty() {
+        match pieces.last_mut() {
+            Some(last) if carry.chars().count() < MIN_PIECE / 2 => {
+                last.push(' ');
+                last.push_str(&carry);
+            }
+            _ => pieces.push(carry),
+        }
+    }
+    pieces
+}
+
+fn cut_long(sentence: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = sentence.trim();
+    while rest.chars().count() > MAX_PIECE {
+        let limit = rest
+            .char_indices()
+            .nth(MAX_PIECE)
+            .map_or(rest.len(), |(i, _)| i);
+        let cut = rest[..limit]
+            .rfind([',', ';', ':'])
+            .map(|i| i + 1)
+            .or_else(|| rest[..limit].rfind(' '))
+            .unwrap_or(limit);
+        out.push(rest[..cut].trim().to_string());
+        rest = rest[cut..].trim();
+    }
+    out.push(rest.to_string());
+    out
 }
 
 // ───────────────────────────── OS voices ─────────────────────────────
@@ -344,6 +464,62 @@ pub fn os_speak(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_sentences_are_lifted_but_never_clipped() {
+        let tone =
+            |amp: f32| -> Vec<f32> { (0..4_800).map(|i| amp * (i as f32 * 0.05).sin()).collect() };
+        let mut quiet = tone(0.05);
+        make_up_gain(&mut quiet);
+        assert!((super::super::audio::rms(&quiet) - 0.08).abs() < 0.005);
+        let mut barely = tone(0.01);
+        make_up_gain(&mut barely);
+        let peak = barely.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!((peak - 0.03).abs() < 0.002, "at most 3x: {peak}");
+        let mut peaky = tone(0.5);
+        peaky[100] = 0.9;
+        make_up_gain(&mut peaky);
+        assert!(peaky.iter().all(|s| s.abs() <= 0.951));
+        let mut loud = tone(0.9);
+        let before = loud.clone();
+        make_up_gain(&mut loud);
+        assert_eq!(loud, before, "loud audio is left alone");
+        let mut silence = vec![0.0; 100];
+        make_up_gain(&mut silence);
+        assert!(silence.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn sentences_split_without_breaking_numbers_or_abbreviations() {
+        let t =
+            "Dr. Lee paid $4.50 for 12 apples, e.g. green ones. Then she left! Was that fine? Yes.";
+        assert_eq!(
+            split_sentences(t),
+            [
+                "Dr. Lee paid $4.50 for 12 apples, e.g. green ones.",
+                "Then she left! Was that fine? Yes."
+            ]
+        );
+        assert_eq!(split_sentences("Hi."), ["Hi."]);
+        assert_eq!(split_sentences("  \n "), Vec::<String>::new());
+        // Lines are boundaries, so list items are read one at a time.
+        assert_eq!(
+            split_sentences("Three things\nfirst, the apples are ripe\nsecond, the pears are not"),
+            [
+                "Three things first, the apples are ripe",
+                "second, the pears are not"
+            ]
+        );
+        let long = "word, ".repeat(100);
+        let pieces = split_sentences(&long);
+        assert!(pieces.len() > 1);
+        assert!(
+            pieces.iter().all(|p| p.chars().count() <= MAX_PIECE + 8),
+            "{pieces:?}"
+        );
+        let joined = pieces.join(" ");
+        assert_eq!(joined.split_whitespace().count(), 100);
+    }
 
     #[test]
     fn feed_hands_over_everything_once() {

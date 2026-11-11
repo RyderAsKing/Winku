@@ -276,7 +276,7 @@ export function createMockShell(): ShellImpl {
 		{ id: "moonshine-base", kind: "stt", name: "Moonshine base (English)", sizeMb: 111, installed: params.has("voice") },
 		{ id: "whisper-base-en", kind: "stt", name: "Whisper base.en", sizeMb: 209, installed: false },
 		{ id: "parakeet", kind: "stt", name: "Parakeet TDT 0.6B v2 (English)", sizeMb: 482, installed: false },
-		{ id: "kokoro", kind: "tts", name: "Kokoro (English)", sizeMb: 110, installed: false },
+		{ id: "supertonic", kind: "tts", name: "Supertonic (English)", sizeMb: 85, installed: false },
 	];
 	const downloading = new Set<string>();
 	const download = (id: string) => {

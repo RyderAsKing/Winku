@@ -248,10 +248,10 @@ export function createMockShell(): ShellImpl {
 
 	// Voice: models, a fake download, and speech that "plays" for a moment.
 	const models = [
-		{ id: "moonshine-base", kind: "stt", name: "Moonshine base (English)", sizeMb: 274, installed: params.has("voice") },
-		{ id: "whisper-base-en", kind: "stt", name: "Whisper base (English)", sizeMb: 199, installed: false },
-		{ id: "parakeet", kind: "stt", name: "Parakeet (English, most accurate)", sizeMb: 631, installed: false },
-		{ id: "kokoro", kind: "tts", name: "Kokoro", sizeMb: 305, installed: false },
+		{ id: "moonshine-base", kind: "stt", name: "Moonshine base (English)", sizeMb: 111, installed: params.has("voice") },
+		{ id: "whisper-base-en", kind: "stt", name: "Whisper base.en", sizeMb: 209, installed: false },
+		{ id: "parakeet", kind: "stt", name: "Parakeet TDT 0.6B v2 (English)", sizeMb: 482, installed: false },
+		{ id: "kokoro", kind: "tts", name: "Kokoro (English)", sizeMb: 110, installed: false },
 	];
 	const downloading = new Set<string>();
 	const download = (id: string) => {

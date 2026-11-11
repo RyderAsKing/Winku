@@ -565,7 +565,7 @@
 								<option value="os:{voice.id}">{voice.name} ({voice.language})</option>
 							{/each}
 							{#if kokoro}
-								<option value="kokoro">Kokoro, natural ({kokoro.sizeMb} MB download)</option>
+								<option value="kokoro">Kokoro, more natural ({kokoro.sizeMb} MB download)</option>
 							{/if}
 						</select>
 						<button type="button" class="quiet" onclick={() => shell.speak("Hi, I'm Winku. This is how I sound.").catch((e) => (voiceError = String(e)))}>Test</button>

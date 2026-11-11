@@ -30,7 +30,19 @@ export interface Reply {
 	error?: { kind: ErrorKind | "action"; message: string };
 	saved?: { saveId: string; title: string; undone: boolean }[];
 	proposals?: VoiceProposal[];
+	permissions?: PermissionAsk[];
 }
+
+/** "Ask before running": a tool call waiting for the user (SPEC §7). */
+export interface PermissionAsk {
+	requestId: string;
+	tool: string;
+	summary: string;
+	allowKey: string;
+	decided?: Decision;
+}
+
+export type Decision = "allow_once" | "always" | "deny";
 
 export interface VoiceProposal {
 	proposalId: string;
@@ -199,6 +211,15 @@ export class MainState {
 
 	async undoMemory(saveId: string) {
 		await shell.send({ type: "memory_undo", saveId });
+	}
+
+	/** Answer a permission request. "Always" also remembers the command in settings. */
+	async decidePermission(ask: PermissionAsk, decision: Decision) {
+		ask.decided = decision;
+		await shell.respond({ type: "response", id: ask.requestId, ok: true, data: { decision } });
+		if (decision === "always" && this.settings && !this.settings.alwaysAllow.includes(ask.allowKey)) {
+			this.settings = await shell.settingsSet({ ...this.settings, alwaysAllow: [...this.settings.alwaysAllow, ask.allowKey] });
+		}
 	}
 
 	/** Accept or dismiss a proposed change to a voice profile (SPEC §9). */
@@ -413,6 +434,22 @@ export class MainState {
 			case "memory_saved":
 				this.eyes.noted();
 				if (reply) reply.saved = [...(reply.saved ?? []), { saveId: message.saveId, title: message.title, undone: false }];
+				break;
+			case "request":
+				if (message.method === "permission") {
+					const ask: PermissionAsk = {
+						requestId: message.id,
+						tool: message.params.tool,
+						summary: message.params.summary,
+						allowKey: message.params.allowKey,
+					};
+					const target = reply && (!message.params.replyId || message.params.replyId === reply.id) ? reply : null;
+					if (target) target.permissions = [...(target.permissions ?? []), ask];
+					else {
+						this.reply = { id: message.params.replyId ?? newId("ask"), kind: "prompt", text: "", done: false, aborted: false, tools: [], permissions: [ask] };
+					}
+					void this.summon();
+				}
 				break;
 			case "voice_proposal": {
 				const proposal: VoiceProposal = {

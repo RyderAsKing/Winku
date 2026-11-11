@@ -75,10 +75,14 @@ export function createMockShell(): ShellImpl {
 
 	let settings: Settings = defaultSettings();
 	let hasKey = !params.has("connect");
+	let hasSearchKey = false;
+	let pendingAsk: ((decision: string) => void) | null = null;
 	if (hasKey) {
 		settings = {
 			...settings,
 			voiceProfiles: { default: "casual", byApp: { "outlook.exe": "work" } },
+			askBeforeRunning: params.has("ask"),
+			alwaysAllow: params.has("ask") ? ["powershell:Get-ChildItem", "open:https://github.com"] : [],
 			provider: { kind: "catalog", id: "anthropic" },
 			main: { id: "claude-sonnet-4-5", thinking: (params.get("thinking") as ThinkingLevel | null) ?? "medium" },
 		};
@@ -124,6 +128,7 @@ export function createMockShell(): ShellImpl {
 	const handleSend = (message: Command) => {
 		if (message.type === "prompt") {
 			if (/\bremember\b/i.test(message.text)) memoryReply(message.id);
+			else if (/\bclean up\b/i.test(message.text)) askReply(message.id);
 			else stream(message.id);
 		}
 		if (message.type === "abort" && streaming) {
@@ -191,6 +196,32 @@ export function createMockShell(): ShellImpl {
 		);
 	};
 
+	/** "Ask before running": a tool call that waits for Allow / Deny ("clean up" prompts). */
+	const askReply = (id: string) => {
+		emit("engine", { type: "thinking", id });
+		const toolCallId = "t-ask";
+		const summary = "Remove-Item $HOME\\Downloads\\*.tmp";
+		timers.push(
+			setTimeout(() => {
+				emit("engine", { type: "tool_start", id, toolCallId, name: "powershell", summary });
+				emit("engine", {
+					type: "request",
+					id: "r-ask",
+					method: "permission",
+					params: { replyId: id, tool: "powershell", summary: `Run: ${summary}`, allowKey: "powershell:Remove-Item" },
+				});
+				pendingAsk = (decision) => {
+					pendingAsk = null;
+					const ok = decision !== "deny";
+					emit("engine", { type: "tool_end", id, toolCallId, ok, summary });
+					const text = ok ? "Done. I removed 14 temporary files from Downloads." : "Okay, I left them alone.";
+					emit("engine", { type: "text_delta", id, delta: text });
+					emit("engine", { type: "reply_end", id, text, aborted: false, mood: ok ? "happy" : "neutral" });
+				};
+			}, 500),
+		);
+	};
+
 	/** What the shell does for an action hotkey (SPEC §6), with a canned result. */
 	let actionCount = 0;
 	const action = (slot: number, selection = "idempotent") => {
@@ -240,13 +271,20 @@ export function createMockShell(): ShellImpl {
 					setTimeout(ready, 50);
 					return structuredClone(settings) as T;
 				case "secret_present":
-					return hasKey as T;
+					return (args?.account === "search-api-key" ? hasSearchKey : hasKey) as T;
 				case "secret_set":
-					hasKey = true;
+					if (args?.account === "search-api-key") hasSearchKey = true;
+					else hasKey = true;
 					return undefined as T;
 				case "secret_clear":
-					hasKey = false;
+					if (args?.account === "search-api-key") hasSearchKey = false;
+					else hasKey = false;
 					return undefined as T;
+				case "engine_respond": {
+					const response = args?.response as { id: string; data?: { decision?: string } } | undefined;
+					if (response) pendingAsk?.(response.data?.decision ?? "deny");
+					return undefined as T;
+				}
 				case "hotkeys_status": {
 					const taken = params.get("taken");
 					const binding = taken?.startsWith("action") ? settings.hotkeys.actions[Number(taken.slice(6)) - 1] : undefined;

@@ -10,6 +10,9 @@ import type {
 } from "../../../../engine/src/protocol.ts";
 import type { Settings } from "./settings.ts";
 
+/** Credential Manager accounts: the provider key (default) and the Brave Search key. */
+export type SecretAccount = "api-key" | "search-api-key";
+
 export type WindowMode = "pill" | "bar" | "transcript";
 
 export type MenuItem = "settings" | "history" | "ask_before_running" | "hide_eyes" | "pause_listening" | "quit";
@@ -88,9 +91,9 @@ export const shell = {
 	respond: (response: EngineResponse) => invoke<void>("engine_respond", { response }),
 	settingsGet: () => invoke<Settings>("settings_get"),
 	settingsSet: (settings: Settings) => invoke<Settings>("settings_set", { settings }),
-	secretSet: (apiKey: string) => invoke<void>("secret_set", { apiKey }),
-	secretClear: () => invoke<void>("secret_clear"),
-	secretPresent: () => invoke<boolean>("secret_present"),
+	secretSet: (apiKey: string, account?: SecretAccount) => invoke<void>("secret_set", { apiKey, account }),
+	secretClear: (account?: SecretAccount) => invoke<void>("secret_clear", { account }),
+	secretPresent: (account?: SecretAccount) => invoke<boolean>("secret_present", { account }),
 	windowMode: (mode: WindowMode) => invoke<void>("window_mode", { mode }),
 	/** Whole bar height in logical px (72 input row + reply); the shell clamps it to 72…432. */
 	windowBarHeight: (height: number) => invoke<void>("window_bar_height", { height }),

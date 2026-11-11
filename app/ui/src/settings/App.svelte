@@ -34,6 +34,8 @@
 	let models: ModelInfo[] = $state([]);
 	let hotkeys: HotkeysStatus = $state({ failed: [] });
 	let profiles: VoiceProfileInfo[] = $state([]);
+	let hasSearchKey = $state(false);
+	let searchKeyDraft = $state("");
 	let newApp = $state("");
 	let confirmForget = $state(false);
 	let forgetResult: string | null = $state(null);
@@ -87,6 +89,7 @@
 		});
 		void shell.hotkeysStatus().then((s) => (hotkeys = s)).catch(() => {});
 		void loadProfiles();
+		void shell.secretPresent("search-api-key").then((has) => (hasSearchKey = has)).catch(() => {});
 		void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		const unlistenHotkeys = onHotkeysStatus((s) => (hotkeys = s));
 		return () => {
@@ -190,6 +193,24 @@
 		if (typeof key === "number") hotkeys.actions[key] = value;
 		else hotkeys[key] = value;
 		save({ hotkeys });
+	}
+
+	async function saveSearchKey() {
+		const key = searchKeyDraft.trim();
+		if (!key) return;
+		await shell.secretSet(key, "search-api-key");
+		hasSearchKey = true;
+		searchKeyDraft = "";
+	}
+
+	async function removeSearchKey() {
+		await shell.secretClear("search-api-key");
+		hasSearchKey = false;
+	}
+
+	function removeAllowed(key: string) {
+		if (!settings) return;
+		save({ alwaysAllow: settings.alwaysAllow.filter((k) => k !== key) });
 	}
 
 	async function loadProfiles() {
@@ -389,6 +410,48 @@
 					oninput={(e) => save({ assistantStyle: e.currentTarget.value }, 500)}
 				></textarea>
 			</label>
+		</section>
+
+		<section>
+			<h2>Tools</h2>
+			<label class="field check">
+				<span>Ask before running</span>
+				<span class="inline">
+					<input type="checkbox" checked={settings.askBeforeRunning} onchange={(e) => save({ askBeforeRunning: e.currentTarget.checked })} />
+					Check with me before Winku writes files, runs commands or opens things.
+				</span>
+			</label>
+			{#if settings.alwaysAllow.length > 0}
+				<div class="field top">
+					<span class="label-top">Always allowed</span>
+					<div class="stack">
+						{#each settings.alwaysAllow as key (key)}
+							<div class="inline">
+								<span class="mono allowed grow">{key}</span>
+								<button type="button" class="quiet" onclick={() => removeAllowed(key)}>Remove</button>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+			<div class="field top">
+				<span class="label-top">Web search</span>
+				<div class="stack">
+					{#if hasSearchKey}
+						<div class="inline">
+							<p class="value grow">Brave Search key saved in Credential Manager</p>
+							<button type="button" class="quiet" onclick={removeSearchKey}>Remove</button>
+						</div>
+					{:else}
+						<form class="inline" onsubmit={(e) => (e.preventDefault(), saveSearchKey())}>
+							<input type="password" aria-label="Brave Search API key" autocomplete="off" spellcheck="false" placeholder="Brave Search API key" bind:value={searchKeyDraft} />
+							<button type="submit" class="quiet" disabled={!searchKeyDraft.trim()}>Save</button>
+							<button type="button" class="quiet" onclick={() => shell.openExternal("https://api-dashboard.search.brave.com/app/keys")}>Get a key</button>
+						</form>
+						<p class="hint">Optional. Without it Winku can still read web pages you or it link to, but can't search.</p>
+					{/if}
+				</div>
+			</div>
 		</section>
 
 		<section>
@@ -673,6 +736,10 @@
 		background: var(--panel-raised);
 		font-size: 12px;
 		cursor: pointer;
+	}
+	.allowed {
+		font-size: 12px;
+		overflow-wrap: anywhere;
 	}
 	.label-top {
 		padding-top: 7px;

@@ -15,7 +15,7 @@
 
 	{#each reply.tools as tool (tool.toolCallId)}
 		<p class="tool mono" class:failed={tool.ok === false}>
-			{tool.ok === null ? "Running" : tool.ok ? "Ran" : "Failed"}
+			{tool.ok === null ? (reply.permissions?.some((ask) => !ask.decided) ? "Wants to run" : "Running") : tool.ok ? "Ran" : "Failed"}
 			{tool.name}<span class="summary">: {tool.summary}</span>
 		</p>
 	{/each}
@@ -23,7 +23,7 @@
 	{#if reply.text}
 		<Markdown text={reply.text} />
 	{:else if !reply.done && !reply.error}
-		<p class="waiting">Thinking…</p>
+		<p class="waiting">{reply.permissions?.some((ask) => !ask.decided) ? "Waiting for you" : "Thinking…"}</p>
 	{/if}
 
 	{#if reply.aborted}
@@ -47,6 +47,21 @@
 			{/if}
 		</p>
 	{/each}
+	{#each reply.permissions ?? [] as ask (ask.requestId)}
+		<div class="ask" role="alertdialog" aria-label="Allow {ask.tool}?">
+			<p class="mono">{ask.summary}</p>
+			{#if ask.decided}
+				<p class="note">{ask.decided === "deny" ? "Declined." : ask.decided === "always" ? "Allowed, and won't ask again." : "Allowed once."}</p>
+			{:else}
+				<div class="choices">
+					<button type="button" class="accept" onclick={() => app.decidePermission(ask, "allow_once")}>Allow once</button>
+					<button type="button" onclick={() => app.decidePermission(ask, "always")}>Always allow this command</button>
+					<button type="button" onclick={() => app.decidePermission(ask, "deny")}>Deny</button>
+				</div>
+			{/if}
+		</div>
+	{/each}
+
 	{#each reply.proposals ?? [] as proposal (proposal.proposalId)}
 		<div class="proposal">
 			<p>
@@ -69,6 +84,18 @@
 </div>
 
 <style>
+	.ask {
+		display: grid;
+		gap: 8px;
+		padding: 10px 12px;
+		border-radius: 12px;
+		border: 1px solid var(--line-strong);
+	}
+	.ask p {
+		margin: 0;
+		font-size: 12px;
+		overflow-wrap: anywhere;
+	}
 	.proposal {
 		display: grid;
 		gap: 6px;

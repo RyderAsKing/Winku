@@ -2,6 +2,10 @@
 	// The pill, and the bar it stretches into. The eyes never move: the bar grows from the pill
 	// toward the middle of the screen. Resting: click to open, drag to move, right-click for the
 	// menu. Open: the message box, then the context meter and thinking level.
+	//
+	// The eyes are pinned to the anchored end and the body is laid out at the full bar width the
+	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
+	import { cubicOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 	import Eyes from "../lib/eyes/Eyes.svelte";
 	import { shell } from "../lib/shell.ts";
@@ -17,7 +21,7 @@
 
 	$effect(() => {
 		void app.focusTick;
-		input?.focus();
+		input?.focus({ preventScroll: true });
 	});
 
 	const d = $derived(app.dims);
@@ -75,6 +79,7 @@
 	style:height="{d.pillH}px"
 	style:--font="{d.font}px"
 	style:--pill-w="{d.pillW}px"
+	style:--body-w="{d.barW - d.pillW}px"
 >
 	<button
 		class="eyes"
@@ -105,73 +110,80 @@
 	</button>
 
 	{#if open}
-		<div class="field" in:fade={{ duration: 140, delay: 90 }}>
-			{#if app.selectionChip || app.imageChip}
-				<div class="chips">
-					{#if app.selectionChip}
-						<span class="chip">
-							Selection, {selectionWords} {selectionWords === 1 ? "word" : "words"}
-							<button type="button" aria-label="Remove selection" onclick={() => (app.selectionChip = null)}>×</button>
-						</span>
+		<div class="body" in:fade={{ duration: 180, delay: 60, easing: cubicOut }} out:fade={{ duration: 110 }}>
+			<div class="field">
+				{#if app.selectionChip || app.imageChip}
+					<div class="chips">
+						{#if app.selectionChip}
+							<span class="chip">
+								Selection, {selectionWords} {selectionWords === 1 ? "word" : "words"}
+								<button type="button" aria-label="Remove selection" onclick={() => (app.selectionChip = null)}>×</button>
+							</span>
+						{/if}
+						{#if app.imageChip}
+							<span class="chip">
+								Screenshot
+								<button type="button" aria-label="Remove screenshot" onclick={() => (app.imageChip = null)}>×</button>
+							</span>
+						{/if}
+					</div>
+				{/if}
+				<textarea
+					bind:this={input}
+					bind:value={text}
+					rows="1"
+					placeholder={app.listening ? "Listening…" : app.needsConnect ? "Connect a model first" : "Ask anything"}
+					disabled={app.needsConnect}
+					aria-label="Message"
+					{onkeydown}
+					oninput={autosize}
+				></textarea>
+			</div>
+
+			{#if !app.needsConnect}
+				<div class="meta">
+					{#if app.updateReady}
+						<button type="button" class="mono level" title="Install Winku {app.updateReady} and restart" onclick={() => shell.updateRestart()}>Restart to update</button>
 					{/if}
-					{#if app.imageChip}
-						<span class="chip">
-							Screenshot
-							<button type="button" aria-label="Remove screenshot" onclick={() => (app.imageChip = null)}>×</button>
-						</span>
+					{#if app.download}
+						<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
 					{/if}
+					{#if ctx !== null}<span class="mono" title="Context used">{ctx}% ctx</span>{/if}
+					<button type="button" class="mono level" title="Thinking level (Ctrl+Alt+T)" onclick={() => app.cycleThinking()}>
+						{app.thinking}
+					</button>
 				</div>
 			{/if}
-			<textarea
-				bind:this={input}
-				bind:value={text}
-				rows="1"
-				placeholder={app.listening ? "Listening…" : app.needsConnect ? "Connect a model first" : "Ask anything"}
-				disabled={app.needsConnect}
-				aria-label="Message"
-				{onkeydown}
-				oninput={autosize}
-			></textarea>
 		</div>
-
-		{#if !app.needsConnect}
-			<div class="meta" in:fade={{ duration: 140, delay: 90 }}>
-				{#if app.updateReady}
-					<button type="button" class="mono level" title="Install Winku {app.updateReady} and restart" onclick={() => shell.updateRestart()}>Restart to update</button>
-				{/if}
-				{#if app.download}
-					<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
-				{/if}
-				{#if ctx !== null}<span class="mono" title="Context used">{ctx}% ctx</span>{/if}
-				<button type="button" class="mono level" title="Thinking level (Ctrl+Alt+T)" onclick={() => app.cycleThinking()}>
-					{app.thinking}
-				</button>
-			</div>
-		{/if}
 	{/if}
 </div>
 
 <style>
 	.head {
 		position: absolute;
-		display: flex;
-		align-items: center;
-		overflow: hidden;
+		/* clip, not hidden: a hidden box can be scrolled, and focusing the message box while the
+		   bar is still narrow would scroll it into view, sliding the eyes. */
+		overflow: clip;
 		border: 1px solid var(--line);
 		border-radius: 999px;
 		background: radial-gradient(ellipse 72% 72% at 50% 28%, var(--face-hi), var(--face-lo));
-		transition: width 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+		/* Closing eases in and finishes before the shell trims the window (App.svelte, 240 ms). */
+		transition: width 190ms cubic-bezier(0.4, 0, 0.6, 1);
+		contain: layout paint;
 	}
-	/* On the right half the eyes stay at the right end: message box, meta, eyes. */
-	.head.right .eyes {
-		order: 2;
+	.head.open {
+		transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
+	/* The eyes sit at the anchored end: left on the left half, right on the right half. */
 	.eyes {
-		position: relative;
-		flex: none;
+		position: absolute;
+		top: 0;
+		left: 0;
+		z-index: 1;
 		display: grid;
 		place-items: center;
-		width: var(--pill-w);
+		/* The pill's inner box, so the eyes are centred inside the border. */
+		width: calc(var(--pill-w) - 2px);
 		height: 100%;
 		padding: 0;
 		border: 0;
@@ -180,6 +192,10 @@
 		cursor: pointer;
 		user-select: none;
 		touch-action: none;
+	}
+	.right .eyes {
+		left: auto;
+		right: 0;
 	}
 	.eyes:focus-visible {
 		outline-offset: -3px;
@@ -193,6 +209,20 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--accent);
+	}
+	/* Fixed at the open width, beside the eyes, so it is uncovered rather than squeezed. */
+	.body {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: calc(var(--pill-w) - 2px);
+		width: var(--body-w);
+		display: flex;
+		align-items: center;
+	}
+	.right .body {
+		left: auto;
+		right: calc(var(--pill-w) - 2px);
 	}
 	.field {
 		flex: 1;

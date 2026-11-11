@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The main window: a fixed stage with the pill in one corner (see stage.ts). The pill opens
 	// into the bar in place, and replies show in a bubble under it, or over it low on the screen.
+	import { cubicIn, cubicOut } from "svelte/easing";
 	import { fly } from "svelte/transition";
 	import "../lib/theme.css";
 	import Connect from "./Connect.svelte";
@@ -30,14 +31,18 @@
 	});
 
 	// Tell the shell what is drawn. Growth is reported at once so nothing is clipped; shrinking
-	// waits for the close animation so it isn't cut off.
+	// waits for the close animation so it isn't cut off. The shell trims the window a frame or two
+	// after a report, so a growing bubble (a streamed reply adds a line at a time) is reported with
+	// room to spare, in steps; otherwise each new line would show cut off for a frame.
+	const STEP = 48;
+	const roomy = (h: number) => Math.ceil((h + STEP / 2) / STEP) * STEP;
 	let bubbleH = $state(0);
 	let sent: { headW: number; bubbleH: number; key: string } | null = null;
 	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
 		const next = {
 			headW: open ? d.barW : d.pillW,
-			bubbleH: showBubble ? Math.ceil(bubbleH) : 0,
+			bubbleH: showBubble ? roomy(bubbleH) : 0,
 			key: `${app.settings?.eyes.size}:${app.layout.alignRight}:${app.layout.above}`,
 		};
 		const dims = d;

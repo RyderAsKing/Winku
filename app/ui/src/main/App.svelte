@@ -189,7 +189,7 @@
 	.bubble {
 		min-height: 0;
 		border: 1px solid var(--line);
-		border-radius: 18px;
+		border-radius: 18px; /* BUBBLE_RADIUS in stage.ts */
 		background: rgb(14 16 21 / 0.88);
 		overflow-wrap: anywhere;
 	}

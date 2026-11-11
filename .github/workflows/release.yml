@@ -34,6 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          # sherpa-onnx-sys unpacks its prebuilt libraries here, outside what rust-cache keeps by
+          # default; without it a restored build skips the download and fails to link.
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
+          prefix-key: v1-sherpa
           save-if: false
 
       - name: Install and stage the engine sidecar

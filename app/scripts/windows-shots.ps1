@@ -37,6 +37,12 @@ function Shot([string]$Name) {
 }
 Add-Type -AssemblyName System.Windows.Forms
 
+# The shell logs hotkey_hint events here when WINKU_DEBUG_HINT=1.
+$hintLog = Join-Path $OutDir "hint.log"
+Remove-Item $hintLog -ErrorAction SilentlyContinue
+$env:WINKU_DEBUG_HINT = "1"
+$env:WINKU_DEBUG_HINT_LOG = $hintLog
+
 $app = Start-Process -FilePath $Exe -PassThru
 try {
   Start-Sleep -Seconds 15
@@ -49,6 +55,21 @@ try {
   [Keys]::Tap([byte[]]@(), 0x1B)
   Start-Sleep -Seconds 2
   Shot "3-closed"
+  # The taps above must not have sent a hint. Then Ctrl+Alt held on its own for about a second:
+  # the shell must send hotkey_hint show, and hide on release.
+  if (Test-Path $hintLog) { throw "hotkey_hint fired before any hold:`n$(Get-Content $hintLog -Raw)" }
+  [Keys]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+  [Keys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 1000
+  Shot "4-hint-hold"
+  [Keys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+  [Keys]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 500
+  $lines = @(Get-Content $hintLog -ErrorAction SilentlyContinue)
+  Write-Host "hint log: $($lines -join ' | ')"
+  if (($lines -join "`n") -ne "hotkey_hint show`nhotkey_hint hide") {
+    throw "expected one hotkey_hint show then one hide, got: $($lines -join ' | ')"
+  }
 } finally {
   Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $app.Id } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

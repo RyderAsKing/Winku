@@ -107,6 +107,8 @@ export class MainState {
 	speaking = $state(false);
 	/** A voice model downloading (SPEC §3: progress shows on the eyes). */
 	download: DownloadProgress | null = $state(null);
+	/** Version of an update that is downloaded or available; the eyes show a dot. */
+	updateReady: string | null = $state(null);
 
 	readonly needsConnect: boolean = $derived(
 		this.settings !== null &&
@@ -134,6 +136,12 @@ export class MainState {
 			onDownloadProgress((p) => this.#onDownload(p)),
 		]);
 		const [settings, hasKey] = await Promise.all([shell.settingsGet(), shell.secretPresent()]);
+		void shell
+			.updateStatus()
+			.then((s) => {
+				if ((s.state === "ready" || s.state === "available") && s.version) this.updateReady = s.version;
+			})
+			.catch(() => {});
 		this.hasKey = hasKey;
 		this.settings = settings;
 	}
@@ -400,6 +408,7 @@ export class MainState {
 			case "menu":
 				break;
 			case "update_ready":
+				this.updateReady = event.version;
 				break;
 		}
 	}

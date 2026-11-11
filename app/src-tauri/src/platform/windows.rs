@@ -795,3 +795,136 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     });
     sent
 }
+
+// ---------------------------------------------------------------------------------------------
+// Foreground watching (fullscreen apps hide the pill)
+
+use crate::fullscreen::Bounds;
+use windows_sys::Win32::Foundation::RECT;
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetClassNameW, GetMessageW, EVENT_OBJECT_LOCATIONCHANGE,
+    EVENT_SYSTEM_FOREGROUND, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+};
+
+pub type ForegroundCallback = Box<dyn Fn(&str, bool, Bounds, Bounds) + Send + Sync>;
+
+static FOREGROUND_CALLBACK: std::sync::OnceLock<ForegroundCallback> = std::sync::OnceLock::new();
+
+thread_local! {
+    /// The location hook scoped to the current foreground window's thread.
+    static LOCATION_HOOK: std::cell::Cell<HWINEVENTHOOK> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// Calls `callback` with the foreground window's class, whether it is Winku's, its rect and its
+/// monitor's rect, whenever the foreground changes or the foreground window moves or resizes.
+/// Runs a dedicated thread that sleeps in GetMessageW between events: no polling.
+pub fn watch_foreground(callback: ForegroundCallback) {
+    if FOREGROUND_CALLBACK.set(callback).is_err() {
+        return;
+    }
+    std::thread::spawn(|| {
+        // SAFETY: hooks are installed and serviced on this thread's message loop.
+        unsafe {
+            SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                std::ptr::null_mut(),
+                Some(on_win_event),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            );
+            on_foreground(GetForegroundWindow());
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                DispatchMessageW(&msg);
+            }
+        }
+    });
+}
+
+unsafe extern "system" fn on_win_event(
+    _hook: HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if event == EVENT_SYSTEM_FOREGROUND {
+        on_foreground(hwnd);
+    } else if id_object == OBJID_WINDOW && hwnd == GetForegroundWindow() {
+        report(hwnd);
+    }
+}
+
+/// Re-scopes the location hook to the new foreground window's thread, then reports it.
+unsafe fn on_foreground(hwnd: HWND) {
+    LOCATION_HOOK.with(|hook| {
+        let old = hook.replace(std::ptr::null_mut());
+        if !old.is_null() {
+            UnhookWinEvent(old);
+        }
+        if hwnd.is_null() || is_own_window(WindowHandle(hwnd as isize)) {
+            return;
+        }
+        let mut pid = 0u32;
+        let thread = GetWindowThreadProcessId(hwnd, &mut pid);
+        if thread != 0 {
+            hook.set(SetWinEventHook(
+                EVENT_OBJECT_LOCATIONCHANGE,
+                EVENT_OBJECT_LOCATIONCHANGE,
+                std::ptr::null_mut(),
+                Some(on_win_event),
+                pid,
+                thread,
+                WINEVENT_OUTOFCONTEXT,
+            ));
+        }
+    });
+    report(hwnd);
+}
+
+unsafe fn report(hwnd: HWND) {
+    let Some(callback) = FOREGROUND_CALLBACK.get() else {
+        return;
+    };
+    let empty = Bounds {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if hwnd.is_null() {
+        callback("", false, empty, empty);
+        return;
+    }
+    let mut class = [0u16; 64];
+    let len = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+    let class = String::from_utf16_lossy(&class[..len.max(0) as usize]);
+    let own = is_own_window(WindowHandle(hwnd as isize));
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        callback(&class, own, empty, empty);
+        return;
+    }
+    let mut info: MONITORINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if GetMonitorInfoW(monitor, &mut info) == 0 {
+        callback(&class, own, empty, empty);
+        return;
+    }
+    let bounds = |r: RECT| Bounds {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    };
+    callback(&class, own, bounds(rect), bounds(info.rcMonitor));
+}

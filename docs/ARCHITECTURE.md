@@ -55,6 +55,9 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `speak` / `stop_speaking` | `{ text }` / `()`. `speak` replaces anything already playing, with the voice from `settings.voice.tts` (and `osVoice`). The UI strips markdown first. | 7 |
 | `voice_os_voices` | `()` → `{ id, name, language }[]`: the OS voices (Windows OneCore), `[]` where there are none | 7 |
 | `voice_models` | `()` → `{ id, kind: "stt" \| "tts", name, sizeMb, installed, downloading }[]` | 7 |
+| `update_status` | `()` → `UpdateStatus`: `{ state: "idle" \| "checking" \| "available" \| "downloading" \| "ready" \| "error", version?, notes?, error? }` | 8 |
+| `update_check` | `()` → `UpdateStatus` after checking now (Settings "Check now"); in `auto` mode it also starts the download | 8 |
+| `update_restart` | `()` → `()`: download if needed, install and relaunch (bar link, menu item) | 8 |
 | `voice_model_download` / `voice_model_remove` | `{ id }` → `()`. Download returns at once; progress comes as `download_progress` | 7 |
 
 ### Events (`listen`)
@@ -62,9 +65,10 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | Event | Payload |
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
-| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
+| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot) |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
+| `update_status` | `UpdateStatus`, whenever it changes |
 | `download_progress` | `{ what: "stt" \| "tts", model, fraction }` while a voice model downloads; `fraction: 1` when it is installed. A failure sends `ui` `voice_error` and `{ ..., fraction: -1 }`. |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
@@ -214,6 +218,20 @@ The URLs, sizes and SHA-256s are constants in `voice/models.rs`. Only the files 
 
 - **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always_voice` speaks every reply, `always_text` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
 - **Engine:** a spoken prompt carries `spoken: true`. The engine adds "(spoken)" to the now line so the model knows it was dictated and keeps the answer short and easy to listen to.
+
+## Shipping
+
+- **Updater:** `tauri-plugin-updater`, checking `https://github.com/RyderAsKing/Winku/releases/latest/download/latest.json`. Every update is verified against the public key in `tauri.conf.json`; CI signs releases with the private key in the `TAURI_SIGNING_PRIVATE_KEY` secret. `settings.updates`:
+  - `auto` (default): check 30 s after start and every 6 hours, download in the background, then install when Winku quits (or on "Restart to update"). The eyes show a small dot from `update_ready` until then.
+  - `notify`: check on the same schedule but don't download; the dot and "Restart to update" appear when one is available.
+  - `off`: never check; Settings "Check now" still works.
+
+  Debug builds never check on their own.
+
+  Shell details (`src-tauri/src/update.rs`): the shell has no JS permissions for the updater; everything goes through `update_*`. Signatures are checked when the update is installed, not after the download. `update_ready` is sent once per change into `ready` (auto) or `available` (notify/off). Only the Quit menu item installs on the way out; any other exit (a crash, a system shutdown) leaves the downloaded update for the next check. Windows uses native TLS for update downloads (like the model downloads); other platforms use rustls.
+- **Launch at login:** `tauri-plugin-autostart` (the Run key on Windows), applied at startup and whenever `settings.launchAtLogin` changes. Release builds only.
+- **Fullscreen apps:** the resting pill hides while a fullscreen app has focus (a game, a video, a presentation) and comes back when it loses focus. Windows watches foreground changes with a WinEvent hook rather than polling. The bar is never hidden this way. (`src-tauri/src/fullscreen.rs`.) The hook thread listens for `EVENT_SYSTEM_FOREGROUND`, plus `EVENT_OBJECT_LOCATIONCHANGE` restricted to the foreground window's thread, so an app that goes fullscreen after it takes focus is caught too. A window counts as fullscreen when its rect covers its monitor's rect and its class isn't `Progman`, `WorkerW`, `Shell_TrayWnd` or `Shell_SecondaryTrayWnd`. Winku's own windows never count. The pill shows again only if `eyes.hidden` is off.
+- **Releases:** pushing a `v*` tag runs `.github/workflows/release.yml`. It builds the engine and the NSIS installer on Windows, signs the updater artifacts, and publishes a GitHub Release with `latest.json`. Builds are not code-signed (SPEC §1); the README explains SmartScreen.
 
 ## Module layout
 

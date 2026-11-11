@@ -38,7 +38,8 @@ export type UiEvent =
 	/** The microphone, a model download or speech failed. */
 	| { kind: "voice_error"; message: string }
 	| { kind: "menu"; item: MenuItem }
-	| { kind: "update_ready" };
+	/** An update is downloaded (auto) or available (notify): the eyes show a small dot. */
+	| { kind: "update_ready"; version: string };
 
 export type EngineMessage = EngineEvent | EngineRequest;
 type Unlisten = () => void;
@@ -114,6 +115,13 @@ export interface DownloadProgress {
 	fraction: number;
 }
 
+export interface UpdateStatus {
+	state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
+	version?: string;
+	notes?: string;
+	error?: string;
+}
+
 export const shell = {
 	send: (message: Command) => invoke<void>("engine_send", { message }),
 	call: <T>(message: CallMessage) => invoke<T>("engine_call", { message }),
@@ -138,6 +146,15 @@ export const shell = {
 	openExternal: (url: string) => invoke<void>("open_external", { url }),
 	speak: (text: string) => invoke<void>("speak", { text }),
 	stopSpeaking: () => invoke<void>("stop_speaking"),
+	updateStatus: () => invoke<UpdateStatus>("update_status"),
+	updateCheck: () => invoke<UpdateStatus>("update_check"),
+	/** Download if needed, install and relaunch. */
+	updateRestart: () => invoke<void>("update_restart"),
+	appVersion: async () => {
+		if (!isTauri) return "0.0.1";
+		const { getVersion } = await import("@tauri-apps/api/app");
+		return getVersion();
+	},
 	voiceOsVoices: () => invoke<OsVoice[]>("voice_os_voices"),
 	voiceModels: () => invoke<VoiceModel[]>("voice_models"),
 	voiceModelDownload: (id: VoiceModelId) => invoke<void>("voice_model_download", { id }),
@@ -162,6 +179,8 @@ export const onSettingsChanged = (handler: (settings: Settings) => void) => list
 
 export const onDownloadProgress = (handler: (progress: DownloadProgress) => void) =>
 	listen<DownloadProgress>("download_progress", handler);
+
+export const onUpdateStatus = (handler: (status: UpdateStatus) => void) => listen<UpdateStatus>("update_status", handler);
 
 export const onHotkeysStatus = (handler: (status: HotkeysStatus) => void) => listen<HotkeysStatus>("hotkeys_status", handler);
 

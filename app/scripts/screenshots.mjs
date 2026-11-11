@@ -40,6 +40,17 @@ const cases = [
 		},
 	},
 	{
+		name: "pill-update",
+		path: "/?update=1",
+		ready: ".pill .dot",
+	},
+	{
+		name: "bar-update",
+		path: "/?update=1",
+		ready: "text=Restart to update",
+		prepare: summon,
+	},
+	{
 		name: "listening",
 		path: "/?voice=1",
 		ready: ".eyes[aria-label='Winku is listening']",
@@ -164,6 +175,16 @@ const cases = [
 		prepare: async (page) => {
 			await page.getByRole("heading", { name: "Speech" }).evaluate((el) => el.scrollIntoView());
 			await page.getByRole("option", { name: "Microsoft Zira (en-US)" }).waitFor({ state: "attached" });
+		},
+	},
+	{
+		name: "settings-app",
+		path: "/settings.html?update=1",
+		size: { width: 680, height: 1040 },
+		ready: "role=heading[name='App']",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "App" }).evaluate((el) => el.closest("section").scrollIntoView({ block: "end" }));
+			await page.getByText("installs when you quit or restart").waitFor();
 		},
 	},
 	{

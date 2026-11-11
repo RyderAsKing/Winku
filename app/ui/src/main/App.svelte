@@ -7,6 +7,7 @@
 	import "../lib/theme.css";
 	import Connect from "./Connect.svelte";
 	import Head from "./Head.svelte";
+	import HotkeyHints from "./HotkeyHints.svelte";
 	import ReplyView from "./ReplyView.svelte";
 	import { GAP, stageSize } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
@@ -23,7 +24,8 @@
 	const open = $derived(app.mode !== "pill");
 	const transcript = $derived(app.mode === "transcript");
 	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
-	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null);
+	const showHints = $derived(app.hotkeyHints && app.settings !== null);
+	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null || showHints);
 	const above = $derived(app.layout.above);
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
@@ -102,6 +104,11 @@
 				in:fly={{ y: above ? 8 : -8, duration: ms(220), delay: ms(open ? 40 : 0), easing: cubicOut }}
 				out:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicIn }}
 			>
+				{#if showHints && app.settings}
+					<div class="bubble hint-bubble" in:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicOut }} out:fly={{ duration: ms(90), opacity: 0 }}>
+						<HotkeyHints settings={app.settings} />
+					</div>
+				{/if}
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
 				{:else if transcript}
@@ -202,6 +209,15 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+	}
+	/* The hints hug the eyes' side rather than spanning the bar. */
+	.hint-bubble {
+		flex: none;
+		align-self: flex-start;
+		max-width: 100%;
+	}
+	.right .hint-bubble {
+		align-self: flex-end;
 	}
 	.toast {
 		flex: none;

@@ -99,6 +99,8 @@ export class MainState {
 	selectionChip: string | null = $state(null);
 	imageChip: ImageAttachment | null = $state(null);
 	toast: Toast | null = $state(null);
+	/** The hotkey prefix is held alone: show what each key does. */
+	hotkeyHints = $state(false);
 	/** Bumped to ask the input to take focus. */
 	focusTick = $state(0);
 	/** The talk key is held and the microphone is open. */
@@ -462,6 +464,9 @@ export class MainState {
 				break;
 			case "layout":
 				this.layout = { alignRight: event.alignRight, above: event.above };
+				break;
+			case "hotkey_hint":
+				this.hotkeyHints = event.show;
 				break;
 		}
 	}

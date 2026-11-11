@@ -26,6 +26,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 - Prompt ids and action ids are chosen by the sender and echoed on every event of that reply.
 - `reply_end` is sent on `agent_settled`, not `agent_end`, so retries and compaction finish first.
 - The engine strips `<mood:…>` tags from streamed text and reports the mood on `reply_end`.
+- A prompt with `speak` (`"brief"`, `"enough"` or `"full"`, from `settings.voice.say`) gets a reply that starts with `<say>…</say>`, written for listening (the instructions are in the system prompt; `speak="…"` on the now line asks for it). The engine sends each closed block as a `say` event and keeps it out of `text_delta` and `reply_end.text`; a reply with nothing written ends with its last block as the text. Without `speak`, `<say>` is left alone. The transcript drops the blocks the same way (`say.ts`).
 - Errors carry an `errorKind` (`auth`, `network`, `model`, `config`, `engine`) so the eyes can pick the error state and the UI can offer the right fix.
 
 ## Shell ↔ UI contract
@@ -53,7 +54,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `open_data_path` | `{ what: "about_me" \| "memory" \| "voice" }` → `()`: opens the file or folder (see "Memory and voice profiles") | 5 |
 | `now_line` | `()` → `NowLine` captured when the bar was summoned | 6 |
 | `screenshot` | `()` → `ImageAttachment` of the window that was active before the bar | 6 |
-| `speak` / `stop_speaking` | `{ text }` / `()`. `speak` replaces anything already playing, with the voice from `settings.voice.tts` (and `osVoice`). The UI strips markdown first. | 7 |
+| `speak` / `stop_speaking` | `{ text, append? }` / `()`. `speak` replaces anything already playing, with the voice from `settings.voice.tts` (and `osVoice`); with `append` it is read after what is playing and queued, or at once if nothing is. Plain text: a `say` block, or a reply's markdown stripped by the UI. | 7 |
 | `voice_os_voices` | `()` → `{ id, name, language }[]`: the OS voices (Windows OneCore), `[]` where there are none | 7 |
 | `voice_models` | `()` → `{ id, kind: "stt" \| "tts", name, sizeMb, installed, downloading }[]` | 7 |
 | `update_status` | `()` → `UpdateStatus`: `{ state: "idle" \| "checking" \| "available" \| "downloading" \| "ready" \| "error", version?, notes?, error? }` | 8 |
@@ -133,7 +134,7 @@ Owned by the shell (`app/src-tauri/src/settings.rs`); the TypeScript mirror is `
   },
   "leaderKey": null,                      // e.g. "F13"; replaces Ctrl+Alt in every binding
   "eyes": { "hidden": false, "size": "small", "positions": {} },   // size: small | medium | large; positions keyed by monitor-layout signature
-  "voice": { "stt": "moonshine-base", "tts": "os", "osVoice": null, "reply": "mirror", "listeningPaused": false },
+  "voice": { "stt": "moonshine-base", "tts": "supertonic", "ttsVoice": 5, "osVoice": null, "reply": "mirror", "say": "enough", "listeningPaused": false },
   "updates": "auto",                      // "auto" | "notify" | "off"
   "launchAtLogin": true
 }
@@ -221,8 +222,9 @@ The URLs, sizes and SHA-256s are constants in `voice/models.rs`. Only the files 
 - **Playback:** `tts::play` resamples the synthesiser's rate (44.1 kHz for Supertonic, 22.05-24 kHz for others) to the device's with `audio::StreamResampler`, a streaming Blackman-windowed sinc (48 taps each side at 1:1, table of 512 sub-sample phases), the same result however the audio is chunked. It replaced linear interpolation, which left images of the voice only about 9 dB below the original at 9 kHz when going from 24 to 48 kHz.
 - **Threads and memory:** nothing voice-related is created at startup. Each hold records on its own thread (cpal streams stay on the thread that made them) and transcribes there; downloads and `speak` get threads too. While a model is loaded, a thread checks every 20 s and drops models idle for 3 minutes, then exits. sherpa-onnx (with onnxruntime) is linked statically, which adds about 30 MB to the executable. Its Windows libraries are built against the static C runtime (`/MT`), so `app/src-tauri/.cargo/config.toml` sets `+crt-static` for the MSVC targets.
 
-- **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always_voice` speaks every reply, `always_text` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
-- **Engine:** a spoken prompt carries `spoken: true`. The engine adds "(spoken)" to the now line so the model knows it was dictated and keeps the answer short and easy to listen to.
+- **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always_voice` speaks every reply, `always_text` speaks none (files from before v0.1.3 may say `always` or `never`; the shell maps them). The UI decides when it sends the prompt and sets `speak` on it (`settings.voice.say`). Each `say` event is read as it arrives: the first replaces anything playing, later ones are appended. A spoken reply that ends without any `say` block is read from its markdown, stripped (`speech.ts`), on `reply_end`. Actions are never spoken. `Esc` and a new hold stop speech and drop the queue.
+- **Queued speech:** an appended text joins the playing one's queue. Supertonic reads the queue through the same audio stream, so there is no gap; the OS voice reads one text after another.
+- **Engine:** a dictated prompt carries `spoken: true`, which adds `spoken="yes"` to the now line so the model expects transcription errors. Whether the reply is read aloud is `speak`, separately: typed prompts are spoken too with `always_voice`.
 
 ## Shipping
 

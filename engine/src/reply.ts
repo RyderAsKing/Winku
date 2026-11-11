@@ -2,10 +2,11 @@
 // so the session can be swapped underneath (call attach again).
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { MoodStripper } from "./mood.ts";
+import { MoodStripper, stripMood } from "./mood.ts";
 import { formatNow } from "./nowline.ts";
 import type { Command, ErrorKind, Event, Mood } from "./protocol.ts";
 import { classifyError, errorOf } from "./runtime.ts";
+import { SayStripper } from "./say.ts";
 import { toolSummary } from "./thread.ts";
 
 type PromptCommand = Extract<Command, { type: "prompt" }>;
@@ -15,6 +16,12 @@ interface ActiveReply {
 	text: string;
 	mood: Mood | undefined;
 	stripper: MoodStripper | undefined;
+	/** The prompt asked for a spoken reply: <say> blocks are split off (prompt `speak`). */
+	speak: boolean;
+	/** Splits <say> blocks off the current assistant message, when `speak`. */
+	say: SayStripper | undefined;
+	/** The last block said; the reply's text if nothing was written. */
+	lastSaid: string | undefined;
 	/** The current assistant message has shown text. */
 	shown: boolean;
 	/** Last model error; cleared when a later attempt succeeds (retries). */
@@ -22,8 +29,8 @@ interface ActiveReply {
 	tools: Map<string, string>;
 }
 
-export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken">): string {
-	return `${command.text}${formatNow(command.now, command.spoken === true)}`;
+export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken" | "speak">): string {
+	return `${command.text}${formatNow(command.now, command.spoken === true, command.speak)}`;
 }
 
 export class Replies {
@@ -32,6 +39,8 @@ export class Replies {
 	private queue: string[] = [];
 	private active: ActiveReply | undefined;
 	private readonly ended = new Set<string>();
+	/** Prompt ids (queued or active) whose reply will be read aloud. */
+	private readonly spoken = new Set<string>();
 
 	constructor(
 		private readonly emit: (event: Event) => void,
@@ -64,6 +73,7 @@ export class Replies {
 		}));
 		const queued = this.busy;
 		this.queue.push(command.id);
+		if (command.speak) this.spoken.add(command.id);
 		if (!queued) this.emit({ type: "thinking", id: command.id });
 		session
 			.prompt(userMessageText(command), {
@@ -96,6 +106,7 @@ export class Replies {
 			this.end(active, false);
 		} else {
 			this.ended.add(id);
+			this.spoken.delete(id);
 			this.emit({ type: "reply_end", id, text: "", aborted: false });
 		}
 	}
@@ -103,6 +114,12 @@ export class Replies {
 	private end(reply: ActiveReply, aborted: boolean): void {
 		if (this.ended.has(reply.id)) return;
 		this.ended.add(reply.id);
+		this.spoken.delete(reply.id);
+		// Nothing written after the <say> block: the said text is the reply.
+		if (!aborted && !reply.error && !reply.text.trim() && reply.lastSaid) {
+			reply.text = reply.lastSaid;
+			this.emit({ type: "text_delta", id: reply.id, delta: reply.lastSaid });
+		}
 		if (reply.error) this.emit({ type: "error", id: reply.id, errorKind: reply.error.kind, message: reply.error.message });
 		this.emit({
 			type: "reply_end",
@@ -119,9 +136,33 @@ export class Replies {
 		for (const id of this.queue) {
 			if (this.ended.has(id)) continue;
 			this.ended.add(id);
+			this.spoken.delete(id);
 			this.emit({ type: "reply_end", id, text: "", aborted: true });
 		}
 		this.queue = [];
+	}
+
+	/** Written text of the current assistant message, through the mood stripper to text_delta. */
+	private show(active: ActiveReply, raw: string): void {
+		if (!raw || !active.stripper) return;
+		let out = active.stripper.push(raw);
+		if (!out) return;
+		// Separate the text of consecutive assistant messages (around tool calls).
+		if (active.text && !active.shown) out = `\n\n${out}`;
+		active.shown = true;
+		active.text += out;
+		this.emit({ type: "text_delta", id: active.id, delta: out });
+	}
+
+	private said(active: ActiveReply, blocks: string[]): void {
+		for (const text of blocks) {
+			// A mood tag belongs at the very end of the reply, but models slip it in anywhere.
+			const { text: clean, mood } = stripMood(text);
+			if (mood) active.mood = mood;
+			if (!clean) continue;
+			active.lastSaid = clean;
+			this.emit({ type: "say", id: active.id, text: clean });
+		}
 	}
 
 	private handle(event: AgentSessionEvent): void {
@@ -131,10 +172,22 @@ export class Replies {
 					const id = this.queue.shift();
 					if (this.active && this.active.id !== id) this.end(this.active, false);
 					this.active = id
-						? { id, text: "", mood: undefined, stripper: undefined, shown: false, error: undefined, tools: new Map() }
+						? {
+								id,
+								text: "",
+								mood: undefined,
+								stripper: undefined,
+								speak: this.spoken.has(id),
+								say: undefined,
+								lastSaid: undefined,
+								shown: false,
+								error: undefined,
+								tools: new Map(),
+							}
 						: undefined;
 				} else if (event.message.role === "assistant" && this.active) {
 					this.active.stripper = new MoodStripper();
+					this.active.say = this.active.speak ? new SayStripper() : undefined;
 					this.active.shown = false;
 				}
 				return;
@@ -146,19 +199,22 @@ export class Replies {
 				const active = this.active;
 				const delta = event.assistantMessageEvent;
 				if (!active?.stripper || delta.type !== "text_delta") return;
-				let out = active.stripper.push(delta.delta);
-				if (!out) return;
-				// Separate the text of consecutive assistant messages (around tool calls).
-				if (active.text && !active.shown) out = `\n\n${out}`;
-				active.shown = true;
-				active.text += out;
-				this.emit({ type: "text_delta", id: active.id, delta: out });
+				if (!active.say) return this.show(active, delta.delta);
+				const out = active.say.push(delta.delta);
+				this.said(active, out.said);
+				this.show(active, out.shown);
 				return;
 			}
 			case "message_end": {
 				const active = this.active;
 				const message = event.message;
 				if (!active || message.role !== "assistant") return;
+				if (active.say) {
+					const out = active.say.finish();
+					this.said(active, out.said);
+					this.show(active, out.shown);
+					active.say = undefined;
+				}
 				const mood = active.stripper?.finish().mood;
 				if (mood) active.mood = mood;
 				active.stripper = undefined;

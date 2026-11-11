@@ -13,6 +13,7 @@ pub mod models;
 pub mod stt;
 pub mod tts;
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -50,6 +51,8 @@ struct Pending {
 struct Speaking {
     id: u64,
     stop: Arc<AtomicBool>,
+    /// Texts appended while this one plays (`speak` with `append`), read in order.
+    queue: VecDeque<String>,
 }
 
 #[derive(Default)]
@@ -321,19 +324,31 @@ fn ensure_download(app: &AppHandle, model: &'static Model) {
 
 // ───────────────────────────── speech ─────────────────────────────
 
-/// `speak`: replaces anything playing with `text`, in the voice from settings.
-pub fn speak(app: &AppHandle, text: String) {
+/// `speak`: replaces anything playing with `text`, in the voice from settings. With `append`,
+/// `text` is read after whatever is playing or queued instead (the <say> blocks of one reply),
+/// or straight away if nothing is.
+pub fn speak(app: &AppHandle, text: String, append: bool) {
     let text = text.trim().to_string();
+    let voice = app.state::<Voice>();
+    if append {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(current) = lock(&voice.speaking).as_mut() {
+            current.queue.push_back(text);
+            return;
+        }
+    }
     if text.is_empty() {
         stop_speaking(app);
         return;
     }
-    let voice = app.state::<Voice>();
     let stop = Arc::new(AtomicBool::new(false));
     let id = voice.next_id.fetch_add(1, Ordering::Relaxed);
     if let Some(old) = lock(&voice.speaking).replace(Speaking {
         id,
         stop: Arc::clone(&stop),
+        queue: VecDeque::new(),
     }) {
         old.stop.store(true, Ordering::SeqCst);
     }
@@ -342,31 +357,55 @@ pub fn speak(app: &AppHandle, text: String) {
     let spawned = std::thread::Builder::new()
         .name("winku-speech".into())
         .spawn(move || {
-            let on_start = || {
-                if !stop.load(Ordering::SeqCst) {
-                    emit_ui(&app, json!({ "kind": "speech", "playing": true }));
+            let mut text = text;
+            let mut first = true;
+            loop {
+                let started = first;
+                first = false;
+                let on_start = || {
+                    if started && !stop.load(Ordering::SeqCst) {
+                        emit_ui(&app, json!({ "kind": "speech", "playing": true }));
+                    }
+                };
+                let next = || next_queued(&app, id);
+                let neural = models::find("supertonic").expect("supertonic is in the table");
+                let result = if settings.tts == "supertonic" && neural.installed(&models_dir(&app))
+                {
+                    speak_neural(
+                        &app,
+                        neural,
+                        settings.tts_voice(),
+                        &text,
+                        next,
+                        &stop,
+                        on_start,
+                    )
+                } else {
+                    if settings.tts == "supertonic" {
+                        // Not downloaded yet: fetch it for next time, and use the OS voice now.
+                        ensure_download(&app, neural);
+                    }
+                    speak_os(&text, settings.os_voice.as_deref(), next, &stop, on_start)
+                };
+                if let Err(e) = result {
+                    if !stop.load(Ordering::SeqCst) {
+                        voice_error(&app, &e);
+                    }
                 }
-            };
-            let neural = models::find("supertonic").expect("supertonic is in the table");
-            let result = if settings.tts == "supertonic" && neural.installed(&models_dir(&app)) {
-                speak_neural(&app, neural, settings.tts_voice(), &text, &stop, on_start)
-            } else {
-                if settings.tts == "supertonic" {
-                    // Not downloaded yet: fetch it for next time, and use the OS voice now.
-                    ensure_download(&app, neural);
+                // Something may have been appended while the last audio played out.
+                let voice = app.state::<Voice>();
+                let mut speaking = lock(&voice.speaking);
+                match speaking.as_mut() {
+                    Some(current) if current.id == id => match current.queue.pop_front() {
+                        Some(more) if !stop.load(Ordering::SeqCst) => text = more,
+                        _ => {
+                            *speaking = None;
+                            emit_ui(&app, json!({ "kind": "speech", "playing": false }));
+                            break;
+                        }
+                    },
+                    _ => break,
                 }
-                tts::os_speak(&text, settings.os_voice.as_deref(), &stop, on_start)
-            };
-            if let Err(e) = result {
-                if !stop.load(Ordering::SeqCst) {
-                    voice_error(&app, &e);
-                }
-            }
-            let voice = app.state::<Voice>();
-            let mut speaking = lock(&voice.speaking);
-            if speaking.as_ref().is_some_and(|s| s.id == id) {
-                *speaking = None;
-                emit_ui(&app, json!({ "kind": "speech", "playing": false }));
             }
         });
     if let Err(e) = spawned {
@@ -374,11 +413,23 @@ pub fn speak(app: &AppHandle, text: String) {
     }
 }
 
+/// The next appended text for speech `id`, if it is still the one playing.
+fn next_queued(app: &AppHandle, id: u64) -> Option<String> {
+    let voice = app.state::<Voice>();
+    let mut speaking = lock(&voice.speaking);
+    speaking
+        .as_mut()
+        .filter(|current| current.id == id)
+        .and_then(|current| current.queue.pop_front())
+}
+
+/// Reads `text`, then whatever `next` hands out, through one audio stream so there is no gap.
 fn speak_neural(
     app: &AppHandle,
     model: &'static Model,
     voice_id: u8,
     text: &str,
+    mut next: impl FnMut() -> Option<String>,
     stop: &Arc<AtomicBool>,
     on_start: impl FnOnce() + Send,
 ) -> Result<(), String> {
@@ -394,6 +445,10 @@ fn speak_neural(
             std::thread::scope(|s| {
                 let player = s.spawn(|| tts::play(&feed, stop, on_start));
                 tts::supertonic_speak(engine, text, voice_id, &feed, stop);
+                while !stop.load(Ordering::SeqCst) {
+                    let Some(more) = next() else { break };
+                    tts::supertonic_speak(engine, &more, voice_id, &feed, stop);
+                }
                 feed.finish();
                 player
                     .join()
@@ -404,6 +459,22 @@ fn speak_neural(
     drop(slot);
     ensure_janitor(app);
     result
+}
+
+/// The OS voice, one text at a time.
+fn speak_os(
+    text: &str,
+    os_voice: Option<&str>,
+    mut next: impl FnMut() -> Option<String>,
+    stop: &AtomicBool,
+    on_start: impl FnOnce(),
+) -> Result<(), String> {
+    tts::os_speak(text, os_voice, stop, on_start)?;
+    while !stop.load(Ordering::SeqCst) {
+        let Some(more) = next() else { break };
+        tts::os_speak(&more, os_voice, stop, || {})?;
+    }
+    Ok(())
 }
 
 /// `stop_speaking` (also Esc and a new hold).

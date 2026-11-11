@@ -214,10 +214,11 @@ pub fn open_data_path(app: AppHandle, store: State<'_, Store>, what: String) -> 
         .map_err(|e| e.to_string())
 }
 
-/// Speaks `text` (the UI strips markdown first), replacing anything already playing.
+/// Speaks `text` (plain sentences: a reply's <say> block, or its markdown stripped by the UI),
+/// replacing anything already playing, or after it with `append`.
 #[tauri::command]
-pub fn speak(app: AppHandle, text: String) {
-    crate::voice::speak(&app, text);
+pub fn speak(app: AppHandle, text: String, append: Option<bool>) {
+    crate::voice::speak(&app, text, append.unwrap_or(false));
 }
 
 #[tauri::command]

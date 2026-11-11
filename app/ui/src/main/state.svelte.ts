@@ -133,8 +133,8 @@ export class MainState {
 	readonly #replaceActions = new Set<string>();
 	readonly #replaceResults = new Map<string, string>();
 	#toastTimer: ReturnType<typeof setTimeout> | undefined;
-	/** Prompt ids the user spoke, for mirror mode. */
-	readonly #spokenPrompts = new Set<string>();
+	/** Prompts whose reply is read aloud, and whether a <say> block of it has played yet. */
+	readonly #spokenReplies = new Map<string, { said: boolean }>();
 	#bubbleTimer: ReturnType<typeof setTimeout> | undefined;
 	#bubbleHeld = false;
 
@@ -241,7 +241,8 @@ export class MainState {
 		const trimmed = text.trim();
 		if (!trimmed && !this.imageChip) return;
 		const id = newId("p");
-		if (spoken) this.#spokenPrompts.add(id);
+		const speak = shouldSpeak(this.settings?.voice.reply ?? "mirror", spoken) ? (this.settings?.voice.say ?? "enough") : undefined;
+		if (speak) this.#spokenReplies.set(id, { said: false });
 		this.#lastUserText = trimmed;
 		this.eyes.touch();
 		const now = await shell.nowLine().catch(() => undefined);
@@ -256,7 +257,7 @@ export class MainState {
 		if (this.mode === "transcript") {
 			this.transcript = [...this.transcript, { kind: "user", id: `local-${id}`, text: prompt, images: images?.length ?? 0, ...(spoken ? { spoken } : {}), at: Date.now() }];
 		}
-		await shell.send({ type: "prompt", id, text: prompt, now, images, spoken });
+		await shell.send({ type: "prompt", id, text: prompt, now, images, spoken, ...(speak ? { speak } : {}) });
 	}
 
 	async loadTranscript() {
@@ -465,11 +466,19 @@ export class MainState {
 		}
 	}
 
-	/** Mirror mode and friends (SPEC §11): read a finished reply aloud. */
+	/** A <say> block of a spoken reply: the first replaces anything playing, the rest queue. */
+	#say(id: string, text: string) {
+		const reply = this.#spokenReplies.get(id);
+		if (!reply) return;
+		void shell.speak(text, reply.said).catch(() => {});
+		reply.said = true;
+	}
+
+	/** A spoken reply ended without a <say> block (SPEC §11): read its markdown, stripped. */
 	#speakReply(id: string, text: string, failed: boolean) {
-		const spoken = this.#spokenPrompts.delete(id);
-		const mode = this.settings?.voice.reply ?? "mirror";
-		if (failed || !shouldSpeak(mode, spoken)) return;
+		const reply = this.#spokenReplies.get(id);
+		this.#spokenReplies.delete(id);
+		if (failed || !reply || reply.said) return;
 		const words = speakable(text);
 		if (words) void shell.speak(words).catch(() => {});
 	}
@@ -502,6 +511,9 @@ export class MainState {
 			case "text_delta":
 				if (reply?.id === message.id) reply.text += message.delta;
 				this.eyes.setActivity("speaking");
+				break;
+			case "say":
+				this.#say(message.id, message.text);
 				break;
 			case "tool_start":
 				// A memory save shows as its own "Saved to memory" row instead.

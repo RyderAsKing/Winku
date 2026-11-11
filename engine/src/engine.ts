@@ -10,6 +10,7 @@ import {
 	type ResourceLoader,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { type ActionSetup, Actions, type OneOffAction } from "./action.ts";
 import { FAUX_PROVIDER, type FauxOptions } from "./faux.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel } from "./protocol.ts";
@@ -47,8 +48,10 @@ export class Engine {
 	private systemPrompt = "";
 	private quick: ModelChoice | undefined;
 	readonly replies: Replies;
+	readonly actions: Actions;
 
 	constructor(private readonly emit: (event: Event) => void) {
+		this.actions = new Actions(emit);
 		this.replies = new Replies(
 			emit,
 			() => this.emitContext(),
@@ -224,6 +227,29 @@ export class Engine {
 	/** Quick model for one-off actions (step 4). Absent in configure = follow main, thinking off. */
 	quickChoice(): ModelChoice {
 		return this.quick ?? { id: this.model.id, thinking: "off" };
+	}
+
+	/** Start a replace/show action on the Quick model. Runs apart from the thread's reply. */
+	runOneOff(command: OneOffAction): void {
+		if (!this.session) throw new Error("Engine is not configured");
+		const quick = this.quickChoice();
+		const model = resolveModel(this.runtime, this.config.provider, quick.id);
+		const thread = this.thread;
+		const setup: ActionSetup = {
+			runtime: this.runtime,
+			model,
+			thinking: clampThinking(model, quick.thinking),
+			assistantStyle: this.config.assistantStyle ?? "",
+			transcript: () => thread.transcript(),
+			record: (line) => thread.recordAction(line),
+		};
+		void this.actions.start(command, setup);
+	}
+
+	/** Stop whatever is running: the reply and any one-off actions. */
+	async abort(): Promise<void> {
+		this.actions.abort();
+		await this.replies.abort();
 	}
 
 	get threadState(): Thread {

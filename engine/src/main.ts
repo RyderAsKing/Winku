@@ -20,7 +20,6 @@ function replyError(id: string | undefined, error: unknown): void {
 }
 
 const LATER: Partial<Record<Command["type"], number>> = {
-	run_action: 4,
 	memory_undo: 5,
 	memory_forget_all: 5,
 	voice_proposal_decision: 5,
@@ -38,8 +37,18 @@ async function handle(message: Command): Promise<unknown> {
 			if (!engine.configured) throw new Error("Engine is not configured");
 			return { queued: engine.replies.prompt(message) };
 		}
+		case "run_action": {
+			if (!engine.configured) throw new Error("Engine is not configured");
+			const { action } = message;
+			if (action.output === "agent") {
+				const text = `${action.prompt}\n\nSelected text:\n"""\n${message.selection}\n"""`;
+				return { queued: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
+			}
+			engine.runOneOff({ ...message, action: { ...action, output: action.output } });
+			return { queued: false };
+		}
 		case "abort":
-			await engine.replies.abort();
+			await engine.abort();
 			return undefined;
 		case "set_thinking":
 			return { level: engine.setThinking(message.role, message.level) };
@@ -100,9 +109,11 @@ async function main(): Promise<void> {
 			try {
 				reply(command.id, await handle(command));
 			} catch (error) {
-				if (command.type === "prompt") {
+				if (command.type === "prompt" || command.type === "run_action") {
 					const e = errorOf(error);
 					send({ type: "error", id: command.id, errorKind: e.message === "Engine is not configured" ? "config" : e.kind, message: e.message });
+					if (command.type === "run_action" && command.action.output !== "agent")
+						send({ type: "action_end", id: command.id, text: "", output: command.action.output, aborted: true });
 				}
 				replyError(command.id, error);
 			}

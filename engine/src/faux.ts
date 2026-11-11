@@ -26,6 +26,8 @@ export interface FauxStep {
 	echoSystemPrompt?: boolean;
 	/** Reply with the full text of the last user message, including the <now> tag and image count. */
 	echoUser?: boolean;
+	/** Reply with "<model id> reasoning=<level>" of the request (which model and thinking level was used). */
+	echoModel?: boolean;
 }
 
 /** Test-only extension of the configure command. Not part of protocol.ts. */
@@ -61,12 +63,13 @@ export function createFauxProvider(modelIds: string[], options: FauxOptions = {}
 	});
 	const script = [...(options.replies ?? [])];
 	faux.setResponses(
-		Array.from({ length: 1000 }, () => (context): AssistantMessage => {
+		Array.from({ length: 1000 }, () => (context, options, _state, model): AssistantMessage => {
 			const step = script.shift();
 			const lastUser = [...context.messages].reverse().find((m) => m.role === "user");
 			if (!step) return fauxAssistantMessage(`Hello from winku-engine. You said: ${userText(lastUser).text}`);
 			if (step.error) return fauxAssistantMessage("", { stopReason: "error", errorMessage: step.error });
 			if (step.echoSystemPrompt) return fauxAssistantMessage(getCurrentSystemPrompt(context.messages));
+			if (step.echoModel) return fauxAssistantMessage(`${model.id} reasoning=${options?.reasoning ?? "off"}`);
 			if (step.echoUser) {
 				const { text, images } = userText(lastUser);
 				return fauxAssistantMessage(`${text}\n[images:${images}]`);

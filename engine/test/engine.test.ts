@@ -452,10 +452,6 @@ test("custom OpenAI-compatible endpoint: list_models, test_connection, configure
 test("later-step commands, stats and results for every id", async () => {
 	const engine = start();
 	await engine.configure();
-	expect(await engine.call({ type: "run_action", action: { name: "x", prompt: "y", output: "show", useThreadContext: false, useVoice: false }, selection: "s" })).toMatchObject({
-		ok: false,
-		error: "Not available until step 4",
-	});
 	expect(await engine.call({ type: "memory_undo", saveId: "s" })).toMatchObject({ ok: false, error: "Not available until step 5" });
 	expect(await engine.call({ type: "memory_forget_all" })).toMatchObject({ ok: false, error: "Not available until step 5" });
 	expect(await engine.call({ type: "voice_proposal_decision", proposalId: "p", accept: true })).toMatchObject({
@@ -470,4 +466,191 @@ test("later-step commands, stats and results for every id", async () => {
 	expect(new Set(results.map((r) => (r.type === "result" ? r.id : ""))).size).toBe(results.length);
 	const { exitCode } = await engine.shutdown();
 	expect(exitCode).toBe(0);
+}, T);
+
+// ───────────────────────────── actions (step 4) ─────────────────────────────
+
+const spec = (over: Record<string, unknown> = {}) => ({
+	name: "Fix typos",
+	prompt: "Fix the typos",
+	output: "replace",
+	useThreadContext: false,
+	useVoice: false,
+	...over,
+});
+
+type ActionEnd = Extract<OutboundMessage, { type: "action_end" }>;
+
+/** Like engine.call, but with an id the test picks (run_action ids belong to the shell). */
+async function callAs(engine: EngineProcess, id: string, message: Record<string, unknown>) {
+	const from = engine.records.length;
+	engine.send({ ...message, id });
+	return engine.waitFor<Extract<OutboundMessage, { type: "result" }>>((r) => r.type === "result" && r.id === id, from);
+}
+
+async function action(engine: EngineProcess, id: string, extra: Record<string, unknown> = {}) {
+	const from = engine.records.length;
+	const result = await callAs(engine, id, { type: "run_action", action: spec(), selection: "teh cat", ...extra });
+	const end = await engine.waitFor<ActionEnd>((r) => r.type === "action_end" && r.id === id, from);
+	const mine = engine.records.slice(from).filter((r) => "id" in r && r.id === id);
+	return { result, end, records: mine };
+}
+
+test("replace streams action_delta then action_end and stays out of the thread", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "hi" }, { text: "the cat" }] } });
+	await engine.prompt("hello");
+	const before = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	const { result, end, records } = await action(engine, "action-1");
+	expect(result).toMatchObject({ ok: true, data: { queued: false } });
+	expect(end).toMatchObject({ text: "the cat", output: "replace", aborted: false });
+	expect(records.filter((r) => r.type === "action_delta").map((r) => (r as { delta: string }).delta).join("")).toBe("the cat");
+	expect(records.some((r) => r.type === "reply_end" || r.type === "text_delta")).toBe(false);
+	expect(await engine.callOk<TranscriptItem[]>({ type: "transcript" })).toEqual(before);
+	await engine.shutdown();
+}, T);
+
+test("show returns output show and is not added to the thread", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "**Cat**: an animal." }] } });
+	const { end } = await action(engine, "action-2", { action: spec({ output: "show", name: "Explain" }) });
+	expect(end).toMatchObject({ text: "**Cat**: an animal.", output: "show", aborted: false });
+	expect(await engine.callOk<TranscriptItem[]>({ type: "transcript" })).toEqual([]);
+	await engine.shutdown();
+}, T);
+
+test("finished actions are logged and show up in history", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "the cat" }] } });
+	await action(engine, "action-3");
+	const lines = readFileSync(join(engine.dataDir, "engine", "actions.jsonl"), "utf8").trim().split("\n");
+	expect(lines).toHaveLength(1);
+	expect(JSON.parse(lines[0] as string)).toMatchObject({ id: "action-3", name: "Fix typos", selection: "teh cat", text: "the cat", output: "replace" });
+	const list = await engine.callOk<HistoryEntry[]>({ type: "history_list" });
+	expect(list.find((e) => e.id === "action-3")).toMatchObject({ kind: "action", title: "Fix typos: teh cat" });
+	expect(await engine.callOk({ type: "history_read", entryId: "action-3" })).toMatchObject([
+		{ kind: "user", text: "Fix typos: teh cat" },
+		{ kind: "assistant", text: "the cat" },
+	]);
+	await engine.shutdown();
+}, T);
+
+test("useThreadContext sends recent thread text; without it nothing is sent", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "ok" }, { echoUser: true }, { echoUser: true }] } });
+	await engine.prompt("my dog is called Rex");
+	const withContext = await action(engine, "action-4", { action: spec({ useThreadContext: true }) });
+	expect(withContext.end.text).toContain("my dog is called Rex");
+	expect(withContext.end.text).toContain("Fix the typos");
+	expect(withContext.end.text).toContain("teh cat");
+	const without = await action(engine, "action-5");
+	expect(without.end.text).not.toContain("Rex");
+	expect(without.end.text).toContain("teh cat");
+	await engine.shutdown();
+}, T);
+
+test("useVoice adds the voice profile to the instructions", async () => {
+	const engine = start();
+	await engine.configure({ assistantStyle: "Dry wit.", faux: { replies: [{ echoSystemPrompt: true }, { echoSystemPrompt: true }, { echoSystemPrompt: true }] } });
+	const voiced = await action(engine, "action-6", { action: spec({ useVoice: true }), voiceProfile: "Short, lowercase, no emoji." });
+	expect(voiced.end.text).toContain("Short, lowercase, no emoji.");
+	expect(voiced.end.text).toContain("Dry wit.");
+	expect(voiced.end.text).toContain("no preamble");
+	const off = await action(engine, "action-7", { voiceProfile: "Short, lowercase, no emoji." });
+	expect(off.end.text).not.toContain("lowercase");
+	const noProfile = await action(engine, "action-8", { action: spec({ useVoice: true }) });
+	expect(noProfile.end.text).not.toContain("voice_profile");
+	await engine.shutdown();
+}, T);
+
+test("actions use the Quick model and its thinking level, else Main", async () => {
+	const engine = start();
+	await engine.configure({
+		quick: { id: "faux-2", thinking: "low" },
+		faux: { replies: [{ echoModel: true }, { echoModel: true }] },
+	});
+	expect((await action(engine, "action-9")).end.text).toBe("faux-2 reasoning=low");
+	await engine.shutdown();
+
+	const plain = start();
+	await plain.configure({ faux: { replies: [{ echoModel: true }] } });
+	expect((await action(plain, "action-10")).end.text).toBe("faux-1 reasoning=off");
+	await plain.shutdown();
+}, T);
+
+test("the mood tag is stripped from action output", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "the cat <mood:happy>" }] } });
+	const { end, records } = await action(engine, "action-11");
+	expect(end.text).toBe("the cat");
+	expect(JSON.stringify(records)).not.toContain("mood");
+	await engine.shutdown();
+}, T);
+
+test("a failing action sends error then action_end aborted, and is not logged", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ error: "401 Unauthorized: invalid x-api-key" }] } });
+	const { end, records } = await action(engine, "action-12");
+	expect(end).toMatchObject({ text: "", aborted: true, output: "replace" });
+	const types = records.map((r) => r.type);
+	expect(types.indexOf("error")).toBeGreaterThanOrEqual(0);
+	expect(types.indexOf("error")).toBeLessThan(types.indexOf("action_end"));
+	expect(records.find((r) => r.type === "error")).toMatchObject({ errorKind: "auth" });
+	expect(existsSync(join(engine.dataDir, "engine", "actions.jsonl"))).toBe(false);
+	await engine.shutdown();
+}, T);
+
+test("abort stops a running action", async () => {
+	const engine = start();
+	await engine.configure({ faux: { tokensPerSecond: 20, replies: [{ text: "word ".repeat(200) }] } });
+	const from = engine.records.length;
+	engine.send({ type: "run_action", id: "action-13", action: spec(), selection: "x" });
+	await engine.waitFor((r) => r.type === "action_delta" && r.id === "action-13", from);
+	expect(await engine.call({ type: "abort" })).toMatchObject({ ok: true });
+	expect(await engine.waitFor((r) => r.type === "action_end" && r.id === "action-13", from)).toMatchObject({ aborted: true, text: "" });
+	expect(existsSync(join(engine.dataDir, "engine", "actions.jsonl"))).toBe(false);
+	await engine.shutdown();
+}, T);
+
+test("an action can run while a reply streams; two actions can run at once", async () => {
+	const engine = start();
+	await engine.configure({ faux: { tokensPerSecond: 200, replies: [{ text: "long reply ".repeat(10) }, { text: "A" }, { text: "B" }] } });
+	const from = engine.records.length;
+	engine.send({ type: "prompt", id: "p-main", text: "talk" });
+	await engine.waitFor((r) => r.type === "text_delta" && r.id === "p-main", from);
+	engine.send({ type: "run_action", id: "action-14", action: spec(), selection: "x" });
+	engine.send({ type: "run_action", id: "action-15", action: spec(), selection: "y" });
+	const ends = await Promise.all(
+		["action-14", "action-15"].map((id) => engine.waitFor<ActionEnd>((r) => r.type === "action_end" && r.id === id, from)),
+	);
+	expect(ends.every((e) => !e.aborted && e.text.length > 0)).toBe(true);
+	expect((await engine.waitFor((r) => r.type === "reply_end" && r.id === "p-main", from)) as { aborted: boolean }).toMatchObject({ aborted: false });
+	await engine.shutdown();
+}, T);
+
+test("an agent action is a normal prompt in the thread with the selection", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ text: "done" }] } });
+	const from = engine.records.length;
+	const result = await callAs(engine, "action-16", { type: "run_action", action: spec({ output: "agent", prompt: "Summarise this" }), selection: "long text" });
+	expect(result).toMatchObject({ ok: true, data: { queued: false } });
+	const end = await engine.waitFor((r) => r.type === "reply_end" && r.id === "action-16", from);
+	expect(end).toMatchObject({ text: "done", aborted: false });
+	const records = engine.records.slice(from).filter((r) => "id" in r && r.id === "action-16").map((r) => r.type);
+	expect(records).toContain("thinking");
+	expect(records).toContain("text_delta");
+	expect(records).not.toContain("action_end");
+	const transcript = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	expect(transcript[0]).toMatchObject({ kind: "user", text: 'Summarise this\n\nSelected text:\n"""\nlong text\n"""' });
+	expect(transcript[1]).toMatchObject({ kind: "assistant", text: "done" });
+	expect(existsSync(join(engine.dataDir, "engine", "actions.jsonl"))).toBe(false);
+	await engine.shutdown();
+}, T);
+
+test("run_action before configure fails with a config error and an aborted action_end", async () => {
+	const engine = start();
+	const result = await callAs(engine, "action-17", { type: "run_action", action: spec(), selection: "x" });
+	expect(result).toMatchObject({ ok: false, errorKind: "config" });
+	expect(engine.records.find((r) => r.type === "action_end")).toMatchObject({ id: "action-17", aborted: true });
+	await engine.shutdown();
 }, T);

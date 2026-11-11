@@ -55,7 +55,9 @@
 	let update: UpdateStatus = $state({ state: "idle" });
 	let version = $state("");
 	const stt = $derived(voiceModels.find((m) => m.id === settings?.voice.stt));
-	const kokoro = $derived(voiceModels.find((m) => m.id === "kokoro"));
+	const neural = $derived(voiceModels.find((m) => m.id === "supertonic"));
+	/** Supertonic voice numbers: 0–4 male, 5–9 female. */
+	const neuralVoices = [5, 6, 7, 8, 9, 0, 1, 2, 3, 4].map((n) => ({ n, name: `${n >= 5 ? "Female" : "Male"} ${(n % 5) + 1}` }));
 	let searchKeyDraft = $state("");
 	let newApp = $state("");
 	let confirmForget = $state(false);
@@ -263,13 +265,13 @@
 		await loadVoice();
 	}
 
-	/** One select for the reading voice: "os:" (system default), "os:<id>" or "kokoro". */
+	/** One select for the reading voice: "neural:<0-9>", "os:" (system default) or "os:<id>". */
 	function readingVoice(v: Settings["voice"]): string {
-		return v.tts === "kokoro" ? "kokoro" : `os:${v.osVoice ?? ""}`;
+		return v.tts === "supertonic" ? `neural:${v.ttsVoice ?? 5}` : `os:${v.osVoice ?? ""}`;
 	}
 
 	function setReadingVoice(value: string) {
-		if (value === "kokoro") saveVoice({ tts: "kokoro" });
+		if (value.startsWith("neural:")) saveVoice({ tts: "supertonic", ttsVoice: Number(value.slice(7)) });
 		else saveVoice({ tts: "os", osVoice: value.slice(3) || null });
 	}
 
@@ -590,26 +592,32 @@
 				<div class="stack">
 					<div class="inline">
 						<select aria-label="Reading voice" value={readingVoice(settings.voice)} onchange={(e) => setReadingVoice(e.currentTarget.value)}>
-							<option value="os:">System voice</option>
-							{#each osVoices as voice (voice.id)}
-								<option value="os:{voice.id}">{voice.name} ({voice.language})</option>
-							{/each}
-							{#if kokoro}
-								<option value="kokoro">Kokoro, more natural ({kokoro.sizeMb} MB download)</option>
+							{#if neural}
+								<optgroup label="Natural, offline ({neural.sizeMb} MB download)">
+									{#each neuralVoices as voice (voice.n)}
+										<option value="neural:{voice.n}">{voice.name}</option>
+									{/each}
+								</optgroup>
 							{/if}
+							<optgroup label="System voices">
+								<option value="os:">System default</option>
+								{#each osVoices as voice (voice.id)}
+									<option value="os:{voice.id}">{voice.name} ({voice.language})</option>
+								{/each}
+							</optgroup>
 						</select>
 						<button type="button" class="quiet" onclick={() => shell.speak("Hi, I'm Winku. This is how I sound.").catch((e) => (voiceError = String(e)))}>Test</button>
 					</div>
-					{#if settings.voice.tts === "kokoro" && kokoro}
+					{#if settings.voice.tts === "supertonic" && neural}
 						<div class="inline">
-							{#if downloads.kokoro !== undefined || kokoro.downloading}
-								<p class="hint grow">Downloading Kokoro, {Math.round((downloads.kokoro ?? 0) * 100)}%</p>
-							{:else if kokoro.installed}
-								<p class="hint grow">Kokoro is downloaded, {kokoro.sizeMb} MB.</p>
-								<button type="button" class="quiet" onclick={() => removeModel("kokoro")}>Remove</button>
+							{#if downloads.supertonic !== undefined || neural.downloading}
+								<p class="hint grow">Downloading the natural voice, {Math.round((downloads.supertonic ?? 0) * 100)}%. The system voice reads until it finishes.</p>
+							{:else if neural.installed}
+								<p class="hint grow">Downloaded, {neural.sizeMb} MB. Loads when it speaks and frees its memory after 3 idle minutes.</p>
+								<button type="button" class="quiet" onclick={() => removeModel("supertonic")}>Remove</button>
 							{:else}
-								<p class="hint grow">Kokoro downloads the first time it reads a reply, or now.</p>
-								<button type="button" class="quiet" onclick={() => downloadModel("kokoro")}>Download</button>
+								<p class="hint grow">Downloads the first time it reads a reply, or now. The system voice reads until then.</p>
+								<button type="button" class="quiet" onclick={() => downloadModel("supertonic")}>Download</button>
 							{/if}
 						</div>
 					{/if}

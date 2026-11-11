@@ -34,7 +34,9 @@ export interface Settings {
 	eyes: { hidden: boolean; size: EyeSize; positions: Record<string, { x: number; y: number }> };
 	voice: {
 		stt: "moonshine-base" | "whisper-base-en" | "parakeet";
-		tts: "os" | "kokoro";
+		tts: "os" | "supertonic";
+		/** Natural voice, 0–4 male and 5–9 female; null in files from before it existed. */
+		ttsVoice: number | null;
 		osVoice: string | null;
 		reply: ReplyMode;
 		listeningPaused: boolean;

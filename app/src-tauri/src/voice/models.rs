@@ -35,7 +35,8 @@ pub struct Asset {
 pub enum Unpack {
     /// A .tar.bz2: keep only these file names (wherever they sit in the archive).
     TarBz2(&'static [&'static str]),
-    /// A plain file, saved under this name.
+    /// A plain file, saved under this name (for a model that ships a loose file; none does now).
+    #[allow(dead_code)]
     File(&'static str),
 }
 
@@ -58,11 +59,16 @@ pub enum Recipe {
         joiner: &'static str,
         tokens: &'static str,
     },
-    Kokoro {
-        model: &'static str,
-        voices: &'static str,
-        tokens: &'static str,
-        lexicon: &'static str,
+    /// Supertonic: no phonemiser or lexicon, it reads characters (and says numbers, dates,
+    /// currency and abbreviations itself).
+    Supertonic {
+        duration_predictor: &'static str,
+        text_encoder: &'static str,
+        vector_estimator: &'static str,
+        vocoder: &'static str,
+        tts_json: &'static str,
+        unicode_indexer: &'static str,
+        voice_style: &'static str,
     },
 }
 
@@ -152,28 +158,32 @@ pub static MODELS: &[Model] = &[
         },
     },
     Model {
-        id: "kokoro",
+        id: "supertonic",
         kind: Kind::Tts,
-        name: "Kokoro (English)",
-        assets: &[
-            Asset {
-                url: release!("tts-models/kokoro-int8-en-v0_19.tar.bz2"),
-                sha256: "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd",
-                size: 103_248_205,
-                unpack: Unpack::TarBz2(&["model.int8.onnx", "voices.bin", "tokens.txt", "LICENSE"]),
-            },
-            Asset {
-                url: release!("tts-models/lexicon-en-us.txt"),
-                sha256: "8b67ae549a465eee78f92ecb74644ad90c3c58ce65f19c68baf85878a10ef73a",
-                size: 6_305_773,
-                unpack: Unpack::File("lexicon-en-us.txt"),
-            },
-        ],
-        recipe: Recipe::Kokoro {
-            model: "model.int8.onnx",
-            voices: "voices.bin",
-            tokens: "tokens.txt",
-            lexicon: "lexicon-en-us.txt",
+        name: "Supertonic (English)",
+        assets: &[Asset {
+            url: release!("tts-models/sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2"),
+            sha256: "8c74359f63edd5045d47747f65331f0f6dbcbc91d7e898dd756d631295fe3259",
+            size: 84_692_981,
+            unpack: Unpack::TarBz2(&[
+                "duration_predictor.int8.onnx",
+                "text_encoder.int8.onnx",
+                "vector_estimator.int8.onnx",
+                "vocoder.int8.onnx",
+                "tts.json",
+                "unicode_indexer.bin",
+                "voice.bin",
+                "LICENSE",
+            ]),
+        }],
+        recipe: Recipe::Supertonic {
+            duration_predictor: "duration_predictor.int8.onnx",
+            text_encoder: "text_encoder.int8.onnx",
+            vector_estimator: "vector_estimator.int8.onnx",
+            vocoder: "vocoder.int8.onnx",
+            tts_json: "tts.json",
+            unicode_indexer: "unicode_indexer.bin",
+            voice_style: "voice.bin",
         },
     },
 ];
@@ -230,7 +240,12 @@ mod tests {
         let ids: Vec<_> = MODELS.iter().map(|m| m.id).collect();
         assert_eq!(
             ids,
-            ["moonshine-base", "whisper-base-en", "parakeet", "kokoro"]
+            [
+                "moonshine-base",
+                "whisper-base-en",
+                "parakeet",
+                "supertonic"
+            ]
         );
         for model in MODELS {
             assert!(!model.assets.is_empty());
@@ -264,18 +279,29 @@ mod tests {
                     joiner,
                     tokens,
                 } => vec![encoder, decoder, joiner, tokens],
-                Recipe::Kokoro {
-                    model,
-                    voices,
-                    tokens,
-                    lexicon,
-                } => vec![model, voices, tokens, lexicon],
+                Recipe::Supertonic {
+                    duration_predictor,
+                    text_encoder,
+                    vector_estimator,
+                    vocoder,
+                    tts_json,
+                    unicode_indexer,
+                    voice_style,
+                } => vec![
+                    duration_predictor,
+                    text_encoder,
+                    vector_estimator,
+                    vocoder,
+                    tts_json,
+                    unicode_indexer,
+                    voice_style,
+                ],
             };
             for file in used {
                 assert!(files.contains(&file), "{} needs {file}", model.id);
             }
             assert_eq!(
-                matches!(model.recipe, Recipe::Kokoro { .. }),
+                matches!(model.recipe, Recipe::Supertonic { .. }),
                 model.kind == Kind::Tts
             );
         }
@@ -285,20 +311,10 @@ mod tests {
     fn lookups_and_sizes() {
         assert!(is_stt("moonshine-base"));
         assert!(is_stt("parakeet"));
-        assert!(!is_stt("kokoro"));
+        assert!(!is_stt("supertonic"));
         assert!(!is_stt("nope"));
         assert_eq!(find("moonshine-base").unwrap().size_mb(), 111);
-        assert_eq!(find("kokoro").unwrap().size_mb(), 110);
-        assert_eq!(
-            find("kokoro").unwrap().files(),
-            [
-                "model.int8.onnx",
-                "voices.bin",
-                "tokens.txt",
-                "LICENSE",
-                "lexicon-en-us.txt"
-            ]
-        );
+        assert_eq!(find("supertonic").unwrap().size_mb(), 85);
         // The settings default must be a real STT model.
         assert!(is_stt(&crate::settings::Settings::default().voice.stt));
     }

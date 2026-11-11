@@ -1,5 +1,5 @@
 //! Speech-to-text with the sherpa-onnx offline recogniser, plus the load-on-first-use,
-//! unload-when-idle slot that STT and Kokoro share.
+//! unload-when-idle slot that STT and the reading voice share.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -134,7 +134,9 @@ pub fn load(model: &Model, dir: &Path) -> Result<OfflineRecognizer, String> {
             };
             mc.tokens = path(dir, tokens);
         }
-        Recipe::Kokoro { .. } => return Err(format!("{} is not a speech-to-text model", model.id)),
+        Recipe::Supertonic { .. } => {
+            return Err(format!("{} is not a speech-to-text model", model.id))
+        }
     }
     mc.num_threads = threads();
     mc.provider = Some("cpu".into());

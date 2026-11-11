@@ -342,6 +342,13 @@ export function createMockShell(): ShellImpl {
 						: [];
 					return { altGr, keys: altGr ? ["Q", "E", "2", "3"] : [], conflicts, suggestion: "Ctrl+Shift" } as T;
 				}
+				case "update_status":
+					return (params.has("update") ? { state: "ready", version: "0.2.0" } : { state: "idle" }) as T;
+				case "update_check":
+					await new Promise((r) => setTimeout(r, 600));
+					return { state: "idle" } as T;
+				case "update_restart":
+					return undefined as T;
 				case "voice_models":
 					return models.map((m) => ({ ...m, downloading: downloading.has(m.id) })) as T;
 				case "voice_os_voices":

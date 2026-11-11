@@ -1,0 +1,60 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the Windows installer, signs the updater artifacts and
+# publishes a GitHub Release with latest.json, which installed copies check for updates.
+# The tag must match the version in app/src-tauri/tauri.conf.json.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the app version
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} doesn't match tauri.conf.json version $version"
+          }
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          save-if: false
+
+      - name: Install and stage the engine sidecar
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          bun run engine
+
+      - name: Build the installer and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: bunx tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: Winku ${{ github.ref_name }}
+          releaseBody: |
+            Windows installer below (`Winku_*_x64-setup.exe`). It isn't code-signed yet, so Windows SmartScreen may warn: choose **More info**, then **Run anyway**. Installed copies update themselves from here.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

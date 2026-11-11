@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+# A new push to a pull request cancels the run that is still going for the old one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   linux:
     runs-on: ubuntu-24.04
@@ -24,6 +29,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          # Pull requests reuse main's cache without spending minutes uploading their own.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Tauri system dependencies
         run: |
@@ -59,7 +66,9 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
-  windows:
+  # Windows is split in two jobs that run side by side: the release build with the smoke test
+  # and measurements, and the tests (which need their own debug build).
+  windows-build:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -74,6 +83,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build app (release, no installer)
+        working-directory: app
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile
+          bun run engine
+          Get-Item ../engine/dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
+          bunx tauri build --no-bundle
+          Get-Item src-tauri/target/release/winku.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: Smoke test, idle memory and idle CPU
+        working-directory: app
+        shell: pwsh
+        run: ./scripts/measure-memory.ps1
+
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Engine tests (source)
         working-directory: engine
@@ -87,24 +129,14 @@ jobs:
         shell: pwsh
         run: |
           bun run build
-          Get-Item dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
           $env:WINKU_ENGINE_BIN = (Resolve-Path dist/winku-engine.exe).Path
           bun test
 
-      - name: Build app (release, no installer)
-        working-directory: app
-        shell: pwsh
-        run: |
-          bun install --frozen-lockfile
-          bun run engine
-          bunx tauri build --no-bundle
-          Get-Item src-tauri/target/release/winku.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
-
       - name: Shell tests
         working-directory: app/src-tauri
-        run: cargo test
-
-      - name: Smoke test, idle memory and idle CPU
-        working-directory: app
         shell: pwsh
-        run: ./scripts/measure-memory.ps1
+        run: |
+          # The sidecar only has to exist for tauri-build; the tests don't run it.
+          New-Item -ItemType Directory -Force binaries | Out-Null
+          New-Item -ItemType File -Force binaries/winku-engine-x86_64-pc-windows-msvc.exe | Out-Null
+          cargo test

@@ -21,6 +21,8 @@
 		type AltGrReport,
 		type HotkeysStatus,
 		onDownloadProgress,
+		onUpdateStatus,
+		type UpdateStatus,
 		onHotkeysStatus,
 		onSettingsChanged,
 		type OsVoice,
@@ -50,6 +52,8 @@
 	/** Download progress by model id, 0…1. */
 	let downloads: Record<string, number> = $state({});
 	let voiceError = $state("");
+	let update: UpdateStatus = $state({ state: "idle" });
+	let version = $state("");
 	const stt = $derived(voiceModels.find((m) => m.id === settings?.voice.stt));
 	const kokoro = $derived(voiceModels.find((m) => m.id === "kokoro"));
 	let searchKeyDraft = $state("");
@@ -110,6 +114,9 @@
 		void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		const unlistenHotkeys = onHotkeysStatus((s) => (hotkeys = s));
 		void loadVoice();
+		void shell.updateStatus().then((s) => (update = s)).catch(() => {});
+		void shell.appVersion().then((v) => (version = v)).catch(() => {});
+		const unlistenUpdates = onUpdateStatus((s) => (update = s));
 		const unlistenDownloads = onDownloadProgress((p) => {
 			if (p.fraction >= 1 || p.fraction < 0) {
 				delete downloads[p.model];
@@ -121,6 +128,7 @@
 			void unlisten.then((u) => u());
 			void unlistenHotkeys.then((u) => u());
 			void unlistenDownloads.then((u) => u());
+			void unlistenUpdates.then((u) => u());
 		};
 	});
 
@@ -263,6 +271,28 @@
 	function setReadingVoice(value: string) {
 		if (value === "kokoro") saveVoice({ tts: "kokoro" });
 		else saveVoice({ tts: "os", osVoice: value.slice(3) || null });
+	}
+
+	async function checkUpdates() {
+		update = { state: "checking" };
+		update = await shell.updateCheck().catch((e) => ({ state: "error" as const, error: String(e) }));
+	}
+
+	function updateLine(u: UpdateStatus): string {
+		switch (u.state) {
+			case "checking":
+				return "Checking…";
+			case "available":
+				return `Winku ${u.version} is available.`;
+			case "downloading":
+				return `Downloading Winku ${u.version}…`;
+			case "ready":
+				return `Winku ${u.version} installs when you quit or restart.`;
+			case "error":
+				return `Couldn't check for updates${u.error ? `: ${u.error}` : "."}`;
+			default:
+				return version ? `Winku ${version}.` : "";
+		}
 	}
 
 	async function removeSearchKey() {
@@ -759,6 +789,35 @@
 					Hide the eyes. A tray icon appears while they're hidden.
 				</span>
 			</label>
+		</section>
+
+		<section>
+			<h2>App</h2>
+			<label class="field check">
+				<span>Startup</span>
+				<span class="inline">
+					<input type="checkbox" checked={settings.launchAtLogin} onchange={(e) => save({ launchAtLogin: e.currentTarget.checked })} />
+					Start Winku when I sign in.
+				</span>
+			</label>
+			<div class="field top">
+				<span class="label-top">Updates</span>
+				<div class="stack">
+					<div class="inline">
+						<select aria-label="Updates" value={settings.updates} onchange={(e) => save({ updates: e.currentTarget.value as Settings["updates"] })}>
+							<option value="auto">Install automatically</option>
+							<option value="notify">Tell me, don't download</option>
+							<option value="off">Off</option>
+						</select>
+						{#if update.state === "ready" || update.state === "available"}
+							<button type="button" class="quiet" onclick={() => shell.updateRestart()}>Restart to update</button>
+						{:else}
+							<button type="button" class="quiet" disabled={update.state === "checking" || update.state === "downloading"} onclick={checkUpdates}>Check now</button>
+						{/if}
+					</div>
+					<p class="hint" class:danger-text={update.state === "error"}>{updateLine(update)}</p>
+				</div>
+			</div>
 		</section>
 	{/if}
 </main>

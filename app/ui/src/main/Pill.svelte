@@ -54,10 +54,14 @@
 		animate={app.eyes.animate}
 		reduceMotion={app.eyes.reduceMotion}
 	/>
+	{#if app.updateReady}
+		<span class="dot" title="Winku {app.updateReady} installs when you quit or restart"></span>
+	{/if}
 </button>
 
 <style>
 	.pill {
+		position: relative;
 		display: grid;
 		place-items: center;
 		width: 100%;
@@ -69,5 +73,15 @@
 		cursor: pointer;
 		user-select: none;
 		touch-action: none;
+	}
+	/* An update is waiting (SPEC §1). Static: no pulse. */
+	.dot {
+		position: absolute;
+		top: 13px;
+		right: 22px;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
 	}
 </style>

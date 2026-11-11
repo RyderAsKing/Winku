@@ -107,6 +107,9 @@
 
 		{#if !app.needsConnect}
 			<div class="meta">
+				{#if app.updateReady}
+					<button type="button" class="mono level" title="Install Winku {app.updateReady} and restart" onclick={() => shell.updateRestart()}>Restart to update</button>
+				{/if}
 				{#if app.download}
 					<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
 				{/if}

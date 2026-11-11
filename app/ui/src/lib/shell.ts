@@ -28,6 +28,28 @@ export type UiEvent =
 	| { kind: "menu"; item: "settings" | "history" | "ask_before_running" | "hide_eyes" | "pause_listening" | "quit" }
 	| { kind: "update_ready" };
 
+export interface HotkeyFailure {
+	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking" or "leaderKey". */
+	name: string;
+	binding: string;
+	error: string;
+}
+
+export interface HotkeysStatus {
+	failed: HotkeyFailure[];
+}
+
+export interface AltGrReport {
+	/** null when the platform can't tell (non-Windows). */
+	altGr: boolean | null;
+	/** Keys that type a character with Ctrl+Alt in the current layout. */
+	keys: string[];
+	/** Settings fields of bindings that use Ctrl+Alt with one of those keys. */
+	conflicts: string[];
+	/** What to offer instead, "Ctrl+Shift". */
+	suggestion: string;
+}
+
 /** Commands with a Result. The shell assigns the id. */
 type CallCommand = Extract<Command, { id: string }> | Extract<Command, { id?: string }>;
 
@@ -41,9 +63,12 @@ export const shell = {
 	secretClear: () => invoke<void>("secret_clear"),
 	secretPresent: () => invoke<boolean>("secret_present"),
 	windowMode: (mode: WindowMode) => invoke<void>("window_mode", { mode }),
+	/** Whole bar height in logical px (72 input row + reply); the shell clamps it to 72…432. */
 	windowBarHeight: (height: number) => invoke<void>("window_bar_height", { height }),
 	openWindow: (name: "settings" | "history") => invoke<void>("open_window", { name }),
 	contextMenu: () => invoke<void>("context_menu"),
+	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),
+	hotkeysAltGr: () => invoke<AltGrReport>("hotkeys_altgr"),
 	nowLine: () => invoke<NowLine>("now_line"),
 	screenshot: () => invoke<ImageAttachment>("screenshot"),
 	speak: (text: string) => invoke<void>("speak", { text }),
@@ -58,3 +83,6 @@ export const onUi = (handler: (event: UiEvent) => void): Promise<UnlistenFn> =>
 
 export const onSettingsChanged = (handler: (settings: Settings) => void): Promise<UnlistenFn> =>
 	listen<Settings>("settings_changed", ({ payload }) => handler(payload));
+
+export const onHotkeysStatus = (handler: (status: HotkeysStatus) => void): Promise<UnlistenFn> =>
+	listen<HotkeysStatus>("hotkeys_status", ({ payload }) => handler(payload));

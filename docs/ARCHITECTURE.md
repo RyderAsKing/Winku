@@ -43,9 +43,11 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `secret_clear` | `()` → `()` | 2 |
 | `secret_present` | `()` → `boolean` | 2 |
 | `window_mode` | `{ mode: "pill" \| "bar" \| "transcript" }` → `()` | 2 |
-| `window_bar_height` | `{ height: number }` → `()` (bar grows as a reply streams; clamped) | 2 |
+| `window_bar_height` | `{ height: number }` → `()` (whole bar in logical px, input row plus reply; clamped to 72–432) | 2 |
 | `open_window` | `{ name: "settings" \| "history" }` → `()` | 2 |
 | `context_menu` | `()` → `()` (native menu at the cursor) | 2 |
+| `hotkeys_status` | `()` → `{ failed: { name, binding, error }[] }`: bindings that didn't register | 2 |
+| `hotkeys_altgr` | `()` → `{ altGr: boolean \| null, keys: string[], conflicts: string[], suggestion }`: whether `Ctrl+Alt` is AltGr in the current layout and which bindings it breaks | 2 |
 | `now_line` | `()` → `NowLine` captured when the bar was summoned | 6 |
 | `screenshot` | `()` → `ImageAttachment` of the window that was active before the bar | 6 |
 | `speak` / `stop_speaking` | `{ text }` / `()` | 7 |
@@ -56,7 +58,8 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
 | `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", slot, name, output }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }`, `{ kind: "talk_end", text }`, `{ kind: "menu", item }`, `{ kind: "update_ready" }` |
-| `settings_changed` | `Settings` (Settings window saved; the main window refreshes) |
+| `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
+| `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
 | `download_progress` | `{ what: "stt" \| "tts", fraction }` (voice models, step 7) |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
@@ -77,8 +80,8 @@ Actions (`Ctrl+Alt+1…5`) run in the shell: it captures the selection, sends `r
 
 - Registered with `tauri-plugin-global-shortcut`, which reports Pressed and Released.
 - Tap vs hold on the summon key: released within 250 ms = tap (toggle the bar); held longer = talk (step 7).
-- Bindings come from `settings.hotkeys`. If a leader key is set, it replaces `Ctrl+Alt` in every binding.
-- Settings warns when a binding fails to register (taken by another app) and when the keyboard layout has AltGr (`Ctrl+Alt` types characters), suggesting `Ctrl+Shift`.
+- Bindings come from `settings.hotkeys`; an empty string means unbound. If a leader key is set, it replaces `Ctrl+Alt` in every binding. A leader made of modifiers (`Ctrl+Shift`) is substituted directly. A leader that is an ordinary key (`F13`) is a held chord: the shell registers the leader, and registers the rest of each binding (`Space`, `1`, …) only while the leader is down.
+- Failures are reported by the `hotkeys_status` command and event. Settings warns when a binding fails to register (taken by another app) and when the keyboard layout has AltGr (`Ctrl+Alt` types characters), suggesting `Ctrl+Shift`.
 
 ## `settings.json`
 

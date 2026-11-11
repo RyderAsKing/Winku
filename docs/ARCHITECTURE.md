@@ -39,9 +39,9 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `engine_respond` | `{ response: Response }` → `()` (answers a `permission` Request) | 6 |
 | `settings_get` | `()` → `Settings` | 2 |
 | `settings_set` | `{ settings: Settings }` → `Settings`. Saves, re-registers hotkeys, sends `configure` if anything the engine uses changed. | 2 |
-| `secret_set` | `{ apiKey: string }` → `()` | 2 |
-| `secret_clear` | `()` → `()` | 2 |
-| `secret_present` | `()` → `boolean` | 2 |
+| `secret_set` | `{ apiKey, account? }` → `()`. `account` is `"api-key"` (default, the provider key) or `"search-api-key"` (Brave Search). Stored in Credential Manager, then `configure` is re-sent. | 2, 6 |
+| `secret_clear` | `{ account? }` → `()` | 2, 6 |
+| `secret_present` | `{ account? }` → `boolean` | 2, 6 |
 | `window_mode` | `{ mode: "pill" \| "bar" \| "transcript" }` → `()` | 2 |
 | `window_bar_height` | `{ height: number }` → `()` (whole bar in logical px, input row plus reply; clamped to 72–432) | 2 |
 | `open_window` | `{ name: "settings" \| "history" }` → `()` | 2 |
@@ -142,6 +142,28 @@ engine\current.json         { "sessionFile": "…" }: which thread is current
 engine\actions.jsonl        one line per replace/show action, for History
 engine\memory-undo.jsonl    one line per memory save (files before/after) and per undo, so Undo works after a restart
 ```
+
+## Agent tools
+
+SPEC §7. Registered by the engine for the main thread (and agent actions); one-off actions get no tools.
+
+| Tool | Does | Asks first when "Ask before running" is on |
+|---|---|---|
+| `read`, `ls`, `find`, `grep` | pi's file tools | no |
+| `write`, `edit` | pi's file tools | yes; allowKey `write:<path>` / `edit:<path>` |
+| `powershell` | pi's PowerShell tool (Windows) | yes; allowKey `powershell:<first command word>` |
+| `bash` | pi's bash tool, only when a bash is found (Git Bash on Windows) | yes; allowKey `bash:<first command word>` |
+| `open` | `{ target }`: an http(s) URL, a file or folder path, or an app name, opened the way Explorer would | yes; allowKey `open:<target>` |
+| `web_fetch` | `{ url }`: http(s) only, returns readable text, capped | no |
+| `web_search` | `{ query }`: Brave Search API, only when a search key is set | no |
+| `look_at_screen` | asks the shell for a `screen_capture`; image only if the Main model takes images | no |
+| `memory_save`, `memory_read`, `voice_propose` | see "Memory and voice profiles" | no |
+
+- Tools run in the user's home folder (not the data folder).
+- **Ask before running** (off by default; right-click menu and Settings): before a gated tool runs, the engine sends a `permission` Request with `{ replyId, tool, summary, allowKey }` unless `allowKey` is in `alwaysAllow`. The bar shows Allow once / Always allow this command / Deny. "Always" also adds the key to `settings.alwaysAllow`. Deny gives the model a tool result saying the user declined. `Esc` (abort) denies any pending request.
+- **Now line:** when the bar is summoned (hotkey or pill click), the shell notes the foreground app (process name), its window title and its selection (UI Automation only, never a simulated copy). `now_line` returns that snapshot; the UI sends it with each prompt and the engine appends it to the user message.
+- **Screenshot hotkey** (`Ctrl+Alt+S`): the shell captures the foreground window (downscaled like `screen_capture`) and emits `ui` `attach_screenshot`; the UI shows it as a chip and sends it with the next prompt.
+- **Compaction drops screenshots:** images in the kept part of the thread are replaced by "[screenshot removed]" when the thread is compacted.
 
 ## Memory and voice profiles
 

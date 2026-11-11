@@ -114,6 +114,8 @@ export interface VoiceProfileInfo {
 }
 
 export interface ToolPermissionRequest {
+	/** The reply or agent action this tool call belongs to. */
+	replyId?: string;
 	tool: string;
 	/** One-line, human-readable: "Run: Remove-Item C:\\tmp\\x -Recurse" */
 	summary: string;
@@ -139,6 +141,8 @@ export interface ConfigureCommand {
 	askBeforeRunning: boolean;
 	/** allowKey values the user chose "Always allow" for. */
 	alwaysAllow: string[];
+	/** Brave Search API key (Credential Manager, account "search-api-key"). Without it there is no web_search tool, only web_fetch. Held in memory only. */
+	searchApiKey?: string;
 	/** How the assistant talks to the user (settings: "Its voice"). Free text, may be empty. */
 	assistantStyle: string;
 	/** settings.voiceProfiles.default: the profile (file stem in voice\) used when no app rule matches. */
@@ -268,9 +272,12 @@ export type Event =
 	| { type: "error"; id?: string; errorKind: ErrorKind; message: string };
 
 export type Request =
-	/** Screenshot (downscaled) and UI Automation text of the active window. Response data: ScreenCapture. */
+	/** look_at_screen: the window that was active before the bar (or the foreground window if the
+	 *  bar is hidden). Screenshot downscaled to at most 1568 px on the long edge (only when
+	 *  includeImage), and up to ~8000 characters of its UI Automation text. Response data: ScreenCapture. */
 	| { type: "request"; id: string; method: "screen_capture"; params: { includeImage: boolean } }
-	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }. */
+	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
+	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
 
 export interface ScreenCapture {

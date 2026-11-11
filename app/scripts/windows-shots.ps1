@@ -31,7 +31,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class Mouse {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(IntPtr cls, string title);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -93,7 +93,7 @@ try {
   Shot "2-bar"
   # Drag the open bar by its eyes. On a fresh profile the pill rests at the right edge with the
   # bar growing left, so the eyes are at the window's top-right.
-  $hwnd = [Mouse]::FindWindow($null, "Winku")
+  $hwnd = [Mouse]::FindWindow([IntPtr]::Zero, "Winku")
   if ($hwnd -eq [IntPtr]::Zero) { throw "no Winku window" }
   $scale = [Mouse]::GetDpiForWindow($hwnd) / 96.0
   $before = [Mouse]::Rect($hwnd)

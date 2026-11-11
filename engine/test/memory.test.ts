@@ -1,11 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterAll, afterEach, expect, test } from "bun:test";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendSection, ensureStarterFiles, indexLine, MemoryStore, topicSlug, updateIndex } from "../src/memory.ts";
 import type { OutboundMessage, TranscriptItem, VoiceProfileInfo } from "../src/protocol.ts";
 import { profileName, VoiceProfiles } from "../src/voice.ts";
-import { EngineProcess } from "./harness.ts";
+import { EngineProcess, removeTempDirs, tempDir } from "./harness.ts";
 
 const running: EngineProcess[] = [];
 function start(): EngineProcess {
@@ -13,6 +12,7 @@ function start(): EngineProcess {
 	running.push(engine);
 	return engine;
 }
+afterAll(removeTempDirs);
 afterEach(() => {
 	for (const engine of running.splice(0)) {
 		try {
@@ -49,7 +49,7 @@ test("the index keeps one line per topic and drops the oldest over the cap", () 
 });
 
 test("store: save, read, undo restores exactly; undo after a later save removes just that save", () => {
-	const dir = mkdtempSync(join(tmpdir(), "winku-mem-"));
+	const dir = tempDir("winku-mem-");
 	ensureStarterFiles(dir);
 	const store = new MemoryStore(dir, () => new Date("2026-11-11T10:00:00Z"));
 	const a = store.save({ title: "Likes tea", topic: "Food", content: "Green tea, no sugar." }, "s1");
@@ -70,7 +70,7 @@ test("store: save, read, undo restores exactly; undo after a later save removes 
 });
 
 test("voice store: list, propose, accept and dismiss", () => {
-	const dir = mkdtempSync(join(tmpdir(), "winku-voice-"));
+	const dir = tempDir("winku-voice-");
 	ensureStarterFiles(dir);
 	const voice = new VoiceProfiles(dir);
 	expect(voice.list()).toEqual([

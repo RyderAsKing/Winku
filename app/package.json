@@ -13,7 +13,8 @@
     "tauri": "tauri",
     "screenshots": "node scripts/screenshots.mjs",
     "motion-check": "node scripts/motion-check.mjs",
-    "test": "bun test ui/test"
+    "test": "bun test ui/test",
+    "ui-audit": "node scripts/ui-audit.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

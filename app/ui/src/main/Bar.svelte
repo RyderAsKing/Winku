@@ -185,7 +185,6 @@
 		padding: 12px 0;
 	}
 	textarea {
-		border-radius: 4px;
 		width: 100%;
 		resize: none;
 		border: 0;
@@ -198,6 +197,10 @@
 	}
 	textarea::placeholder {
 		color: var(--muted);
+	}
+	/* The bar is the input: the caret shows focus, a ring around the text would box it in. */
+	textarea:focus-visible {
+		outline: none;
 	}
 	.chips {
 		display: flex;

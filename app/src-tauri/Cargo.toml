@@ -1,0 +1,24 @@
+[package]
+name = "winku"
+version = "0.0.1"
+description = "A small desktop assistant that lives as a pair of eyes"
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "winku_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

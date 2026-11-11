@@ -1,103 +1,119 @@
 import "./isolate.ts";
 import enginePackage from "../package.json" with { type: "json" };
-import { type Engine, startEngine } from "./engine.ts";
-import { type InboundMessage, readLines, send } from "./protocol.ts";
+import { Engine, type EngineConfig } from "./engine.ts";
+import { readLines, send } from "./io.ts";
+import type { Command, InboundMessage } from "./protocol.ts";
+import { errorOf, listModels, listProviders, testConnection } from "./runtime.ts";
 
 const startedAt = performance.now();
-let engine: Engine | undefined;
-let unsubscribe: (() => void) | undefined;
-let currentPromptId: string | undefined;
+const engine = new Engine(send);
 
-send({ type: "hello", engine: enginePackage.version, pi: enginePackage.dependencies["@earendil-works/pi-coding-agent"] });
+function reply(id: string | undefined, data?: unknown): void {
+	if (id !== undefined) send({ type: "result", id, ok: true, ...(data !== undefined ? { data } : {}) });
+}
 
-async function handle(message: InboundMessage): Promise<boolean> {
+function replyError(id: string | undefined, error: unknown): void {
+	const e = errorOf(error);
+	const kind = e.message === "Engine is not configured" ? "config" : e.kind;
+	if (id !== undefined) send({ type: "result", id, ok: false, error: e.message, errorKind: kind });
+	else send({ type: "error", errorKind: kind, message: e.message });
+}
+
+const LATER: Partial<Record<Command["type"], number>> = {
+	run_action: 4,
+	memory_undo: 5,
+	memory_forget_all: 5,
+	voice_proposal_decision: 5,
+};
+
+/** Commands that change engine state run one at a time, in order. Reads and abort don't wait. */
+const SERIAL = new Set<Command["type"]>(["configure", "prompt", "set_thinking", "clear", "undo_clear", "history_restore"]);
+
+async function handle(message: Command): Promise<unknown> {
 	switch (message.type) {
-		case "configure": {
-			unsubscribe?.();
-			engine?.dispose();
-			engine = await startEngine(message);
-			unsubscribe = engine.session.subscribe((event) => {
-				if (
-					currentPromptId &&
-					event.type === "message_update" &&
-					event.assistantMessageEvent.type === "text_delta"
-				) {
-					send({ type: "text_delta", id: currentPromptId, delta: event.assistantMessageEvent.delta });
-				}
-			});
-			send({
-				type: "ready",
-				provider: engine.model.provider,
-				model: engine.model.id,
-				contextWindow: engine.model.contextWindow,
-			});
-			return true;
-		}
+		case "configure":
+			await engine.configure(message as EngineConfig);
+			return undefined;
 		case "prompt": {
-			if (!engine) {
-				send({ type: "error", id: message.id, message: "Engine is not configured" });
-				return true;
-			}
-			const session = engine.session;
-			// Run without awaiting so abort and stats stay responsive while a reply streams.
-			void (async () => {
-				currentPromptId = message.id;
-				try {
-					await session.prompt(message.text);
-					const last = session.messages.at(-1);
-					const text =
-						last?.role === "assistant"
-							? last.content.map((block) => (block.type === "text" ? block.text : "")).join("")
-							: "";
-					const aborted = last?.role === "assistant" && last.stopReason === "aborted";
-					if (last?.role === "assistant" && last.stopReason === "error") {
-						send({ type: "error", id: message.id, message: last.errorMessage ?? "Model error" });
-					}
-					send({ type: "reply_end", id: message.id, text, aborted });
-				} catch (error) {
-					send({ type: "error", id: message.id, message: String(error) });
-				} finally {
-					if (currentPromptId === message.id) currentPromptId = undefined;
-				}
-			})();
-			return true;
+			if (!engine.configured) throw new Error("Engine is not configured");
+			return { queued: engine.replies.prompt(message) };
 		}
 		case "abort":
-			await engine?.session.abort();
-			return true;
+			await engine.replies.abort();
+			return undefined;
+		case "set_thinking":
+			return { level: engine.setThinking(message.role, message.level) };
+		case "clear":
+			return engine.clear();
+		case "undo_clear":
+			await engine.undoClear(message.undoToken);
+			return undefined;
+		case "transcript":
+			return engine.threadState.transcript();
+		case "history_list":
+			return engine.threadState.list(message.query);
+		case "history_read":
+			return engine.threadState.read(message.entryId);
+		case "history_restore":
+			await engine.restore(message.entryId);
+			return undefined;
+		case "list_providers":
+			return listProviders();
+		case "list_models":
+			return listModels(message.provider, message.apiKey);
+		case "test_connection":
+			return testConnection(
+				message.provider,
+				message.apiKey,
+				message.model,
+				(message as { faux?: EngineConfig["faux"] }).faux,
+			);
 		case "stats": {
 			const memory = process.memoryUsage();
-			send({
-				type: "stats",
-				rssBytes: memory.rss,
-				heapUsedBytes: memory.heapUsed,
-				uptimeMs: Math.round(performance.now() - startedAt),
-			});
-			return true;
+			return { rssBytes: memory.rss, heapUsedBytes: memory.heapUsed, uptimeMs: Math.round(performance.now() - startedAt) };
 		}
-		case "shutdown":
-			return false;
+		default: {
+			const step = LATER[message.type];
+			throw new Error(step ? `Not available until step ${step}` : `Unknown command "${message.type}"`);
+		}
 	}
 }
 
 async function main(): Promise<void> {
+	send({ type: "hello", engine: enginePackage.version, pi: enginePackage.dependencies["@earendil-works/pi-coding-agent"] });
+	let serial: Promise<void> = Promise.resolve();
+	const inFlight = new Set<Promise<void>>();
+
 	for await (const line of readLines(Bun.stdin.stream())) {
 		let message: InboundMessage;
 		try {
 			message = JSON.parse(line);
 		} catch {
-			send({ type: "error", message: `Invalid JSON: ${line.slice(0, 200)}` });
+			send({ type: "error", errorKind: "engine", message: `Invalid JSON: ${line.slice(0, 200)}` });
 			continue;
 		}
-		try {
-			if (!(await handle(message))) break;
-		} catch (error) {
-			send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-		}
+		if (message.type === "response") continue; // No engine → shell requests until step 6.
+		if (message.type === "shutdown") break;
+
+		const command = message;
+		const run = async () => {
+			try {
+				reply(command.id, await handle(command));
+			} catch (error) {
+				if (command.type === "prompt") {
+					const e = errorOf(error);
+					send({ type: "error", id: command.id, errorKind: e.message === "Engine is not configured" ? "config" : e.kind, message: e.message });
+				}
+				replyError(command.id, error);
+			}
+		};
+		const task = SERIAL.has(command.type) ? (serial = serial.then(run)) : run();
+		inFlight.add(task);
+		void task.finally(() => inFlight.delete(task));
 	}
 
-	unsubscribe?.();
-	engine?.dispose();
+	await Promise.allSettled([...inFlight]);
+	await engine.dispose().catch(() => {});
 	process.exit(0);
 }
 

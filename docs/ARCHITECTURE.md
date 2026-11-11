@@ -136,11 +136,15 @@ engine\actions.jsonl        one line per replace/show action, for History
 engine/src/
   main.ts        stdin loop and dispatch
   protocol.ts    the contract
+  io.ts          stdout/stdin JSON-lines helpers
   isolate.ts     pi isolation env, console → stderr
+  engine.ts      ties runtime + thread + the live AgentSession; rebuilds it on configure/clear/restore
   runtime.ts     ModelRuntime, catalog/custom providers, keys, model info, test connection
   thread.ts      current thread, clear/undo, history list/search/read/restore, transcript items
   reply.ts       one prompt → thinking/text/tool/context/reply_end events
   mood.ts        streaming <mood:…> stripper (pure)
+  nowline.ts     <now …> line appended to the user message, and its parser for transcripts
+  faux.ts        scripted winku-faux provider for tests (configure accepts a test-only `faux` field)
   prompt.ts      frozen system prompt (instructions, about-me, voice profiles, MEMORY.md snapshot)
   actions.ts     one-off actions on the Quick model                       (step 4)
   memory.ts      MEMORY.md index + topic files, save/undo/forget           (step 5)
@@ -177,5 +181,6 @@ app/ui/src/
 
 - **One morphing main window** rather than separate pill and bar windows: one renderer instead of two keeps memory down. Settings and History are created on demand.
 - **The UI drives interaction; the shell handles the OS.** The shell does the time-critical parts of a hotkey (grab the selection before focus moves) and then hands off to the UI through a `ui` event.
+- **Frozen system prompt lives in the thread.** pi records the prompt as a system message in the session file; when a thread is reopened (restart, Undo, Restore) the engine reuses that preamble instead of rebuilding it, so a settings change only reaches the prompt after a clear or a compaction.
 - **Thread pointer file** (`engine\current.json`) instead of "most recent session file", so Restore survives a restart even before the restored thread gets a new message.
 - **Tap/hold threshold** of 250 ms on the summon key.

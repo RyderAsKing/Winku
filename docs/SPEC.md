@@ -38,7 +38,7 @@ Confirmed with the user on 2026-11-11, including the four points that were first
 - **Reply bubble:** replies stream into a translucent rounded bubble just under the bar, or just over it when the pill sits low on the screen. It scrolls when the reply is long. When you talk (hold the key), run an action, or something needs your attention, the eyes stay as the pill and the bubble appears under them. It goes away a while after the reply has finished and been read out (longer for longer replies, never while the pointer is over it). Clicking it opens the bar.
 - **Transcript:** `Ctrl+J` shows the whole conversation in a taller bubble under the bar. It renders markdown and code blocks with copy, shows tool calls as collapsed rows, and shows compaction as a collapsible "Earlier conversation summarized" row.
 - **Right-click menu on the eyes:** Settings, History, Ask before running, Hide eyes, Pause listening, Quit.
-- **Settings:** an ordinary window of about 680×520 px with one column of grouped fields.
+- **Settings:** an ordinary window of about 860×600 px: a list of sections on the left (Model, Conversation, Tools, Speech, Memory and voice, Actions, Keys, Eyes, App) and the chosen section on the right, as grouped rows with the setting on the left and its control on the right. On-off settings are switches. A section that needs attention (a key conflict, no model yet) is marked in the list. A narrow window moves the list to a strip along the top.
 - **First run:** there is no wizard. On the first summon, the bar shows an inline "Connect a model" form: pick a provider, enter a key and a model, run a test, and you're done. Voice models download the first time you hold the talk key, with progress shown on the eyes.
 
 ## 4. Eyes

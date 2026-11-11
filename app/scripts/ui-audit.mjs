@@ -28,14 +28,23 @@ try {
 		"Long code should scroll within its block",
 	);
 	await page.goto(base + "/settings.html");
+	await page.getByRole("heading", { name: "Model", exact: true }).waitFor();
+	for (const name of ["Provider", "Main model", "Main thinking level"]) {
+		assert((await page.getByLabel(name, { exact: true }).count()) === 1, `${name} must be named`);
+	}
+	await page.getByRole("button", { name: "Keys", exact: true }).click();
 	const hotkey = page.getByRole("button", { name: /Open the bar.*Click to change/ });
 	await hotkey.click();
 	await page.keyboard.press("Tab");
 	assert((await hotkey.getAttribute("aria-pressed")) === "false", "Tab must leave hotkey capture");
 	assert(await hotkey.evaluate((el) => el !== document.activeElement), "Hotkey capture must not trap focus");
-	for (const name of ["Provider", "Main model", "Main thinking level"]) {
-		assert((await page.getByLabel(name, { exact: true }).count()) === 1, `${name} must be named`);
+	await page.setViewportSize({ width: 520, height: 480 });
+	for (const id of ["model", "speech", "memory", "actions", "keys", "app"]) {
+		await page.goto(`${base}/settings.html?altgr=1&taken=action2#${id}`);
+		await page.locator("main header h2").waitFor();
+		assert(await page.locator("main").evaluate((el) => el.scrollWidth <= el.clientWidth + 1), `Settings ${id} must not scroll sideways when narrow`);
 	}
+	await page.setViewportSize({ width: 680, height: 520 });
 	const contrast = await page.evaluate(() => {
 		const css = getComputedStyle(document.documentElement);
 		const lum = (value) => {

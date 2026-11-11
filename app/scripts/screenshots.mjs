@@ -18,6 +18,8 @@ const summon = async (page) => {
 	await page.getByRole("button", { name: "Open Winku" }).click();
 	await page.getByRole("textbox", { name: "Message" }).waitFor();
 };
+/** The Settings window's default size (window.rs). */
+const SETTINGS = { width: 860, height: 600 };
 const ui = (page, event) => page.evaluate((e) => window.__winkuMock.ui(e), event);
 const action = (page, slot, selection) => page.evaluate(([s, t]) => window.__winkuMock.action(s, t), [slot, selection]);
 const engine = (page, event) => page.evaluate((e) => window.__winkuMock.engine(e), event);
@@ -172,62 +174,50 @@ const cases = [
 	},
 	{
 		name: "settings-tools",
-		path: "/settings.html?ask=1",
-		size: { width: 680, height: 1040 },
+		path: "/settings.html?ask=1#tools",
+		size: SETTINGS,
 		ready: '[placeholder="Brave Search API key"]',
-		prepare: async (page) => {
-			await page.getByRole("heading", { name: "Tools" }).waitFor();
-			await page.getByRole("heading", { name: "Tools" }).evaluate((el) => el.scrollIntoView());
-		},
 	},
 	{
 		name: "settings-speech",
-		path: "/settings.html",
-		size: { width: 680, height: 1040 },
+		path: "/settings.html#speech",
+		size: SETTINGS,
 		ready: "role=heading[name='Speech']",
 		prepare: async (page) => {
-			await page.getByRole("heading", { name: "Speech" }).evaluate((el) => el.scrollIntoView());
 			await page.getByRole("option", { name: "Microsoft Zira (en-US)" }).waitFor({ state: "attached" });
 		},
 	},
 	{
 		name: "settings-app",
-		path: "/settings.html?update=1",
-		size: { width: 680, height: 1040 },
-		ready: "role=heading[name='App']",
-		prepare: async (page) => {
-			await page.getByRole("heading", { name: "App" }).evaluate((el) => el.closest("section").scrollIntoView({ block: "end" }));
-			await page.getByText("installs when you quit or restart").waitFor();
-		},
+		path: "/settings.html?update=1#app",
+		size: SETTINGS,
+		ready: "text=installs when you quit or restart",
 	},
 	{
 		name: "settings-memory",
-		path: "/settings.html",
-		size: { width: 680, height: 1040 },
-		ready: "text=Use a voice for this app",
+		path: "/settings.html#memory",
+		size: SETTINGS,
+		ready: "text=Forget everything?",
 		prepare: async (page) => {
-			await page.getByRole("heading", { name: "Memory and voice" }).waitFor();
 			await page.getByRole("button", { name: "Forget everything" }).click();
-			await page.getByRole("heading", { name: "Memory and voice" }).evaluate((el) => el.scrollIntoView());
 		},
 	},
 	{
 		name: "settings-actions",
-		path: "/settings.html",
-		size: { width: 680, height: 1040 },
+		path: "/settings.html#actions",
+		size: SETTINGS,
 		ready: "text=Use the conversation as context",
 		prepare: async (page) => {
-			await page.getByRole("heading", { name: "Actions" }).waitFor();
 			await page.getByRole("textbox", { name: "Action 2 prompt" }).fill("Fix spelling and grammar. Keep British spelling.");
-			await page.getByRole("heading", { name: "Actions" }).evaluate((el) => el.scrollIntoView());
 		},
 	},
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
-	{ name: "settings", path: "/settings.html", size: { width: 680, height: 1040 }, ready: "text=Leader key" },
+	{ name: "settings", path: "/settings.html", size: SETTINGS, ready: "role=combobox[name='Provider']" },
+	{ name: "settings-narrow", path: "/settings.html#speech", size: { width: 520, height: 600 }, ready: "role=heading[name='Speech']" },
 	{
 		name: "settings-keys-warnings",
-		path: "/settings.html?altgr=1&taken=action2",
-		size: { width: 680, height: 1040 },
+		path: "/settings.html?altgr=1&taken=action2#keys",
+		size: SETTINGS,
 		ready: "text=Use Ctrl+Shift instead",
 	},
 	{
@@ -243,15 +233,22 @@ const cases = [
 ];
 
 // Stress fixtures use the public mock hooks and URL options, just like the original cases.
-for (const heading of ["Model", "Conversation", "Tools", "Speech", "Memory and voice", "Actions", "Keys", "Eyes", "App"]) {
+for (const [id, heading] of Object.entries({
+	model: "Model",
+	conversation: "Conversation",
+	tools: "Tools",
+	speech: "Speech",
+	memory: "Memory and voice",
+	actions: "Actions",
+	keys: "Keys",
+	eyes: "Eyes",
+	app: "App",
+})) {
 	cases.push({
 		name: `settings-real-${heading.toLowerCase().replaceAll(" ", "-")}`,
-		path: "/settings.html?ask=1&altgr=1&taken=action2",
-		size: { width: 680, height: 520 },
+		path: `/settings.html?ask=1&altgr=1&taken=action2#${id}`,
+		size: SETTINGS,
 		ready: `role=heading[name='${heading}']`,
-		prepare: async (page) => {
-			await page.getByRole("heading", { name: heading, exact: true }).evaluate((el) => el.scrollIntoView({ block: "start" }));
-		},
 	});
 }
 cases.push(
@@ -339,7 +336,7 @@ cases.push(
 	{
 		name: "focus-settings",
 		path: "/settings.html",
-		size: { width: 680, height: 520 },
+		size: SETTINGS,
 		ready: ":focus-visible",
 		prepare: async (page) => {
 			await page.getByRole("heading", { name: "Model", exact: true }).waitFor();
@@ -384,7 +381,7 @@ cases.push(
 	{
 		name: "settings-custom",
 		path: "/settings.html",
-		size: { width: 680, height: 520 },
+		size: SETTINGS,
 		ready: "text=Context window",
 		prepare: async (page) => {
 			await page.getByRole("combobox").first().selectOption("__custom__");
@@ -393,7 +390,7 @@ cases.push(
 	{
 		name: "settings-quick-model",
 		path: "/settings.html",
-		size: { width: 680, height: 520 },
+		size: SETTINGS,
 		ready: "[placeholder='Model id']",
 		prepare: async (page) => {
 			await page.getByLabel("Quick actions model", { exact: true }).selectOption("false");

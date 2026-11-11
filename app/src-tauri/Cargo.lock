@@ -5194,6 +5194,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "tokio",
+ "windows",
  "windows-sys 0.59.0",
 ]
 

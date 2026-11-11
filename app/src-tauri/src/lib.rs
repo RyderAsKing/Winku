@@ -1,3 +1,4 @@
+mod actions;
 mod commands;
 mod engine;
 mod hotkeys;
@@ -23,6 +24,7 @@ pub fn run() {
             app.manage(window::WindowState::default());
             app.manage(hotkeys::HotkeyState::default());
             app.manage(engine::Engine::new());
+            app.manage(actions::Actions::default());
 
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();

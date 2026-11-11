@@ -198,12 +198,19 @@ Speech runs in the shell (`app/src-tauri/src/voice/`), with the official `sherpa
 - **Hold to talk:** holding the summon key past the tap limit stops any speech, opens the microphone (16 kHz mono) and sends `talk_start`, then `talk_level` while it records. Release sends `talk_end` with the transcription; under about 0.3 s of audio, or silence, gives `""`. A recording stops at 60 s. While "Pause listening" is on, a hold acts like a tap.
 - **Models:** downloaded the first time they are needed into `models\<id>\` in the data folder, from the k2-fsa GitHub releases at pinned URLs, checked against a pinned SHA-256 and unpacked into a temporary folder that is renamed into place. A hold before the model exists starts the download (progress on the eyes) and keeps the recording; it is transcribed when the download finishes. The recogniser loads on first use and unloads after 3 idle minutes; so does Kokoro.
 
-| id | kind | default | notes |
-|---|---|---|---|
-| `moonshine-base` | stt | yes | English, int8 |
-| `whisper-base-en` | stt | | English, int8 |
-| `parakeet` | stt | | optional, larger and more accurate |
-| `kokoro` | tts | | optional; `os` (no download) is the default |
+| id | kind | default | download | release asset (k2-fsa `asr-models` / `tts-models`) |
+|---|---|---|---|---|
+| `moonshine-base` | stt | yes | 111 MB | `sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2` (English, quantized) |
+| `whisper-base-en` | stt | | 209 MB | `sherpa-onnx-whisper-base.en.tar.bz2`; only the int8 encoder and decoder are kept |
+| `parakeet` | stt | | 482 MB | `sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` (English); optional, larger and more accurate |
+| `kokoro` | tts | | 110 MB | `kokoro-int8-en-v0_19.tar.bz2` plus `lexicon-en-us.txt`; optional, `os` (no download) is the default |
+
+The URLs, sizes and SHA-256s are constants in `voice/models.rs`. Only the files a model uses are unpacked (no test WAVs, no fp32 copies).
+
+- **Download details:** `download_progress` starts at `fraction: 0`, comes at most 10 times a second, and stays below 1 until the folder is in place. Each model downloads at most once at a time; `voice_model_download` while it is downloading or installed does nothing, and `voice_model_remove` while it is downloading fails. Removing a model unloads it first. HTTPS uses SChannel and the Windows certificate store on Windows (ureq `native-tls`) and rustls elsewhere. If the download fails, the hold that was waiting for it gets `talk_end ""` after the `voice_error`. Only the latest recording waits for a download; an earlier one in the same wait gets no `talk_end`.
+- **Recording:** the default input device at its own rate and format, mixed to mono and resampled to 16 kHz when the hold ends (windowed-sinc low-pass, then linear interpolation). `talk_level` is the loudest block since the last report on a log scale (-60 dBFS = 0, -10 dBFS = 1). "Silence" means no 30 ms window reaches about -48 dBFS. Microphone errors send `voice_error` with what to do (no device; on Windows, the privacy switch for desktop apps) and `talk_end ""`.
+- **Speaking:** `speak` stops whatever is playing and starts again. `speech {playing: true}` comes when audio reaches the device, `{playing: false}` when it ends, fails or is stopped (`stop_speaking`, `Esc`, a new hold); a `speak` that replaces another sends no `false` in between. OneCore synthesises a WAV that is played through cpal, like Kokoro. Kokoro streams sentence by sentence and uses `sid` 0. It reads words from its lexicon, so words the lexicon lacks (names like "Winku") are skipped. With `tts: "kokoro"` before Kokoro is downloaded, `speak` starts the download and uses the OS voice meanwhile. On Linux and macOS, `os` uses `spd-say` if it is installed, otherwise `voice_error` "Speech isn't available on this platform yet".
+- **Threads and memory:** nothing voice-related is created at startup. Each hold records on its own thread (cpal streams stay on the thread that made them) and transcribes there; downloads and `speak` get threads too. While a model is loaded, a thread checks every 20 s and drops models idle for 3 minutes, then exits. sherpa-onnx (with onnxruntime) is linked statically, which adds about 30 MB to the executable. Its Windows libraries are built against the static C runtime (`/MT`), so `app/src-tauri/.cargo/config.toml` sets `+crt-static` for the MSVC targets.
 
 - **When it speaks** (`settings.voice.reply`): `mirror` speaks a reply only when the prompt was spoken, `always` speaks every reply, `never` speaks none. The UI decides and calls `speak` on `reply_end`; actions are never spoken. `Esc` and a new hold stop speech.
 - **Engine:** a spoken prompt carries `spoken: true`. The engine adds "(spoken)" to the now line so the model knows it was dictated and keeps the answer short and easy to listen to.
@@ -242,7 +249,14 @@ app/src-tauri/src/
   menu.rs        context menu, tray (only while the eyes are hidden)
   commands.rs    #[tauri::command] functions
   platform/      foreground app, selection, paste, screenshot, UI Automation (windows.rs + fallback.rs)
-  voice/         sherpa-onnx STT, OS/Kokoro TTS                             (step 7)
+  voice/         hold to talk, models, speech                                (step 7)
+    mod.rs       sessions, pending transcription, downloads, speak/stop, idle unload
+    mic.rs       cpal capture, talk level, microphone error advice
+    audio.rs     pure DSP: mono mix, resampling, level, silence check, WAV reader
+    stt.rs       sherpa-onnx recogniser per model, load-once/unload-when-idle Slot
+    tts.rs       cpal player, Kokoro, OneCore (WinRT) / spd-say
+    models.rs    model table: pinned URLs, sizes, SHA-256s, files kept
+    download.rs  streaming download, checksum, .tar.bz2 unpack, progress throttle
 
 app/ui/src/
   main/          the main window: Eyes, Bar, Transcript, Connect form, toasts
@@ -254,7 +268,8 @@ app/ui/src/
 ## Testing and CI
 
 - Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index) get unit tests. Everything also runs against the compiled binary in CI.
-- Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing). Platform code is behind traits so the logic is testable on Linux.
+- Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing, resampling and levels, the model table, downloads against an in-memory server, idle unload with an injected clock). Platform code is behind traits so the logic is testable on Linux. Linux builds need `libasound2-dev` for cpal.
+- Voice end to end (downloads about 220 MB, so not in CI): `WINKU_VOICE_E2E=/tmp/winku-e2e cargo test --release e2e -- --ignored --nocapture` in `app/src-tauri` installs moonshine-base and Kokoro, has Kokoro say a sentence and checks that Moonshine transcribes it.
 - UI: `svelte-check`, a Vite build, and `bun run test` for the pure eye logic (`ui/src/lib/eyes/look.ts`: mood looks, the hearts cooldown, lids, colours).
 - Eyes motion budget: `cd app && bun run motion-check` starts Vite and drives the mock shell in Chromium. It checks that the resting pill runs no animations, that the idle bar runs no endless loop, that the speaking bounce runs only while the bar shows, and that "reduce motion" stops every loop. Windows CI also samples idle CPU for the whole process tree with the pill showing (`scripts/measure-memory.ps1`).
 - Eyes gallery: `http://127.0.0.1:5173/eyes.html` under `bun run ui:dev` shows every state, tint and lid level at pill size (`?animate=1` turns the loops on). It is dev-only and not part of the build.

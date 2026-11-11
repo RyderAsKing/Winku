@@ -210,6 +210,28 @@ impl TapHold {
     }
 }
 
+/// What releasing the summon key does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummonRelease {
+    /// Open or hide the bar.
+    Toggle,
+    /// Stop recording; the transcription follows as `talk_end`.
+    EndTalk,
+    /// A hold too short to have started recording: `talk_start` then an empty `talk_end`.
+    EmptyTalk,
+}
+
+/// `talking`: this hold started a recording. While listening is paused a hold acts like a tap.
+pub fn summon_release(release: Release, talking: bool, paused: bool) -> SummonRelease {
+    match release {
+        Release::Tap => SummonRelease::Toggle,
+        Release::Hold { .. } if talking => SummonRelease::EndTalk,
+        Release::Hold { started: true } => SummonRelease::Toggle, // paused when the hold began
+        Release::Hold { started: false } if paused => SummonRelease::Toggle,
+        Release::Hold { started: false } => SummonRelease::EmptyTalk,
+    }
+}
+
 // ───────────────────────────── runtime ─────────────────────────────
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -234,6 +256,8 @@ pub struct HotkeyState {
     leader_down: AtomicBool,
     status: Mutex<Status>,
     summon: Mutex<TapHold>,
+    /// The current summon hold started a recording.
+    talking: AtomicBool,
 }
 
 impl HotkeyState {
@@ -427,8 +451,11 @@ fn summon(app: &AppHandle, pressed: bool) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .hold_due(generation, Instant::now());
-            if due {
-                emit_ui(&app, json!({ "kind": "talk_start" }));
+            if due && !listening_paused(&app) {
+                app.state::<HotkeyState>()
+                    .talking
+                    .store(true, Ordering::SeqCst);
+                crate::voice::hold_start(&app);
             }
         });
         return;
@@ -438,8 +465,12 @@ fn summon(app: &AppHandle, pressed: bool) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .release(now);
-    match released {
-        Some(Release::Tap) => {
+    let Some(released) = released else {
+        return;
+    };
+    let talking = state.talking.swap(false, Ordering::SeqCst);
+    match summon_release(released, talking, listening_paused(app)) {
+        SummonRelease::Toggle => {
             let showing = app.state::<WindowState>().mode() != Mode::Pill;
             if !showing {
                 // Before the bar takes focus.
@@ -450,15 +481,19 @@ fn summon(app: &AppHandle, pressed: bool) {
                 json!({ "kind": if showing { "hide" } else { "summon" } }),
             );
         }
-        Some(Release::Hold { started }) => {
-            if !started {
-                emit_ui(app, json!({ "kind": "talk_start" }));
-            }
-            // Speech-to-text is step 7; until then the transcription is empty.
+        SummonRelease::EndTalk => crate::voice::hold_end(app),
+        SummonRelease::EmptyTalk => {
+            emit_ui(app, json!({ "kind": "talk_start" }));
             emit_ui(app, json!({ "kind": "talk_end", "text": "" }));
         }
-        None => {}
     }
+}
+
+fn listening_paused(app: &AppHandle) -> bool {
+    app.state::<crate::settings::Store>()
+        .get()
+        .voice
+        .listening_paused
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -634,6 +669,28 @@ mod tests {
             "timer from the previous press"
         );
         assert!(th.hold_due(second, t0 + Duration::from_millis(800)));
+    }
+
+    #[test]
+    fn hold_while_paused_acts_like_a_tap() {
+        use SummonRelease::*;
+        let held = Release::Hold { started: true };
+        let late = Release::Hold { started: false };
+        assert_eq!(summon_release(Release::Tap, false, false), Toggle);
+        assert_eq!(summon_release(Release::Tap, false, true), Toggle);
+        assert_eq!(summon_release(held, true, false), EndTalk);
+        assert_eq!(
+            summon_release(held, true, true),
+            EndTalk,
+            "paused mid-hold: the recording still ends normally"
+        );
+        assert_eq!(
+            summon_release(held, false, true),
+            Toggle,
+            "paused hold = tap"
+        );
+        assert_eq!(summon_release(late, false, true), Toggle);
+        assert_eq!(summon_release(late, false, false), EmptyTalk);
     }
 
     #[test]

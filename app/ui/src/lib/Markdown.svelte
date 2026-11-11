@@ -1,9 +1,25 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import { renderMarkdown } from "./markdown.ts";
 	import { shell } from "./shell.ts";
 
 	let { text }: { text: string } = $props();
-	const html = $derived(renderMarkdown(text));
+
+	// A streamed reply changes many times a frame; render it at most once per frame.
+	let shown = $state(untrack(() => text));
+	let frame = 0;
+	$effect(() => {
+		void text;
+		if (!frame) {
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				shown = text;
+			});
+		}
+	});
+	$effect(() => () => cancelAnimationFrame(frame));
+
+	const html = $derived(renderMarkdown(shown));
 	let root: HTMLElement | undefined = $state();
 
 	// Copy buttons on code blocks; re-applied whenever the rendered HTML changes.

@@ -52,6 +52,16 @@
 	const bodyH = $derived(68 * opening.current);
 	const bodyY = $derived(20 + (68 - bodyH) * 0.35);
 
+	// A new expression shape (open eyes, happy arcs, hearts, closed) cross-fades with a small
+	// scale instead of swapping on one frame.
+	function morph(_node: SVGGElement, { out = false } = {}) {
+		return {
+			duration: reduceMotion ? 0 : out ? 140 : 200,
+			easing: cubicOut,
+			css: (t: number) => `opacity: ${t}; transform: scale(${(out ? 0.94 : 0.86) + (out ? 0.06 : 0.14) * t})`,
+		};
+	}
+
 	function filledArc(cx: number, cy: number, w: number, h: number, t: number): string {
 		const l = cx - w / 2;
 		const r = cx + w / 2;
@@ -214,29 +224,37 @@
 							</defs>
 
 							{#if look.shape === "rect"}
-								{#if look.ring}
-									<rect x="13" y={bodyY - 7} width="82" height={bodyH + 14} rx="25" fill="none" style:stroke={look.colour} stroke-width="2" opacity="0.35" />
-								{/if}
-								<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
-								<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" fill="url(#{uid}-fill-{side})" />
-								<rect x="26" y={bodyY + 5} width="56" height={bodyH * 0.46} rx="14" fill="url(#{uid}-sheen-{side})" opacity="0.65" />
-								<ellipse cx={C - 12} cy={bodyY + 18} rx="14" ry="10" fill="#fff" opacity="0.82" />
-								<circle cx={C + 12} cy={bodyY + 24} r="3.2" fill="#fff" opacity="0.95" />
-								{#if look.tear && side === 1}
-									<path d="M 90 64 Q 96 76 88 82 Q 84 72 90 64 Z" fill="#7FD4FF" opacity="0.9" />
-								{/if}
+								<g class="shape" in:morph out:morph={{ out: true }}>
+									{#if look.ring}
+										<rect x="13" y={bodyY - 7} width="82" height={bodyH + 14} rx="25" fill="none" style:stroke={look.colour} stroke-width="2" opacity="0.35" />
+									{/if}
+									<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
+									<rect x="20" y={bodyY} width="68" height={bodyH} rx="21" fill="url(#{uid}-fill-{side})" />
+									<rect x="26" y={bodyY + 5} width="56" height={bodyH * 0.46} rx="14" fill="url(#{uid}-sheen-{side})" opacity="0.65" />
+									<ellipse cx={C - 12} cy={bodyY + 18} rx="14" ry="10" fill="#fff" opacity="0.82" />
+									<circle cx={C + 12} cy={bodyY + 24} r="3.2" fill="#fff" opacity="0.95" />
+									{#if look.tear && side === 1}
+										<path d="M 90 64 Q 96 76 88 82 Q 84 72 90 64 Z" fill="#7FD4FF" opacity="0.9" />
+									{/if}
+								</g>
 							{:else if look.shape === "arc"}
-								<path d={filledArc(C, 68, 74, 46, 30)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
-								<path d={filledArc(C, 68, 74, 46, 30)} fill="url(#{uid}-fill-{side})" />
-								<path d={filledArc(C - 6, 58, 30, 14, 6)} fill="#fff" opacity="0.6" />
+								<g class="shape" in:morph out:morph={{ out: true }}>
+									<path d={filledArc(C, 68, 74, 46, 30)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.95" />
+									<path d={filledArc(C, 68, 74, 46, 30)} fill="url(#{uid}-fill-{side})" />
+									<path d={filledArc(C - 6, 58, 30, 14, 6)} fill="#fff" opacity="0.6" />
+								</g>
 							{:else if look.shape === "heart"}
-								<path d={heartPath(C, 56, 62)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
-								<path d={heartPath(C, 56, 62)} fill="url(#{uid}-fill-{side})" />
-								<ellipse cx={C - 13} cy="44" rx="9" ry="6.5" fill="#fff" opacity="0.88" />
-								<circle cx={C + 12} cy="49" r="2.8" fill="#fff" opacity="0.95" />
+								<g class="shape" in:morph out:morph={{ out: true }}>
+									<path d={heartPath(C, 56, 62)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.9" />
+									<path d={heartPath(C, 56, 62)} fill="url(#{uid}-fill-{side})" />
+									<ellipse cx={C - 13} cy="44" rx="9" ry="6.5" fill="#fff" opacity="0.88" />
+									<circle cx={C + 12} cy="49" r="2.8" fill="#fff" opacity="0.95" />
+								</g>
 							{:else}
-								<path d={filledArc(C, 64, 72, 16, 11)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.85" />
-								<path d={filledArc(C, 64, 72, 16, 11)} fill="url(#{uid}-fill-{side})" />
+								<g class="shape" in:morph out:morph={{ out: true }}>
+									<path d={filledArc(C, 64, 72, 16, 11)} style:fill={look.colour} filter="url(#{uid}-bloom-{side})" opacity="0.85" />
+									<path d={filledArc(C, 64, 72, 16, 11)} fill="url(#{uid}-fill-{side})" />
+								</g>
 							{/if}
 						</svg>
 					</div>
@@ -279,7 +297,10 @@
 	svg {
 		display: block;
 		overflow: visible;
-
+	}
+	.shape {
+		transform-box: view-box;
+		transform-origin: 50% 50%;
 	}
 	.still .pair,
 	.still .eye,

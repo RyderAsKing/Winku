@@ -2,6 +2,7 @@
 //! (engine/src/protocol.ts) to the webview.
 //!
 //! - Events and `permission` Requests go to the main window as the `engine` event.
+//!   `action_end` for a replace action also pastes the result (actions.rs).
 //! - Results are matched to `engine_call`s by id.
 //! - `screen_capture` Requests are answered with an error until step 6.
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
@@ -302,6 +303,7 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                     .send(&json!({ "type": "response", "id": id, "ok": false, "error": error }));
             }
             Route::Forward => {
+                crate::actions::on_engine_record(&app, &record);
                 let _ = app.emit_to("main", ENGINE_EVENT, &record);
                 if smoke.enabled && !smoke.stay {
                     match record["type"].as_str() {

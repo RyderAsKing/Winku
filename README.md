@@ -32,7 +32,7 @@ All keys can be changed in Settings. If `Ctrl+Alt` types characters on your keyb
 
 - **Actions:** select text in any app and press `Ctrl+Alt+1`. The defaults are Rewrite, Fix grammar, Shorter (each replaces the selection; `Ctrl+Z` in that app undoes it), Explain (shows in the bar) and Do it (runs it as a task with tools). You can edit all five.
 - **Tools:** Winku can read and write files in your home folder, run PowerShell, open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.
-- **Voice:** the first time you hold the talk key, Winku downloads a speech model (about 110 MB), with progress shown on the eyes. Speech is recognised on your computer and never sent anywhere. Replies are read aloud when you spoke, using a Windows voice or the optional Kokoro voice.
+- **Voice:** the first time you hold the talk key, Winku downloads a speech model (about 110 MB), with progress shown on the eyes. Speech is recognised on your computer and never sent anywhere. Replies are read aloud when you spoke, in a natural offline voice (Supertonic, an 85 MB download on first use; the Windows voice reads until it arrives, and stays available in Settings).
 - **Memory:** Winku saves things worth remembering as plain markdown files, and each reply shows what it saved with an Undo. Settings > Memory and voice opens the folder, the "About me" file and your writing voice profiles.
 - **Right-click the eyes** for Settings, History, Ask before running, Hide eyes, Pause listening and Quit.
 

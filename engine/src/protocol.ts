@@ -149,6 +149,9 @@ export interface ConfigureCommand {
 	defaultVoiceProfile?: string;
 }
 
+/** How much of a spoken reply is said (settings.voice.say, SPEC §11). */
+export type SpeechLength = "brief" | "enough" | "full";
+
 export type Command =
 	| ConfigureCommand
 	| {
@@ -158,8 +161,14 @@ export type Command =
 			text: string;
 			now?: NowLine;
 			images?: ImageAttachment[];
-			/** The user spoke this (hold-to-talk). The shell decides about TTS; the engine only records it. */
+			/** The user spoke this (hold-to-talk). Recorded in the thread; says nothing about TTS. */
 			spoken?: boolean;
+			/**
+			 * The reply will be read aloud (the UI decides, from settings.voice.reply). The model
+			 * then starts it with a <say> block, written for listening, of about this length; the
+			 * engine sends each block as `say` and keeps it out of text_delta.
+			 */
+			speak?: SpeechLength;
 			/** Voice profile name (file stem in voice\) for the active app, picked by the shell. */
 			voiceProfile?: string;
 	  }
@@ -252,6 +261,13 @@ export type Event =
 	/** Waiting on the model (eyes: thinking). Also sent between tool calls. */
 	| { type: "thinking"; id: string }
 	| { type: "text_delta"; id: string; delta: string }
+	/**
+	 * A <say> block of a reply to a prompt with `speak`, complete, to read aloud. Sent as soon
+	 * as the block closes, usually before the written part; a reply can have several (a short
+	 * one before tools, the answer after). Never part of text_delta or reply_end.text, except
+	 * that a reply with nothing written ends with its last block as the text.
+	 */
+	| { type: "say"; id: string; text: string }
 	| { type: "tool_start"; id: string; toolCallId: string; name: string; summary: string }
 	| { type: "tool_end"; id: string; toolCallId: string; ok: boolean; summary: string }
 	/** Final text has the mood tag stripped. Sent when the engine is idle again (agent_settled). */

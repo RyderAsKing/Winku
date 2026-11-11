@@ -16,6 +16,7 @@ using System.Runtime.InteropServices;
 public static class Keys {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint flags);
   public static void Tap(byte[] mods, byte key) {
     foreach (var m in mods) keybd_event(m, 0, 0, UIntPtr.Zero);
     keybd_event(key, 0, 0, UIntPtr.Zero);
@@ -25,6 +26,9 @@ public static class Keys {
 }
 "@
 [Keys]::SetProcessDPIAware() | Out-Null
+# Windows Server turns animation effects off, which browsers report as "reduce motion", and then
+# Winku skips its transitions. Turn them on (SPI_SETCLIENTAREAANIMATION) so the bursts show them.
+[Keys]::SystemParametersInfo(0x1043, 0, [IntPtr]1, 3) | Out-Null
 
 function Shot([string]$Name) {
   $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -58,6 +62,12 @@ function Burst([string]$Name, [int]$Count) {
   Write-Host "saved $Count $Name frames over $($clock.ElapsedMilliseconds) ms"
 }
 
+# The shell logs hotkey_hint events here when WINKU_DEBUG_HINT=1.
+$hintLog = Join-Path $OutDir "hint.log"
+Remove-Item $hintLog -ErrorAction SilentlyContinue
+$env:WINKU_DEBUG_HINT = "1"
+$env:WINKU_DEBUG_HINT_LOG = $hintLog
+
 $app = Start-Process -FilePath $Exe -PassThru
 try {
   Start-Sleep -Seconds 15
@@ -72,6 +82,21 @@ try {
   Burst "close" 24
   Start-Sleep -Seconds 2
   Shot "3-closed"
+  # The taps above must not have sent a hint. Then Ctrl+Alt held on its own for about a second:
+  # the shell must send hotkey_hint show, and hide on release.
+  if (Test-Path $hintLog) { throw "hotkey_hint fired before any hold:`n$(Get-Content $hintLog -Raw)" }
+  [Keys]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+  [Keys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 1000
+  Shot "4-hint-hold"
+  [Keys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+  [Keys]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 500
+  $lines = @(Get-Content $hintLog -ErrorAction SilentlyContinue)
+  Write-Host "hint log: $($lines -join ' | ')"
+  if (($lines -join "`n") -ne "hotkey_hint show`nhotkey_hint hide") {
+    throw "expected one hotkey_hint show then one hide, got: $($lines -join ' | ')"
+  }
 } finally {
   Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $app.Id } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

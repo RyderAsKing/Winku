@@ -332,6 +332,7 @@ pub fn register_all(app: &AppHandle, settings: &Settings) {
     *state.chord.lock().unwrap_or_else(|e| e.into_inner()) = chord;
     *state.leader.lock().unwrap_or_else(|e| e.into_inner()) = leader_shortcut;
     state.leader_down.store(false, Ordering::SeqCst);
+    crate::hint::configure(settings.leader_key.as_deref());
     let status = Status { failed };
     for failure in &status.failed {
         eprintln!(

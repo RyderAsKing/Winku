@@ -1,5 +1,5 @@
 // Mirror of app/src-tauri/src/settings.rs. Keep the two in sync; docs/ARCHITECTURE.md has the schema.
-import type { ActionSpec, ModelChoice, ProviderConfig } from "../../../../engine/src/protocol.ts";
+import type { ActionSpec, ModelChoice, ProviderConfig, SpeechLength } from "../../../../engine/src/protocol.ts";
 
 export type ReplyMode = "mirror" | "always_voice" | "always_text";
 export type UpdateMode = "auto" | "notify" | "off";
@@ -35,10 +35,12 @@ export interface Settings {
 	voice: {
 		stt: "moonshine-base" | "whisper-base-en" | "parakeet";
 		tts: "os" | "supertonic";
-		/** Natural voice, 0–4 male and 5–9 female; null in files from before it existed. */
+		/** Natural voice, 0–4 female and 5–9 male; null in files from before it existed. */
 		ttsVoice: number | null;
 		osVoice: string | null;
 		reply: ReplyMode;
+		/** How much of a spoken reply is said; the rest is only on screen (SPEC §11). */
+		say: SpeechLength;
 		listeningPaused: boolean;
 	};
 	updates: UpdateMode;

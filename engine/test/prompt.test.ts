@@ -14,6 +14,7 @@ test("holds the instructions, style and mood instruction, and nothing time-varyi
 	expect(prompt).toContain("You are Winku");
 	expect(prompt).toContain("<assistant_style>\nWarm and short.\n</assistant_style>");
 	expect(prompt).toContain("<mood:NAME>");
+	expect(prompt).toContain("Start the reply with <say>");
 	expect(prompt).toContain("happy, hearts, neutral, sad, surprised, thinking");
 	expect(prompt).not.toMatch(/\d{4}-\d{2}-\d{2}/);
 	expect(buildSystemPrompt({ assistantStyle: "  " })).not.toContain("assistant_style");
@@ -46,6 +47,8 @@ test("now line round-trips", () => {
 
 test("a spoken prompt is marked on the now line and read back", () => {
 	expect(formatNow(undefined, true)).toBe('\n\n<now spoken="yes"></now>');
+	expect(formatNow(undefined, false, "brief")).toBe('\n\n<now speak="brief"></now>');
+	expect(parseNow(`hi${formatNow(undefined, true, "full")}`)).toEqual({ text: "hi", spoken: true });
 	expect(parseNow(`hi${formatNow(undefined, true)}`)).toEqual({ text: "hi", spoken: true });
 	const now = { app: "notepad.exe", selection: "x" };
 	expect(parseNow(`hi${formatNow(now, true)}`)).toEqual({ text: "hi", now, spoken: true });

@@ -3,6 +3,7 @@ mod capture;
 mod commands;
 mod engine;
 mod fullscreen;
+mod hint;
 mod hotkeys;
 mod menu;
 mod platform;
@@ -52,6 +53,7 @@ pub fn run() {
             engine::Engine::start(handle)?;
             commands::apply_launch_at_login(handle, current.launch_at_login);
             fullscreen::start(handle);
+            hint::start(handle);
             update::start(handle);
             Ok(())
         })

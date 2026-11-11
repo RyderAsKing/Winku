@@ -69,6 +69,8 @@ The design language comes from the user's research page (https://always-on-eyes-
 
 Everything is reachable with the left hand and everything is rebindable (the user has no Caps Lock key). Settings warns about conflicts and detects layouts where `Ctrl+Alt` acts as AltGr, suggesting `Ctrl+Shift` instead. An optional leader key (e.g. F13 on a programmable keyboard) can replace `Ctrl+Alt`.
 
+Holding the prefix (`Ctrl+Alt` or the leader key) alone for about 450 ms shows small hints next to the eyes saying what each key does; they go away as soon as another key goes down or the prefix is released, and never show over a fullscreen app.
+
 | Keys | Does |
 |---|---|
 | tap `Ctrl+Alt+Space` | open or hide the bar |
@@ -146,6 +148,8 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 - **Speech-to-text:** Moonshine base or Whisper base.en by default. Parakeet is an optional download.
 - **Text-to-speech:** Supertonic (MIT, about 85 MB) by default, an offline neural voice that downloads on first use; ten voices to choose from. The voices built into the OS (Windows OneCore) read while it downloads and stay a Settings option. Piper isn't used because it is GPL. Kokoro was dropped: with sherpa-onnx 2.x it skips numbers, symbols and plural forms.
 - **When it speaks:** replies mirror how you asked, so if you spoke it answers with voice and text, and if you typed it answers with text only. A setting can force always voice or always text. Holding the talk key interrupts speech.
+- **What it says and what it shows:** a spoken reply has two parts. What it says is written for listening: plain sentences, numbers and abbreviations said the way a person would, and no paths, code, commands, links or tables (it says they are on screen instead). What it shows is the usual written reply, exact details included. The voice starts as soon as the said part is ready, before the written part has finished. When the two would be the same, it only writes one, and that is shown too.
+- **How much it says** (Settings): "A sentence or two", "Enough to follow without looking" (the default) or "Everything it writes", reworded for listening.
 
 ## 12. Not in v1
 

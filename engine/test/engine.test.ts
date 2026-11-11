@@ -136,6 +136,49 @@ test("appends the now line to the user message and passes images through", async
 	await engine.shutdown();
 }, T);
 
+test("a spoken reply's <say> blocks go to say events, the written part to text_delta", async () => {
+	const engine = start();
+	await engine.configure({
+		faux: {
+			replies: [
+				{ echoUser: true },
+				{ text: "<say>Let me check.</say>", toolCalls: [{ name: "no_such_tool", arguments: { why: "check" } }] },
+				{ text: "<say>The timeout is now thirty seconds.</say>\n\nSet `timeout = 30` in `config.toml`. <mood:happy>" },
+				{ text: "<say>It's twenty past three.</say> <mood:neutral>" },
+				{ text: "<say>Not parsed here.</say> Typed." },
+			],
+		},
+	});
+	const asked = await engine.prompt("hi", { spoken: true, speak: "enough" });
+	expect(asked.end.text).toBe('hi\n\n<now spoken="yes" speak="enough"></now>\n[images:0]');
+
+	const { end, records } = await engine.prompt("fix the timeout", { speak: "enough" });
+	expect(records.filter((r) => r.type === "say").map((r) => r.type === "say" && r.text)).toEqual([
+		"Let me check.",
+		"The timeout is now thirty seconds.",
+	]);
+	expect(end).toMatchObject({ text: "Set `timeout = 30` in `config.toml`.", mood: "happy" });
+	expect(deltas(records)).toBe(end.text);
+	// The first block is said before the written part starts.
+	const firstSay = records.findIndex((r) => r.type === "say");
+	expect(firstSay).toBeLessThan(records.findIndex((r) => r.type === "text_delta"));
+
+	// Nothing written: the said text is the reply.
+	const short = await engine.prompt("what time is it?", { speak: "brief" });
+	expect(short.end).toMatchObject({ text: "It's twenty past three.", mood: "neutral" });
+	expect(deltas(short.records)).toBe("It's twenty past three.");
+
+	// Not asked to speak: tags are left alone.
+	const typed = await engine.prompt("typed");
+	expect(typed.records.some((r) => r.type === "say")).toBe(false);
+	expect(typed.end.text).toBe("<say>Not parsed here.</say> Typed.");
+
+	const transcript = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	const assistant = transcript.filter((t) => t.kind === "assistant").map((t) => t.kind === "assistant" && t.text);
+	expect(assistant.slice(1, 4)).toEqual(["Let me check.", "Set `timeout = 30` in `config.toml`.", "It's twenty past three."]);
+	await engine.shutdown();
+}, T);
+
 test("reports tool calls generically", async () => {
 	const engine = start();
 	await engine.configure({

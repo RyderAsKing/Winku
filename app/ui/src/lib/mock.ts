@@ -3,6 +3,8 @@
 //   ?connect=1     no provider yet (Connect form)
 //   ?ctx=0.62      context fullness
 //   ?thinking=high Main thinking level
+//   ?altgr=1       the keyboard layout has AltGr (Settings offers Ctrl+Shift)
+//   ?taken=action2 a hotkey another app already registered
 import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
@@ -176,6 +178,20 @@ export function createMockShell(): ShellImpl {
 				case "secret_clear":
 					hasKey = false;
 					return undefined as T;
+				case "hotkeys_status": {
+					const taken = params.get("taken");
+					const binding = taken?.startsWith("action") ? settings.hotkeys.actions[Number(taken.slice(6)) - 1] : undefined;
+					return { failed: taken ? [{ name: taken, binding: binding ?? "", error: "already registered" }] : [] } as T;
+				}
+				case "hotkeys_altgr": {
+					const altGr = params.has("altgr");
+					const conflicts = altGr
+						? ["summon", "askSelection", "screenshot", "clear", "cycleThinking"].filter((k) =>
+								/^ctrl\+alt\+/i.test(settings.hotkeys[k as "summon"]),
+							)
+						: [];
+					return { altGr, keys: altGr ? ["Q", "E", "2", "3"] : [], conflicts, suggestion: "Ctrl+Shift" } as T;
+				}
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;
 				default:

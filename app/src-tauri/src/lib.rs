@@ -11,6 +11,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(hotkeys::handle)
@@ -53,6 +54,7 @@ pub fn run() {
             commands::context_menu,
             commands::hotkeys_status,
             commands::hotkeys_altgr,
+            commands::open_external,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Winku")

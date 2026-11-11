@@ -16,7 +16,7 @@
 	import { duplicates } from "../lib/hotkey.ts";
 	import "../lib/theme.css";
 	import type { Settings } from "../lib/settings.ts";
-	import { onSettingsChanged, shell } from "../lib/shell.ts";
+	import { type AltGrReport, type HotkeysStatus, onHotkeysStatus, onSettingsChanged, shell } from "../lib/shell.ts";
 
 	const ALL_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -24,6 +24,8 @@
 	let hasKey = $state(false);
 	let providers: ProviderInfo[] = $state([]);
 	let models: ModelInfo[] = $state([]);
+	let hotkeys: HotkeysStatus = $state({ failed: [] });
+	let altGr = $state<AltGrReport | null>(null);
 
 	// Model group draft
 	let providerId = $state("");
@@ -69,8 +71,15 @@
 		})();
 		const unlisten = onSettingsChanged((s) => {
 			settings = s;
+			void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
 		});
-		return () => void unlisten.then((u) => u());
+		void shell.hotkeysStatus().then((s) => (hotkeys = s)).catch(() => {});
+		void shell.hotkeysAltGr().then((r) => (altGr = r)).catch(() => {});
+		const unlistenHotkeys = onHotkeysStatus((s) => (hotkeys = s));
+		return () => {
+			void unlisten.then((u) => u());
+			void unlistenHotkeys.then((u) => u());
+		};
 	});
 
 	$effect(() => {
@@ -168,6 +177,31 @@
 		if (typeof key === "number") hotkeys.actions[key] = value;
 		else hotkeys[key] = value;
 		save({ hotkeys });
+	}
+
+	/** The settings field a row's binding lives in, as `hotkeys_status` names it. */
+	const fieldName = (key: (typeof hotkeyRows)[number]["key"]) => (typeof key === "number" ? `action${key + 1}` : key);
+	const failedFor = (key: (typeof hotkeyRows)[number]["key"]) => hotkeys.failed.find((f) => f.name === fieldName(key));
+	const leaderFailed = $derived(hotkeys.failed.find((f) => f.name === "leaderKey"));
+	const altGrConflicts = $derived(altGr?.altGr ? altGr.conflicts : []);
+
+	/** Swap Ctrl+Alt for the suggested modifiers in every binding that AltGr breaks. */
+	function useSuggestion() {
+		if (!settings || !altGr) return;
+		const from = /^ctrl\+alt\+/i;
+		const swap = (v: string) => v.replace(from, `${altGr!.suggestion}+`);
+		const h = structuredClone($state.snapshot(settings.hotkeys));
+		save({
+			hotkeys: {
+				...h,
+				summon: swap(h.summon),
+				actions: h.actions.map(swap),
+				askSelection: swap(h.askSelection),
+				screenshot: swap(h.screenshot),
+				clear: swap(h.clear),
+				cycleThinking: swap(h.cycleThinking),
+			},
+		});
 	}
 
 	const dupes = $derived(settings ? duplicates(hotkeyRows.map((r) => r.get(settings as Settings))) : new Set<string>());
@@ -296,13 +330,21 @@
 
 		<section>
 			<h2>Keys</h2>
+			{#if altGrConflicts.length > 0}
+				<div class="notice">
+					<p>Your keyboard layout uses Ctrl+Alt to type characters, so some of these keys won't work.</p>
+					<button type="button" onclick={useSuggestion}>Use {altGr?.suggestion} instead</button>
+				</div>
+			{/if}
 			{#each hotkeyRows as row (row.label)}
 				{@const value = row.get(settings)}
+				{@const failed = failedFor(row.key)}
 				<div class="field">
 					<span>{row.label}</span>
 					<div class="inline">
 						<HotkeyField label={row.label} {value} conflict={dupes.has(value.toLowerCase())} onchange={(v) => setHotkey(row.key, v)} />
-						{#if dupes.has(value.toLowerCase())}<p class="hint bad">Used twice</p>{/if}
+						{#if dupes.has(value.toLowerCase())}<p class="hint bad">Used twice</p>
+						{:else if failed}<p class="hint bad">Another app already uses this</p>{/if}
 					</div>
 				</div>
 			{/each}
@@ -311,7 +353,8 @@
 				<div class="inline">
 					<HotkeyField label="Leader key" value={settings.leaderKey ?? "None"} onchange={(v) => save({ leaderKey: v })} />
 					{#if settings.leaderKey}<button type="button" class="quiet" onclick={() => save({ leaderKey: null })}>Clear</button>{/if}
-					<p class="hint">Replaces Ctrl+Alt in every key above, e.g. F13.</p>
+					{#if leaderFailed}<p class="hint bad">Another app already uses this</p>
+					{:else}<p class="hint">Replaces Ctrl+Alt in every key above, e.g. F13.</p>{/if}
 				</div>
 			</div>
 		</section>
@@ -421,6 +464,30 @@
 	}
 	.bad {
 		color: var(--error);
+	}
+	.notice {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 12px;
+		border-radius: 10px;
+		border: 1px solid var(--line-strong);
+	}
+	.notice p {
+		flex: 1;
+		margin: 0;
+		font-size: 13px;
+		text-wrap: pretty;
+	}
+	.notice button {
+		flex: none;
+		height: 30px;
+		padding: 0 12px;
+		border-radius: 8px;
+		border: 1px solid var(--line-strong);
+		background: var(--panel-raised);
+		font-size: 12px;
+		cursor: pointer;
 	}
 	.quiet {
 		flex: none;

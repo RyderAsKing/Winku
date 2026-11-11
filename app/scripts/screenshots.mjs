@@ -82,6 +82,7 @@ const cases = [
 		},
 	},
 	{ name: "settings", path: "/settings.html", size: { width: 680, height: 1040 }, ready: "text=Leader key" },
+	{ name: "settings-keys-warnings", path: "/settings.html?altgr=1&taken=action2", size: { width: 680, height: 1040 }, ready: "text=Use Ctrl+Shift instead" },
 	{
 		name: "history",
 		path: "/history.html",

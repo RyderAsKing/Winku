@@ -110,3 +110,38 @@ pub fn hotkeys_status(state: State<'_, HotkeyState>) -> Status {
 pub fn hotkeys_altgr(store: State<'_, Store>) -> AltGrReport {
     hotkeys::altgr_report(&store.get())
 }
+
+/// Opens a link from a reply in the default browser. Only http(s): a model-written link must not
+/// launch a local file or another URL scheme handler.
+#[tauri::command]
+pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    if !is_web_url(&url) {
+        return Err("only http and https links can be opened".into());
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+fn is_web_url(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && !url.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_web_url;
+
+    #[test]
+    fn only_web_urls_open() {
+        assert!(is_web_url("https://example.com/a?b=c"));
+        assert!(is_web_url("HTTP://example.com"));
+        assert!(!is_web_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_web_url("ms-settings:privacy"));
+        assert!(!is_web_url("javascript:alert(1)"));
+        assert!(!is_web_url("https://example.com/\nfoo"));
+        assert!(!is_web_url("https://example.com/\u{0}"));
+    }
+}

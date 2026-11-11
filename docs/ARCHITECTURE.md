@@ -179,7 +179,7 @@ app/ui/src/
 - Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index) get unit tests. Everything also runs against the compiled binary in CI.
 - Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing). Platform code is behind traits so the logic is testable on Linux.
 - UI: `svelte-check` and a Vite build.
-- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `settings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `settings`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout.
 - CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory. A Linux job runs the same checks faster.
 
 ## Decisions not spelled out in the spec

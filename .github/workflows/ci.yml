@@ -134,6 +134,20 @@ jobs:
         with:
           name: windows-shots
           path: ${{ runner.temp }}/winku-shots
+
+      - name: Perf probe (window moves, idle CPU, Chromium in front)
+        working-directory: app
+        # Windows PowerShell: the probe compiles a WinForms helper, which is simplest on .NET Framework.
+        shell: powershell
+        timeout-minutes: 10
+        run: ./scripts/perf-probe.ps1
+
+      - name: Upload the probe's pill screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-probe-pill
+          path: ${{ runner.temp }}/probe-pill*.png
           if-no-files-found: ignore
 
   windows-tests:

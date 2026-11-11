@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The pill, and the bar it stretches into. The eyes never move: the bar grows from the pill
-	// toward the middle of the screen. Resting: click to open, drag to move, right-click for the
-	// menu. Open: the message box, then the context meter and thinking level.
+	// toward the middle of the screen. Click the eyes to open or close, drag them to move Winku,
+	// right-click for the menu. Open: the message box, then the context meter and thinking level.
 	//
 	// The eyes are pinned to the anchored end and the body is laid out at the full bar width the
 	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
@@ -37,7 +37,7 @@
 	}
 
 	function onpointermove(event: PointerEvent) {
-		if (!start || open) return;
+		if (!start) return;
 		if (Math.hypot(event.screenX - start.x, event.screenY - start.y) > 3) {
 			start = null;
 			void shell.startDrag();

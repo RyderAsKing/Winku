@@ -48,7 +48,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `window_shape` | `{ width, height, shapes: { x, y, w, h }[] }` → `{ alignRight, above }` (the stage size and the shapes drawn on it, logical px from the stage's top-left) | 2 |
 | `window_drag` | `{}` → void (the main window follows the mouse until the button comes up, then snaps and saves; see "Windows" below) | 2 |
 | `window_layout` | `{}` → `{ alignRight, above } \| null` (which way things grow from the pill) | 2 |
-| `open_window` | `{ name: "settings" \| "history" }` → `()` | 2 |
+| `open_window` | `{ name: "settings" \| "history", section? }` → `()`; `section` ("schedules") opens Settings on that section (a new window loads `settings.html?section=schedules`; an open one gets `ui` `{ kind: "settings_section", section }`) | 2, 9 |
 | `context_menu` | `()` → `()` (native menu at the cursor) | 2 |
 | `open_external` | `{ url }` → `()`; http(s) only, opens the default browser | 2 |
 | `hotkeys_status` | `()` → `{ failed: { name, binding, error }[] }`: bindings that didn't register | 2 |
@@ -62,6 +62,9 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `update_status` | `()` → `UpdateStatus`: `{ state: "idle" \| "checking" \| "available" \| "downloading" \| "ready" \| "error", version?, notes?, error? }` | 8 |
 | `update_check` | `()` → `UpdateStatus` after checking now (Settings "Check now"); in `auto` mode it also starts the download | 8 |
 | `update_restart` | `()` → `()`: download if needed, install and relaunch (bar link, menu item) | 8 |
+| `tasks_list` | `()` → `TaskInfo[]`, soonest first (Settings > Schedules) | 9 |
+| `task_cancel` | `{ id }` → `()`; cancels like `cancel_task` | 9 |
+| `draft_state` | `{ draft: boolean }` → `()`: the bar's message box has text (due jobs wait) | 9 |
 | `voice_model_download` / `voice_model_remove` | `{ id }` → `()`. Download returns at once; progress comes as `download_progress` | 7 |
 
 ### Events (`listen`)
@@ -69,10 +72,11 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | Event | Payload |
 |---|---|
 | `engine` | Every engine Event, plus `permission` Requests |
-| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_partial", text }` (while recording: the transcription of the whole recording so far, sent only when it changed; never after that recording's `talk_end`), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot), `{ kind: "layout", alignRight, above }` (the pill was moved across the screen's middle), `{ kind: "bring", phase: "start", dx, dy }` (the "Bring Winku here" key started or retargeted a glide; `dx`, `dy` are the logical px still to travel) and `{ kind: "bring", phase: "end" }` (it arrived or a drag cancelled it), `{ kind: "hotkey_hint", show }` (the hotkey prefix, `Ctrl+Alt` or the leader key, has been held alone for 450 ms: `show: true`; `show: false` when it is released or another key goes down; never sent while a fullscreen app has focus. Read through Raw Input on a dedicated thread, no keyboard hook; elevated windows don't deliver raw input to Winku, so no hints there) |
+| `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_partial", text }` (while recording: the transcription of the whole recording so far, sent only when it changed; never after that recording's `talk_end`), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot), `{ kind: "layout", alignRight, above }` (the pill was moved across the screen's middle), `{ kind: "bring", phase: "start", dx, dy }` (the "Bring Winku here" key started or retargeted a glide; `dx`, `dy` are the logical px still to travel) and `{ kind: "bring", phase: "end" }` (it arrived or a drag cancelled it), `{ kind: "hotkey_hint", show }` (the hotkey prefix, `Ctrl+Alt` or the leader key, has been held alone for 450 ms: `show: true`; `show: false` when it is released or another key goes down; never sent while a fullscreen app has focus. Read through Raw Input on a dedicated thread, no keyboard hook; elevated windows don't deliver raw input to Winku, so no hints there), `{ kind: "scheduled_started", id, name, taskKind, speak? }` (a scheduled run's prompt went out; #43) |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
 | `update_status` | `UpdateStatus`, whenever it changes |
+| `tasks_changed` | `TaskInfo[]`, to every window whenever a job is added, runs, changes status or ends |
 | `download_progress` | `{ what: "stt" \| "tts", model, fraction }` while a voice model downloads; `fraction: 1` when it is installed. A failure sends `ui` `voice_error` and `{ ..., fraction: -1 }`. |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
@@ -194,6 +198,56 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 - **Screenshot hotkey** (`Ctrl+Alt+S`): the shell captures the foreground window (downscaled like `screen_capture`) and emits `ui` `attach_screenshot`; the UI shows it as a chip and sends it with the next prompt.
 - **Compaction drops screenshots:** images in the kept part of the thread are replaced by "[screenshot removed]" when the thread is compacted. This happens in what is sent to the model (a context transform on the session's agent): the session file keeps the images, so the transcript still counts them, and images sent after the compaction are untouched.
 - **Tool events** carry a short summary without the tool name (the UI shows `name: summary`): the command's first line for shells, the file name for `read`/`write`/`edit`, the URL, query or target for the web tools and `open`, the action and ref (`set value @s1:e2`), keys, window or wait text for the desktop tools.
+
+## Scheduled tasks
+
+SPEC §7a. The model can schedule its own wakeups: shaped after Claude Code's `/loop`, ScheduleWakeup and Monitor. The shell owns the jobs, their rules and `tasks.json`; the engine's tools are thin wrappers over `task_*` Requests (types in `protocol.ts`, "scheduled tasks").
+
+**Kinds.** A **timer** runs its prompt once, at a time. A **loop** runs its prompt `every` interval, or is **self-paced**: each run calls `next_wakeup` with the next delay (1 to 60 minutes) or `stop`. A **watch** runs a command in the background, and the lines it prints wake Winku.
+
+**Tools** (engine, `tools/tasks.ts`):
+
+| Tool | Params | Request |
+|---|---|---|
+| `schedule_task` | `{ name, prompt, in? \| at? \| every?, selfPaced? }`. Durations: a number plus `s`, `m`, `h` or `d` (`"20m"`, `"1h30m"` is not accepted). `at`: `HH:MM` (today, or tomorrow if past) or a local ISO date-time. Exactly one of `in`, `at`, `every`; `selfPaced` needs `in` (the first delay). `in`/`at` alone is a timer; `every` or `selfPaced` a loop. | `task_schedule` with `kind`, `at` (epoch ms; `in` is resolved by the engine), `everyMs`, `selfPaced` + `inMs` |
+| `next_wakeup` | `{ in, reason }` or `{ stop: true }` | `task_wakeup { from, delayMs \| stop, reason }` |
+| `watch` | `{ description, command, prompt }` | `task_schedule` with `kind: "watch"`, `shell` (PowerShell on Windows, else the bash the bash tool uses) |
+| `list_tasks` | `{}` | `task_list` |
+| `cancel_task` | `{ id }` | `task_cancel` |
+
+Every call from a scheduled run carries `from` (the run's job id). Each tool returns one line: `Scheduled 3f9a2c1d "Oven": once at 14:40.`, `Scheduled 3f9a2c1d "DM": every 2m, next at 14:22.`, `Watching 3f9a2c1d "build fails".`, `Next run of "deploy" at 14:29 (deploy still rolling out).`, `Stopped "deploy".`, `Cancelled "Oven".`; `list_tasks` one line per job (`3f9a2c1d  "DM"  loop every 2m  next 14:22  runs 3  scheduled`) or `No scheduled tasks.` Errors come back as the shell's one line. The engine's own errors: `Durations look like 20m, 90s, 2h or 1d.`, `Times look like 15:30 or 2026-11-14T09:00.`, `Give exactly one of in, at or every.`, `selfPaced needs in, the first delay.`
+
+**Rules** (shell, `tasks.rs`; the Response error is the line in quotes):
+
+- At most 50 jobs ("Too many tasks: 50 are scheduled.") and 5 watches ("Too many watches: 5 are running.").
+- Intervals and timer delays: at least 15 s ("Interval too short: the minimum is 15s."). Self-paced delays: 1 to 60 minutes ("Delays are 1m to 60m."). A timer at most 7 days ahead ("Too far ahead: at most 7 days.").
+- Unknown id: "No task with id 3f9a2c1d."
+- From a scheduled run (`from` set): `task_schedule` is refused, and `task_cancel` only works on its own job ("A scheduled run can only change or cancel itself."). `task_wakeup` needs `from` to be a self-paced loop ("next_wakeup only works in a self-paced run.") and is refused on a final run ("This task expired. Ask the user to set it up again.").
+- Name: trimmed, at most 40 characters (cut). Ids: 8 random lower-case hex characters.
+
+**The file.** `%APPDATA%\winku\tasks.json`: `{ "version": 1, "jobs": [...] }`, live jobs only, each `{ id, name, kind, prompt, selfPaced, everyMs?, command?, description?, shell?, createdAt, expiresAt?, nextRunAt?, runs, failures, spoken, fallbackUsed }` (epoch ms). Written with tmp-and-rename like `settings.json`; an unreadable file is renamed `tasks.json.bad`. Watch output is never written.
+
+**Scheduler** (shell, `scheduler.rs`), a 1 s tick on wall-clock time (so the PC sleeping needs no special case):
+
+- **Idle.** A due job waits while a prompt or action is running (the shell saw `prompt`/`run_action` go out and no `reply_end`/`action_end` yet), a `permission` Request is unanswered, the talk key is held, or the bar has a draft (`draft_state`). One run at a time, the oldest due first.
+- **A run** is a `prompt` with id `task-<n>`, `text` = the job's prompt, `scheduled: ScheduledRun`, a now line captured then (app, window title, clipboard note; no selection), `spoken` false, and `speak` = `settings.voice.say` when `settings.voice.reply` is `always_voice`, or `mirror` and the job was spoken. Then `ui` `{ kind: "scheduled_started", id, name, taskKind, speak? }`.
+- **No catch-up.** However many fires were missed, the job runs once; `missed` counts the rest.
+- **Jitter.** A loop's next run is its time plus `fraction(id) × min(gap / 2, 30 min)`, with `fraction` in [0, 1) from the id (stable across restarts). Timers run on time.
+- **Expiry.** Loops and watches get `expiresAt` = creation + 7 days. At expiry a loop runs once more with `final: true` (a watch's final run comes with the lines so far, or the prompt alone), then the job ends.
+- **Self-paced.** After a run (its `reply_end`): if it called `next_wakeup`, that set the next run; if it called `stop`, the job ended. Otherwise the first time the next run is 20 minutes later (`fallbackUsed`), and the second time the job ends with the notice `"<name>" stopped: it didn't pick a next time.`
+- **Timers** end after their run. A timer more than 10 minutes late (asleep, or closed) doesn't run; it ends with the notice `Missed: "<name>" was due at 14:20.`
+- **Failures.** A run that ends with an `error` event for its id, or a watch command that exits non-zero within 10 s of starting, is a failure; anything else resets the count. Three in a row end the job: `Stopped "<name>": the last 3 runs failed (<reason>).`
+- **After a restart** (the file is loaded before the engine is ready; notices wait for `ready`): loops that missed a run run once at the first idle moment, with the notice `Missed while Winku was closed: "<name>" was due at 14:20.`; late timers end as above with `Missed while Winku was closed: …`; watches start their command again (`Restarted watch "<name>".`).
+- **Notices** go to the engine as `notice` commands.
+- **Changes** go to every window as `tasks_changed` (`TaskInfo[]`), and refresh the right-click menu.
+
+**Watches.** The shell runs the command (`powershell.exe -NoProfile -NonInteractive -Command <command>`, or `<bash> -c <command>`) in the home folder, with no window (`CREATE_NO_WINDOW`), stdout piped, stdin null. Each stdout line (trimmed, empty ones skipped, cut at 500 characters) is buffered; a burst ends 1 s after its last line, and wakes are at most one per 15 s. Lines that come while Winku is busy wait. At most 50 are kept, oldest dropped and counted (`dropped`). A run gets the lines and `description`. When the command exits, the job ends with `Watch "<name>" ended (exit <code>).` after any lines still waiting have run. Cancelling, expiry and quitting kill the process tree. stderr is kept (the last line) for the failure notice.
+
+**Permissions.** Scheduled runs go through "Ask before running" like any reply. A run waiting for approval waits (status `waiting`), up to the 30-minute permission timeout, which is a Deny. In a scheduled run `desktop_act`, `desktop_press` and `desktop_window` always ask, even with the switch off, unless their `desktop:<app>` key is in `alwaysAllow`. `watch` is gated like `powershell` (`powershell:<first word>`, compound commands always ask); restarting a watch doesn't ask again.
+
+**Engine.** A `prompt` with `scheduled` goes to the model as `[scheduled: <name>] <text>` (watches: `[watch: <description>]`, the lines, a blank line, then the text), plus `(final run: this task expired after 7 days)` or `(<n> missed runs collapsed into this one)` when they apply. The transcript shows it as a user row with `scheduled`. A `notice` is a custom message (`customType: "winku-notice"`) delivered with the next turn (`deliverAs: "nextTurn"`), shown as a notice row.
+
+**UI.** The pill shows a small static dot while any job exists. The bar shows `<n> waiting` beside the ctx meter; it and the right-click menu's `Scheduled (<n>)` open Settings > Schedules: each job's name, kind, next run (or "watching"), runs, and Cancel. A scheduled run's reply opens the bubble under the pill without taking focus, like an agent action.
 
 ## Computer use
 

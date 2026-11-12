@@ -14,7 +14,7 @@ test("the default keys: five actions by name, then the rest", () => {
 	const { actions, other } = hintsFor(defaultSettings());
 	expect(actions.map((h) => h.key)).toEqual(["1", "2", "3", "4", "5"]);
 	expect(actions[0]?.label).toBe(defaultSettings().actions[0]?.name);
-	expect(other.map((h) => h.key)).toEqual(["Space", "Q", "S", "X", "T"]);
+	expect(other.map((h) => h.key)).toEqual(["Space", "Q", "S", "X", "T", "B"]);
 });
 
 test("a rebound or nameless key is left out", () => {

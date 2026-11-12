@@ -464,7 +464,7 @@ cases.push(
 	{
 		name: "streaming",
 		path: "/",
-		ready: ".md",
+		ready: ".current .md",
 		prepare: async (page) => {
 			await summon(page);
 			await page.clock.install();

@@ -29,6 +29,7 @@ export function hintsFor(settings: Pick<Settings, "hotkeys" | "actions">): { act
 			...hint(h.screenshot, "Attach a screenshot"),
 			...hint(h.clear, "Clear the conversation"),
 			...hint(h.cycleThinking, "Thinking level"),
+			...hint(h.bring, "Bring Winku here"),
 		],
 	};
 }

@@ -125,7 +125,7 @@
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
-					<div class="bubble reply" class:resting={!open}><ReplyBubble {app} reply={app.reply} max={bubbleMax - 2} /></div>
+					<div class="bubble reply-box" class:resting={!open}><ReplyBubble {app} reply={app.reply} max={bubbleMax - 2} /></div>
 				{/if}
 				{#if app.toast}
 					<div class="bubble toast" role="status" in:pop={{ y: above ? 6 : -6, duration: 240 }}>
@@ -229,7 +229,7 @@
 		flex: 0 1 auto;
 		overflow-y: auto;
 	}
-	.reply {
+	.reply-box {
 		flex: none;
 		overflow: hidden;
 	}

@@ -115,6 +115,16 @@ test("strips the mood tag from deltas and reports the mood", async () => {
 	await engine.shutdown();
 }, T);
 
+test("the now line carries the clipboard note (kind and size only) and reads it back", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ echoUser: true }] } });
+	const { end } = await engine.prompt("fix this", { now: { app: "notepad.exe", clipboard: "text, 120 words" } });
+	expect(end.text).toBe('fix this\n\n<now app="notepad.exe" clipboard="text, 120 words"></now>\n[images:0]');
+	const transcript = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	expect(transcript[0]).toMatchObject({ kind: "user", text: "fix this", now: { app: "notepad.exe", clipboard: "text, 120 words" } });
+	await engine.shutdown();
+}, T);
+
 test("appends the now line to the user message and passes images through", async () => {
 	const engine = start();
 	await engine.configure({ faux: { replies: [{ echoUser: true }] } });

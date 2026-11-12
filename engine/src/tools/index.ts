@@ -11,6 +11,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { ShellRequests } from "../requests.ts";
+import { clipboardTools } from "./clipboard.ts";
 import type { DesktopRunner } from "./desktop/cli.ts";
 import { desktopTools } from "./desktop/index.ts";
 import { globFindOperations } from "./find.ts";
@@ -70,6 +71,7 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 		webFetchTool(deps.web ?? defaultWebDeps),
 		webSearchTool(deps.searchKey, deps.web ?? defaultWebDeps),
 		lookAtScreenTool(deps.requests, deps.supportsImages, desktop?.glance),
+		...(clipboardTools(deps.requests, deps.supportsImages) as AnyTool[]),
 		...((desktop?.tools ?? []) as AnyTool[]),
 	);
 	const gate = {

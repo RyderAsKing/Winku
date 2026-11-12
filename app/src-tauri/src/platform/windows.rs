@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
-    GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
+    RegisterClipboardFormatW, SetClipboardData,
 };
 use windows_sys::Win32::System::Memory::{
     GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
@@ -639,6 +640,8 @@ pub fn capture_window(window: WindowHandle) -> Result<RawImage, String> {
 // Clipboard
 
 const CF_BITMAP: u32 = 2;
+const CF_DIB: u32 = 8;
+const CF_HDROP: u32 = 15;
 const CF_METAFILEPICT: u32 = 3;
 const CF_PALETTE: u32 = 9;
 const CF_UNICODETEXT: u32 = 13;
@@ -743,6 +746,11 @@ impl Open {
     }
 
     fn read(&self, format: u32) -> Option<Vec<u8>> {
+        self.read_head(format, usize::MAX)
+    }
+
+    /// At most the first `limit` bytes of a format's data.
+    fn read_head(&self, format: u32, limit: usize) -> Option<Vec<u8>> {
         // SAFETY: the clipboard is open; the HGLOBAL stays owned by the clipboard and is only
         // read between GlobalLock and GlobalUnlock.
         unsafe {
@@ -750,7 +758,7 @@ impl Open {
             if handle.is_null() {
                 return None;
             }
-            let size = GlobalSize(handle);
+            let size = GlobalSize(handle).min(limit);
             let ptr = GlobalLock(handle) as *const u8;
             if ptr.is_null() {
                 return None;
@@ -759,6 +767,33 @@ impl Open {
             GlobalUnlock(handle);
             Some(data)
         }
+    }
+
+    /// Bytes in a format's data, without reading it.
+    fn size(&self, format: u32) -> Option<usize> {
+        // SAFETY: the clipboard is open; the handle is only measured.
+        unsafe {
+            let handle = GetClipboardData(format);
+            (!handle.is_null()).then(|| GlobalSize(handle))
+        }
+    }
+
+    /// Content a password manager marked to be kept out of clipboard history.
+    fn is_private(&self) -> bool {
+        let available = |name: &str| {
+            // SAFETY: plain Win32 call.
+            unsafe { IsClipboardFormatAvailable(registered(name)) != 0 }
+        };
+        available("ExcludeClipboardContentFromMonitorProcessing")
+            || available("Clipboard Viewer Ignore")
+            || ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"]
+                .iter()
+                .any(|name| {
+                    available(name)
+                        && self
+                            .read(registered(name))
+                            .is_some_and(|d| d.iter().all(|&b| b == 0))
+                })
     }
 
     fn unicode_text(&self) -> Option<String> {
@@ -849,6 +884,64 @@ impl Saved {
         }
         Ok(())
     }
+}
+
+/// What is on the clipboard now (the clipboard_read tool). Private content is never read.
+pub fn clipboard_read() -> Result<crate::clipboard::Raw, String> {
+    use crate::clipboard::Raw;
+    let owner = Owner::new()?;
+    let open = Open::new(&owner)?;
+    if open.is_private() {
+        return Ok(Raw::Private);
+    }
+    if let Some(data) = open.read(CF_HDROP) {
+        return Ok(Raw::Files(crate::clipboard::decode_hdrop(&data)));
+    }
+    if let Some(data) = open.read(CF_DIB) {
+        return Ok(Raw::Dib(data));
+    }
+    Ok(match open.unicode_text() {
+        Some(text) if !text.is_empty() => Raw::Text(text),
+        _ => Raw::Empty,
+    })
+}
+
+/// Replaces the clipboard with text (the clipboard_write tool). Unlike Winku's own paste-back
+/// it isn't marked: it is the user's clipboard now, history included.
+pub fn clipboard_write(text: &str) -> Result<(), String> {
+    let owner = Owner::new()?;
+    let open = Open::new(&owner)?;
+    open.empty();
+    let data: Vec<u8> = text
+        .encode_utf16()
+        .chain(Some(0))
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    if open.set(CF_UNICODETEXT, &data) {
+        Ok(())
+    } else {
+        Err("could not put the text on the clipboard".into())
+    }
+}
+
+/// Kind and size of what is on the clipboard, for the now line: formats and data sizes only
+/// (and a DIB's header), never the text.
+pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
+    use crate::clipboard::Summary;
+    let owner = Owner::new().ok()?;
+    let open = Open::new(&owner).ok()?;
+    if open.is_private() {
+        return Some(Summary::Private);
+    }
+    if let Some(data) = open.read(CF_HDROP) {
+        return Some(Summary::Files(crate::clipboard::decode_hdrop(&data).len()));
+    }
+    if let Some(header) = open.read_head(CF_DIB, 16) {
+        let (w, h) = crate::clipboard::dib_size(&header)?;
+        return Some(Summary::Image(w, h));
+    }
+    let chars = (open.size(CF_UNICODETEXT)? / 2).saturating_sub(1);
+    (chars > 0).then_some(Summary::Text(chars))
 }
 
 /// Selected text by simulating `Ctrl+C`, saving the clipboard first and restoring it after.

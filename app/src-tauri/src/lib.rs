@@ -1,5 +1,6 @@
 mod actions;
 mod capture;
+mod clipboard;
 mod commands;
 mod engine;
 mod fullscreen;

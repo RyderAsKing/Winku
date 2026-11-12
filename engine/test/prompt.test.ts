@@ -54,3 +54,8 @@ test("a spoken prompt is marked on the now line and read back", () => {
 	expect(parseNow(`hi${formatNow(now, true)}`)).toEqual({ text: "hi", now, spoken: true });
 	expect(parseNow(`hi${formatNow(now)}`)).toEqual({ text: "hi", now });
 });
+
+test("the tool list mentions the clipboard tools", () => {
+	const prompt = buildSystemPrompt({ assistantStyle: "" });
+	for (const name of ["clipboard_read", "clipboard_write", "clipboard_edit"]) expect(prompt).toContain(name);
+});

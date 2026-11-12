@@ -14,45 +14,21 @@ export function afterPrefix(binding: string): string | null {
 	return match?.[1] ? match[1] : null;
 }
 
-/** What the focused app said about its selection when the hold began (SPEC §5). "unknown": the
- *  query was off, not answered in time, or the app has no text to ask about. */
-export type SelectionState = "unknown" | "none" | "read-only" | "editable";
-
-/** The `selection` field of a `hotkey_hint` event: absent is unknown, null is nothing selected. */
-export function selectionState(selection: { editable: boolean } | null | undefined): SelectionState {
-	if (selection === undefined) return "unknown";
-	if (selection === null) return "none";
-	return selection.editable ? "editable" : "read-only";
-}
-
-/** Actions first (slots 1–5), then the rest, each list in the order Settings shows it. With text
- *  selected only the keys that act on it; with nothing selected only the general keys. When that
- *  leaves nothing, the full list. */
-export function hintsFor(
-	settings: Pick<Settings, "hotkeys" | "actions">,
-	selection: SelectionState = "unknown",
-): { actions: Hint[]; other: Hint[] } {
+/** Actions first (slots 1–5), then the rest, each list in the order Settings shows it. */
+export function hintsFor(settings: Pick<Settings, "hotkeys" | "actions">): { actions: Hint[]; other: Hint[] } {
 	const h = settings.hotkeys;
 	const hint = (binding: string, label: string): Hint[] => {
 		const key = afterPrefix(binding);
 		return key && label.trim() ? [{ key, label: label.trim() }] : [];
 	};
-	const actions = (withReplace: boolean) =>
-		settings.actions.flatMap((spec, i) =>
-			withReplace || spec.output !== "replace" ? hint(h.actions[i] ?? "", spec.name) : [],
-		);
-	const ask = hint(h.askSelection, "Ask about the selection");
-	const general = [
-		...hint(h.summon, "Open, or hold to talk"),
-		...hint(h.screenshot, "Attach a screenshot"),
-		...hint(h.clear, "Clear the conversation"),
-		...hint(h.cycleThinking, "Thinking level"),
-	];
-	const full = { actions: actions(true), other: [...general.slice(0, 1), ...ask, ...general.slice(1)] };
-	if (selection === "unknown") return full;
-	const lists =
-		selection === "none"
-			? { actions: [], other: general }
-			: { actions: actions(selection === "editable"), other: ask };
-	return lists.actions.length + lists.other.length > 0 ? lists : full;
+	return {
+		actions: settings.actions.flatMap((action, i) => hint(h.actions[i] ?? "", action.name)),
+		other: [
+			...hint(h.summon, "Open, or hold to talk"),
+			...hint(h.askSelection, "Ask about the selection"),
+			...hint(h.screenshot, "Attach a screenshot"),
+			...hint(h.clear, "Clear the conversation"),
+			...hint(h.cycleThinking, "Thinking level"),
+		],
+	};
 }

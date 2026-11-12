@@ -61,7 +61,6 @@ export function defaultSettings(): Settings {
 			bring: "Ctrl+Alt+B",
 		},
 		leaderKey: null,
-		guideFollowsSelection: true,
 		eyes: { hidden: false, size: "small", positions: {} },
 		voice: { stt: "moonshine-base", tts: "supertonic", ttsVoice: 5, osVoice: null, reply: "mirror", say: "enough", listeningPaused: false },
 		updates: "auto",

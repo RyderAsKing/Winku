@@ -1,12 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main, Settings, History and floating guide windows: shell commands, engine and ui events, window dragging",
+  "description": "Main, Settings and History windows: shell commands, engine and ui events, window dragging",
   "windows": [
     "main",
     "settings",
-    "history",
-    "guide"
+    "history"
   ],
   "permissions": [
     "core:default",

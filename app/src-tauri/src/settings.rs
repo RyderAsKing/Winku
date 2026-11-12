@@ -33,9 +33,6 @@ pub struct Settings {
     pub actions: Vec<ActionSpec>,
     pub hotkeys: Hotkeys,
     pub leader_key: Option<String>,
-    /// Ask the focused app what is selected when the hotkey prefix is held, and list only the
-    /// keys that fit (beta, SPEC §5). Off: no query in any app, the full guide.
-    pub guide_follows_selection: bool,
     pub eyes: Eyes,
     pub voice: Voice,
     pub updates: String,
@@ -162,7 +159,6 @@ impl Default for Settings {
             actions: default_actions(),
             hotkeys: Hotkeys::default(),
             leader_key: None,
-            guide_follows_selection: true,
             eyes: Eyes::default(),
             voice: Voice::default(),
             updates: "auto".into(),
@@ -323,6 +319,8 @@ impl Settings {
         self.hotkeys
             .actions
             .extend(Hotkeys::default().actions.into_iter().skip(have));
+        // The "guide follows the selection" setting of v0.1.5 is gone.
+        self.extra.remove("guideFollowsSelection");
         self.version = 1;
     }
 
@@ -567,7 +565,6 @@ mod tests {
         assert_eq!(value["voice"]["listeningPaused"], false);
         assert_eq!(value["updates"], "auto");
         assert_eq!(value["launchAtLogin"], true);
-        assert_eq!(value["guideFollowsSelection"], true);
         let names: Vec<_> = value["actions"]
             .as_array()
             .unwrap()
@@ -607,6 +604,19 @@ mod tests {
         let settings: Settings = serde_json::from_value(old).unwrap();
         assert_eq!(settings.hotkeys.summon, "F13");
         assert_eq!(settings.hotkeys.bring, "Ctrl+Alt+B");
+    }
+
+    #[test]
+    fn the_removed_guide_setting_loads_and_is_dropped() {
+        let mut settings: Settings = serde_json::from_str(
+            r#"{"guideFollowsSelection": true, "askBeforeRunning": true, "leaderKey": "F13"}"#,
+        )
+        .unwrap();
+        settings.normalize();
+        assert!(settings.ask_before_running);
+        assert_eq!(settings.leader_key.as_deref(), Some("F13"));
+        let back = serde_json::to_value(&settings).unwrap();
+        assert!(back.get("guideFollowsSelection").is_none());
     }
 
     #[test]

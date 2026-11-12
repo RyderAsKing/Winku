@@ -146,7 +146,7 @@
 				in:pop={{ y: above ? 6 : -6, duration: 200, from: 0.94 }}
 				out:fly={{ duration: ms(90), opacity: 0 }}
 			>
-				<HotkeyHints settings={app.settings} selection={app.hintSelection} />
+				<HotkeyHints settings={app.settings} />
 			</div>
 		{/if}
 	</div>

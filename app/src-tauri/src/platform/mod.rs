@@ -37,6 +37,16 @@ pub struct SelectedText {
     pub line: Option<ScreenRect>,
 }
 
+/// A selection query's answer and how it was reached (which source answered, or why none
+/// could), for the debug hint log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))] // only Windows asks
+pub struct SelectionAnswer {
+    /// None: unknown, the full guide.
+    pub selection: Option<Selection>,
+    pub how: String,
+}
+
 /// A rectangle on screen, physical px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScreenRect {
@@ -110,6 +120,8 @@ pub fn uia_switches_on_accessibility(classes: &[String]) -> bool {
 pub fn uia_is_safe(window: WindowHandle) -> bool {
     !uia_switches_on_accessibility(&input_window_classes(window))
 }
+
+mod edit_control;
 
 #[cfg(windows)]
 mod windows;

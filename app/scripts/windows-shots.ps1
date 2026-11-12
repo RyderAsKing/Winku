@@ -91,7 +91,19 @@ $env:WINKU_DEBUG_HINT_LOG = $hintLog
 
 $app = Start-Process -FilePath $Exe -PassThru
 try {
-  Start-Sleep -Seconds 15
+  # Wait for the pill: its window exists and has been clipped to the pill's shape (3 is
+  # COMPLEXREGION), then a moment for the eyes to draw and come to rest.
+  $ready = $false
+  for ($i = 0; $i -lt 120 -and -not $ready; $i++) {
+    Start-Sleep -Milliseconds 250
+    $hwnd = [Keys]::FindWindow([IntPtr]::Zero, "Winku")
+    if ($hwnd -eq [IntPtr]::Zero) { continue }
+    $rgn = [Keys]::CreateRectRgn(0, 0, 0, 0)
+    $ready = [Keys]::GetWindowRgn($hwnd, $rgn) -eq 3
+    [Keys]::DeleteObject($rgn) | Out-Null
+  }
+  if (-not $ready) { throw "the pill did not show within 30 s" }
+  Start-Sleep -Seconds 3
   Shot "1-pill"
   # The window region follows the pill's rounded ends, so nothing shows in the corners of its box.
   $hwnd = [Keys]::FindWindow([IntPtr]::Zero, "Winku")

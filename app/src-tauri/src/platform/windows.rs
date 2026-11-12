@@ -272,7 +272,12 @@ fn focused_text_pattern() -> windows::core::Result<(
                 element = walker.GetParentElement(&element)?;
             }
         }
-        Err(windows::Win32::Foundation::E_FAIL.into())
+        Err(windows::core::Error::new(
+            windows::Win32::Foundation::E_FAIL,
+            format!(
+                "no text pattern on the focused element or its {TEXT_ANCESTORS} nearest ancestors"
+            ),
+        ))
     }
 }
 
@@ -300,72 +305,358 @@ fn uia_selection_on_this_thread() -> Option<String> {
 }
 
 /// What the focused element has selected, for the hotkey guide: whether any text is selected,
-/// whether it can be edited and where its first line is on screen. Never reads the text. When
-/// the focused element has no text pattern, the nearest ancestor with one answers (a few levels
-/// up). Unlike `selection_via_uia` it is asked of every app, Chromium-based ones included
-/// (SPEC §7). None when no element answers, or UIA takes longer than 300 ms (the worker thread
-/// is then left to finish on its own).
-pub fn selection_summary() -> Option<super::Selection> {
+/// whether it can be edited and where its first line is on screen, with how that was found (for
+/// the debug hint log). Never reads the text. When the focused element has no text pattern, the
+/// nearest ancestor with one answers (a few levels up). When UI Automation gives none at all, or
+/// fails, a standard Win32 edit control with the focus is asked directly with window messages
+/// (`edit_control_selection`). Unlike `selection_via_uia` it is asked of every app,
+/// Chromium-based ones included (SPEC §7). Unknown when nothing answers, or the whole query takes
+/// longer than 300 ms (the worker thread is then left to finish on its own).
+pub fn selection_summary() -> super::SelectionAnswer {
+    let deadline = Instant::now() + UIA_TIMEOUT;
+    let stage = std::sync::Arc::new(std::sync::Mutex::new("starting"));
     let (tx, rx) = mpsc::channel();
+    let worker_stage = stage.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(uia_selection_summary_on_this_thread());
+        let _ = tx.send(selection_summary_on_this_thread(deadline, &worker_stage));
     });
-    rx.recv_timeout(UIA_TIMEOUT).ok().flatten()
+    rx.recv_timeout(UIA_TIMEOUT)
+        .unwrap_or_else(|_| super::SelectionAnswer {
+            selection: None,
+            how: format!(
+                "timed out after {} ms while {}",
+                UIA_TIMEOUT.as_millis(),
+                *stage.lock().unwrap_or_else(|e| e.into_inner())
+            ),
+        })
 }
 
-fn uia_selection_summary_on_this_thread() -> Option<super::Selection> {
+fn selection_summary_on_this_thread(
+    deadline: Instant,
+    stage: &std::sync::Mutex<&'static str>,
+) -> super::SelectionAnswer {
+    let set = |now: &'static str| *stage.lock().unwrap_or_else(|e| e.into_inner()) = now;
+    set("asking UI Automation");
+    let uia = with_com(|| Some(uia_selection_summary()))
+        .unwrap_or_else(|| Err("COM could not start on the query's thread".into()));
+    let why = match uia {
+        Ok(selection) => {
+            return super::SelectionAnswer {
+                selection: Some(selection),
+                how: "UI Automation text pattern".into(),
+            }
+        }
+        Err(why) => why,
+    };
+    set("asking the focused edit control");
+    match edit_control_selection(deadline - EDIT_MARGIN) {
+        Ok((selection, how)) => super::SelectionAnswer {
+            selection: Some(selection),
+            how: format!("{why}; edit-control fallback: {how}"),
+        },
+        Err(no) => super::SelectionAnswer {
+            selection: None,
+            how: format!("{why}; edit-control fallback: {no}"),
+        },
+    }
+}
+
+/// The selection through UI Automation's text pattern, or why it gave none.
+fn uia_selection_summary() -> Result<super::Selection, String> {
     use super::{SelectedText, Selection};
     use windows::Win32::System::Variant::{VariantClear, VT_BOOL};
     use windows::Win32::UI::Accessibility::{
         IUIAutomationValuePattern, UIA_IsReadOnlyAttributeId, UIA_ValuePatternId,
     };
 
-    with_com(|| {
-        // SAFETY: COM calls on this thread.
-        let summary = (|| -> windows::core::Result<Selection> {
-            unsafe {
-                let (element, pattern) = focused_text_pattern()?;
-                let ranges = pattern.GetSelection()?;
-                let mut first = None;
-                for i in 0..ranges.Length()? {
-                    let range = ranges.GetElement(i)?;
-                    // One character is enough to know the range isn't an empty caret.
-                    if !range.GetText(1)?.is_empty() {
-                        first = Some(range);
-                        break;
-                    }
+    // SAFETY: COM calls on this thread, which the caller initialised (with_com).
+    let summary = (|| -> windows::core::Result<Selection> {
+        unsafe {
+            let (element, pattern) = focused_text_pattern()?;
+            let ranges = pattern.GetSelection()?;
+            let mut first = None;
+            for i in 0..ranges.Length()? {
+                let range = ranges.GetElement(i)?;
+                // One character is enough to know the range isn't an empty caret.
+                if !range.GetText(1)?.is_empty() {
+                    first = Some(range);
+                    break;
                 }
-                let Some(range) = first else {
-                    return Ok(Selection::Nothing);
-                };
-                // The range's own attribute first. Mixed or unsupported values come back as an
-                // object, not a bool; then the element's value pattern decides.
-                let flag = range
-                    .GetAttributeValue(UIA_IsReadOnlyAttributeId)
-                    .ok()
-                    .and_then(|mut attribute| {
-                        let flag = (attribute.Anonymous.Anonymous.vt == VT_BOOL)
-                            .then(|| attribute.Anonymous.Anonymous.Anonymous.boolVal.0 != 0);
-                        let _ = VariantClear(&mut attribute);
-                        flag
-                    });
-                // Neither answers: assume editable, as the guide did before it asked.
-                let read_only = match flag {
-                    Some(read_only) => read_only,
-                    None => element
-                        .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                        .and_then(|p| p.CurrentIsReadOnly())
-                        .map(|b| b.as_bool())
-                        .unwrap_or(false),
-                };
-                Ok(Selection::Text(SelectedText {
-                    editable: !read_only,
-                    line: first_line_of(&range),
-                }))
             }
-        })();
-        summary.ok()
+            let Some(range) = first else {
+                return Ok(Selection::Nothing);
+            };
+            // The range's own attribute first. Mixed or unsupported values come back as an
+            // object, not a bool; then the element's value pattern decides.
+            let flag = range
+                .GetAttributeValue(UIA_IsReadOnlyAttributeId)
+                .ok()
+                .and_then(|mut attribute| {
+                    let flag = (attribute.Anonymous.Anonymous.vt == VT_BOOL)
+                        .then(|| attribute.Anonymous.Anonymous.Anonymous.boolVal.0 != 0);
+                    let _ = VariantClear(&mut attribute);
+                    flag
+                });
+            // Neither answers: assume editable, as the guide did before it asked.
+            let read_only = match flag {
+                Some(read_only) => read_only,
+                None => element
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .and_then(|p| p.CurrentIsReadOnly())
+                    .map(|b| b.as_bool())
+                    .unwrap_or(false),
+            };
+            Ok(Selection::Text(SelectedText {
+                editable: !read_only,
+                line: first_line_of(&range),
+            }))
+        }
+    })();
+    summary.map_err(|e| format!("UI Automation: {}", e.message()))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Standard edit controls
+
+// Edit control messages (WinUser.h); their parameters and results are plain numbers.
+const EM_GETSEL: u32 = 0x00B0;
+const EM_LINEINDEX: u32 = 0x00BB;
+const EM_LINELENGTH: u32 = 0x00C1;
+const EM_LINEFROMCHAR: u32 = 0x00C9;
+const EM_POSFROMCHAR: u32 = 0x00D6;
+
+/// Left of the selection query's time box when the edit-control fallback must stop asking, so
+/// its answer still arrives in time.
+const EDIT_MARGIN: Duration = Duration::from_millis(15);
+/// The longest one window message to another app may take.
+const MESSAGE_TIMEOUT: Duration = Duration::from_millis(60);
+
+/// Sends `msg` to another app's window and returns its answer. Gives up after
+/// `MESSAGE_TIMEOUT`, at `deadline`, or at once when that app is hung, so it can't hold the
+/// query. Only for messages whose parameters and result are numbers: a pointer would point into
+/// this process, not the app's.
+fn send_with_timeout(
+    hwnd: HWND,
+    msg: u32,
+    wparam: usize,
+    deadline: Instant,
+) -> Result<isize, String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT,
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(format!("out of time before message {msg:#06x}"));
+    }
+    let wait = left.min(MESSAGE_TIMEOUT).as_millis().max(1) as u32;
+    let mut result = 0usize;
+    // SAFETY: wparam and lparam are numbers, not pointers; the out-pointer is a live usize. A
+    // stale or hung window makes the call fail rather than block past `wait`.
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            msg,
+            wparam,
+            0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+            wait,
+            &mut result,
+        )
+    };
+    if sent == 0 {
+        return Err(format!(
+            "message {msg:#06x} got no answer within {wait} ms (the app is busy, hung or gone)"
+        ));
+    }
+    Ok(result as isize)
+}
+
+/// The window with keyboard focus in the thread that owns `window`, if any.
+fn focused_child(window: HWND) -> Option<HWND> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GUITHREADINFO};
+    // SAFETY: GUITHREADINFO is plain data sized by cbSize; the thread id may be stale, which
+    // makes GetGUIThreadInfo fail.
+    unsafe {
+        let thread = GetWindowThreadProcessId(window, std::ptr::null_mut());
+        let mut info: GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        (thread != 0 && GetGUIThreadInfo(thread, &mut info) != 0 && !info.hwndFocus.is_null())
+            .then_some(info.hwndFocus)
+    }
+}
+
+fn class_name(hwnd: HWND) -> Option<String> {
+    let mut class = [0u16; 128];
+    // SAFETY: the buffer length is passed with the pointer; a stale HWND returns 0.
+    let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
+    (len > 0).then(|| String::from_utf16_lossy(&class[..len as usize]))
+}
+
+/// The selection of the focused standard edit control, asked with window messages, for when UI
+/// Automation gives no text pattern (classic Notepad's `Edit` on some systems). With how it was
+/// found, or why the control couldn't answer. Stops asking at `deadline`.
+fn edit_control_selection(deadline: Instant) -> Result<(super::Selection, String), String> {
+    use super::edit_control::{first_line_on_screen, is_edit_class, selection_range};
+    use super::{SelectedText, Selection};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, ES_MULTILINE, ES_READONLY, GWL_STYLE, WM_GETTEXTLENGTH,
+    };
+
+    // SAFETY: plain Win32 call.
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_null() {
+        return Err("no foreground window".into());
+    }
+    let focus = focused_child(foreground)
+        .ok_or("no window has the keyboard focus in the foreground thread")?;
+    let class = class_name(focus).unwrap_or_default();
+    if !is_edit_class(&class) {
+        return Err(format!(
+            "the focused window is a {class:?}, not an edit control"
+        ));
+    }
+    let ask = |msg, wparam| send_with_timeout(focus, msg, wparam, deadline);
+    let length = ask(WM_GETTEXTLENGTH, 0)?;
+    if length > 0xFFFF {
+        return Err(format!(
+            "{class} holds {length} characters, past what EM_GETSEL can report"
+        ));
+    }
+    let (start, end) = selection_range(ask(EM_GETSEL, 0)?)
+        .ok_or_else(|| format!("{class} gave no range for EM_GETSEL"))?;
+    // SAFETY: plain Win32 call; a stale HWND returns 0.
+    let style = unsafe { GetWindowLongW(focus, GWL_STYLE) };
+    let editable = style & ES_READONLY == 0;
+    let mut how = format!(
+        "{class}, range {start}..{end}, {}",
+        if editable { "editable" } else { "read-only" }
+    );
+    if start == end {
+        return Ok((Selection::Nothing, how));
+    }
+    let geometry = edit_geometry(focus, (start, end), style & ES_MULTILINE != 0, deadline);
+    let line = match geometry.and_then(|g| first_line_on_screen(&g).map_err(String::from)) {
+        Ok(rect) => Some(rect),
+        Err(why) => {
+            how.push_str(&format!(", no rectangle: {why}"));
+            None
+        }
+    };
+    Ok((Selection::Text(SelectedText { editable, line }), how))
+}
+
+/// Where the selection `range` of edit control `focus` is: its first line's start and end in
+/// client px from `EM_POSFROMCHAR` (the selection is clamped to the line holding its start), the
+/// line height, and how client px map to the screen.
+fn edit_geometry(
+    focus: HWND,
+    (start, end): (u32, u32),
+    multiline: bool,
+    deadline: Instant,
+) -> Result<super::edit_control::EditGeometry, String> {
+    use super::edit_control::{line_height, packed_point, EditGeometry};
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        ClientToScreen, MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    let ask = |msg, wparam| send_with_timeout(focus, msg, wparam, deadline);
+    // EM_POSFROMCHAR's edit-control form (rich edit 3.0 and later take it too): the character
+    // index in wparam, the client point packed in the result.
+    let at = |index: isize| -> Result<Option<(i32, i32)>, String> {
+        if index < 0 {
+            return Ok(None);
+        }
+        ask(EM_POSFROMCHAR, index as usize).map(packed_point)
+    };
+    let line = ask(EM_LINEFROMCHAR, start as usize)?.max(0);
+    let line_start = ask(EM_LINEINDEX, line as usize)?;
+    let line_length = ask(EM_LINELENGTH, start as usize)?;
+    // The first line ends at its last character; a selection past it is clamped there.
+    let first_end = match line_start {
+        ..0 => end as isize,
+        _ => (end as isize).min(line_start + line_length),
+    };
+    let start_at = at(start as isize)?;
+    let first_end_at = at(first_end)?;
+
+    // SAFETY: the out-pointers are a live RECT and POINT; a stale HWND makes the calls fail and
+    // leaves them zeroed.
+    let (client, origin) = unsafe {
+        let mut rect: RECT = std::mem::zeroed();
+        GetClientRect(focus, &mut rect);
+        let mut origin = POINT { x: 0, y: 0 };
+        ClientToScreen(focus, &mut origin);
+        ((rect.right, rect.bottom), (origin.x, origin.y))
+    };
+    // Positions are in the control's own px; this thread is per-monitor DPI aware, so the
+    // client rectangle and origin above are physical. For a DPI-unaware or system-aware app on
+    // a monitor at another scale the two differ by the monitor's DPI over the window's.
+    // SAFETY: plain Win32 calls; the out-pointers are live u32s.
+    let scale = unsafe {
+        let window_dpi = GetDpiForWindow(focus);
+        let monitor = MonitorFromWindow(focus, MONITOR_DEFAULTTONEAREST);
+        let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+        let ok = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) >= 0;
+        if ok && window_dpi > 0 && dpi_x > 0 {
+            dpi_x as f64 / window_dpi as f64
+        } else {
+            1.0
+        }
+    };
+    let client_px = |v: i32| (v as f64 / scale).round() as i32;
+    let client = (client_px(client.0), client_px(client.1));
+
+    let mut height = None;
+    if let Some((_, top)) = start_at {
+        let next_top = at(ask(EM_LINEINDEX, line as usize + 1)?)?.map(|p| p.1);
+        let previous_top = match (next_top, line > 0) {
+            (None, true) => at(ask(EM_LINEINDEX, line as usize - 1)?)?.map(|p| p.1),
+            _ => None,
+        };
+        let font = (next_top.is_none() && previous_top.is_none())
+            .then(|| font_height(focus, deadline))
+            .flatten();
+        height = line_height(
+            top,
+            next_top,
+            previous_top,
+            font,
+            (!multiline).then_some(client.1),
+        );
+    }
+    Ok(EditGeometry {
+        start: start_at,
+        first_end: first_end_at,
+        line_height: height,
+        client,
+        origin,
+        scale,
     })
+}
+
+/// The height of the edit control's font, its own px, when the system lets this process read
+/// the app's font (`WM_GETFONT`). None when it doesn't.
+fn font_height(focus: HWND, deadline: Instant) -> Option<i32> {
+    use windows_sys::Win32::Graphics::Gdi::{GetObjectW, LOGFONTW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::WM_GETFONT;
+    let font = send_with_timeout(focus, WM_GETFONT, 0, deadline).ok()?;
+    if font == 0 {
+        return None;
+    }
+    // SAFETY: LOGFONTW is plain data and its size is passed with the pointer; a handle this
+    // process can't read makes GetObjectW return 0.
+    unsafe {
+        let mut logfont: LOGFONTW = std::mem::zeroed();
+        let read = GetObjectW(
+            font as *mut core::ffi::c_void,
+            std::mem::size_of::<LOGFONTW>() as i32,
+            (&mut logfont as *mut LOGFONTW).cast(),
+        );
+        (read > 0 && logfont.lfHeight != 0).then(|| logfont.lfHeight.abs())
+    }
 }
 
 /// Where `range` starts on screen: the first of its per-line bounding rectangles, physical px
@@ -509,28 +800,10 @@ pub fn is_own_window(window: WindowHandle) -> bool {
 /// Class names of `window` and of the window with keyboard focus in its thread (a browser's
 /// render widget, or a WebView2 inside another app's frame).
 pub fn input_window_classes(window: WindowHandle) -> Vec<String> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GUITHREADINFO};
-
-    let class_of = |hwnd: HWND| {
-        let mut class = [0u16; 128];
-        // SAFETY: the buffer length is passed with the pointer; a stale HWND returns 0.
-        let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
-        (len > 0).then(|| String::from_utf16_lossy(&class[..len as usize]))
-    };
     let hwnd = window.0 as HWND;
-    let mut classes: Vec<String> = class_of(hwnd).into_iter().collect();
-    // SAFETY: GUITHREADINFO is plain data sized by cbSize; the thread id may be stale.
-    unsafe {
-        let thread = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
-        let mut info: GUITHREADINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-        if thread != 0
-            && GetGUIThreadInfo(thread, &mut info) != 0
-            && !info.hwndFocus.is_null()
-            && info.hwndFocus != hwnd
-        {
-            classes.extend(class_of(info.hwndFocus));
-        }
+    let mut classes: Vec<String> = class_name(hwnd).into_iter().collect();
+    if let Some(focus) = focused_child(hwnd).filter(|&f| f != hwnd) {
+        classes.extend(class_name(focus));
     }
     classes
 }

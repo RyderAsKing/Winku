@@ -34,8 +34,11 @@ pub fn selection_via_uia() -> Option<String> {
 
 /// What the focused element has selected. None: unknown.
 #[allow(dead_code)] // the hotkey guide asks only on Windows
-pub fn selection_summary() -> Option<super::Selection> {
-    None
+pub fn selection_summary() -> super::SelectionAnswer {
+    super::SelectionAnswer {
+        selection: None,
+        how: "not asked: only Windows reads the selection".into(),
+    }
 }
 
 pub fn selection_via_copy() -> Option<String> {

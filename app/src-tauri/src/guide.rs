@@ -160,17 +160,20 @@ fn holds() -> MutexGuard<'static, Holds> {
     HOLDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Starts floating the guide over `text`. False when it can't float (no usable rectangle, or not
-/// on Windows): the caller shows the guide beside the eyes instead. If the page hasn't reported
-/// the guide's size within `SIZE_DEADLINE`, the guide shows beside the eyes for this hold.
-pub fn show(app: &AppHandle, text: SelectedText) -> bool {
+/// Starts floating the guide over `text`. Err with why when it can't float (no usable
+/// rectangle, or not on Windows): the caller shows the guide beside the eyes instead. If the page
+/// hasn't reported the guide's size within `SIZE_DEADLINE`, the guide shows beside the eyes for
+/// this hold.
+pub fn show(app: &AppHandle, text: SelectedText) -> Result<(), &'static str> {
     if !cfg!(windows) {
-        return false;
+        return Err("the guide floats only on Windows");
     }
-    let Some(line) = text.line else { return false };
+    let Some(line) = text.line else {
+        return Err("no rectangle for the selection");
+    };
     // Only a line on a monitor can be placed; the guide's size doesn't matter for that.
     if guide_rect(to_rect(line), &crate::window::all_monitors(app), (1.0, 1.0)).is_none() {
-        return false;
+        return Err("the selection's rectangle is on no monitor");
     }
     let showing = holds().start(text.editable, line);
     if app.get_webview_window(LABEL).is_some() {
@@ -185,19 +188,20 @@ pub fn show(app: &AppHandle, text: SelectedText) -> bool {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SIZE_DEADLINE);
-        fall_back(&app, showing.id);
+        fall_back(&app, showing.id, "no size from the page in time");
     });
-    true
+    Ok(())
 }
 
 /// Shows hold `id`'s guide beside the eyes, if it is still waiting for its size. The lock is
 /// held while the event is sent (an event, not a window call), so a hide can't send its own
 /// hide first and leave this guide showing.
-fn fall_back(app: &AppHandle, id: u64) {
+fn fall_back(app: &AppHandle, id: u64, why: &str) {
     let mut holds = holds();
     let Some(showing) = holds.fall_back(id) else {
         return;
     };
+    crate::hint::debug_log(&format!("guide: {why}, beside Winku instead"));
     crate::hint::emit_beside(
         app,
         true,
@@ -311,7 +315,7 @@ fn create(app: &AppHandle) {
                 eprintln!("winku: could not create the guide window: {e}");
                 let id = holds().current().map(|s| s.id);
                 if let Some(id) = id {
-                    fall_back(&app, id);
+                    fall_back(&app, id, "the window could not be made");
                 }
             }
         }

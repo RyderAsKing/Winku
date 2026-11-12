@@ -6,7 +6,8 @@
 //! ends.
 //!
 //! When a hold begins, and the "Guide follows the selection" setting is on, one query asks the
-//! focused app what is selected (`platform::selection_summary`, on its own thread). An answer
+//! focused app what is selected (`platform::selection_summary`, on its own thread: UI Automation,
+//! else window messages to a focused standard edit control). An answer
 //! that arrives before the guide shows picks its lists through `selection`; a later one is
 //! dropped, so the guide never changes while it shows. This query runs in Chromium-based apps
 //! too, unlike every other UI Automation read (SPEC §7).
@@ -183,9 +184,13 @@ const NOTHING: Outcome = Outcome {
 /// Where this hold's selection query is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Asked {
-    /// No query this hold, or its answer came too late: the full guide.
+    /// No query this hold: the full guide.
     Unknown,
     Waiting(Query),
+    /// The guide showed before the query answered: the full guide.
+    Late(Query),
+    /// The query found no answer: the full guide.
+    NoAnswer(Query),
     Answered(Selection),
 }
 
@@ -240,7 +245,7 @@ impl Hint {
     /// The answer to `query`. Kept only while that hold is still waiting for the guide to show.
     pub fn answered(&mut self, query: Query, selection: Option<Selection>) {
         if matches!(self.phase, Phase::Armed(_)) && self.asked == Asked::Waiting(query) {
-            self.asked = selection.map_or(Asked::Unknown, Asked::Answered);
+            self.asked = selection.map_or(Asked::NoAnswer(query), Asked::Answered);
         }
     }
 
@@ -249,6 +254,19 @@ impl Hint {
         match (self.phase, self.asked) {
             (Phase::Shown, Asked::Answered(selection)) => Some(selection),
             _ => None,
+        }
+    }
+
+    /// The selection state that went with the showing guide and why, for the debug log.
+    pub fn selection_note(&self) -> String {
+        match self.asked {
+            Asked::Unknown => {
+                "unknown: not asked (setting off, fullscreen app or summon hold)".into()
+            }
+            Asked::Waiting(q) => format!("unknown: query {} still running", q.0),
+            Asked::Late(q) => format!("unknown: query {} had not answered in time", q.0),
+            Asked::NoAnswer(q) => format!("unknown: query {} found no answer", q.0),
+            Asked::Answered(selection) => describe(Some(selection)),
         }
     }
 
@@ -382,8 +400,8 @@ impl Hint {
         }
         if allowed {
             self.phase = Phase::Shown;
-            if matches!(self.asked, Asked::Waiting(_)) {
-                self.asked = Asked::Unknown; // too late now
+            if let Asked::Waiting(query) = self.asked {
+                self.asked = Asked::Late(query); // too late now
             }
             Ok(true)
         } else {
@@ -424,13 +442,33 @@ fn with_state<R>(f: impl FnOnce(&mut Hint) -> R) -> R {
 pub fn configure(leader: Option<&str>) {
     let hide = with_state(|h| h.set_prefix(Prefix::from_leader(leader)));
     if hide {
-        emit(false, None);
+        emit(false, None, "");
     }
 }
 
 /// Applies the "Guide follows the selection" setting.
 pub fn set_follow_selection(on: bool) {
     with_state(|h| h.set_follow_selection(on));
+}
+
+/// A selection for the debug log: unknown, nothing, or text with its editability and first line.
+fn describe(selection: Option<Selection>) -> String {
+    match selection {
+        None => "unknown".into(),
+        Some(Selection::Nothing) => "nothing selected".into(),
+        Some(Selection::Text(text)) => format!(
+            "text, {}, {}",
+            if text.editable {
+                "editable"
+            } else {
+                "read-only"
+            },
+            match text.line {
+                Some(l) => format!("first line {},{} {}x{}", l.x, l.y, l.w, l.h),
+                None => "no rectangle".into(),
+            }
+        ),
+    }
 }
 
 /// The `hotkey_hint` event. `selection` is left out when unknown and null when nothing is
@@ -445,16 +483,26 @@ fn event(show: bool, selection: Option<Selection>) -> Value {
     event
 }
 
-fn emit(show: bool, selection: Option<Selection>) {
+/// Shows or hides the guide. `note`: the selection state that went with a show, for the log.
+fn emit(show: bool, selection: Option<Selection>, note: &str) {
     let Some(app) = APP.get() else { return };
     if show {
         // With a usable selection rectangle the guide floats over the selection, and the main
         // window shows none.
-        if let Some(Selection::Text(text)) = selection {
-            if crate::guide::show(app, text) {
-                return;
-            }
-        }
+        let beside = match selection {
+            Some(Selection::Text(text)) => match crate::guide::show(app, text) {
+                Ok(()) => {
+                    debug_log(&format!("hold: selection {note}; guide floats"));
+                    return;
+                }
+                Err(why) => why,
+            },
+            Some(Selection::Nothing) => "nothing is selected",
+            None => "the selection is unknown",
+        };
+        debug_log(&format!(
+            "hold: selection {note}; guide beside Winku ({beside})"
+        ));
     } else {
         crate::guide::hide(app);
     }
@@ -472,7 +520,10 @@ pub(crate) fn emit_beside(app: &AppHandle, show: bool, selection: Option<Selecti
 
 /// With `WINKU_DEBUG_HINT=1`, appends a line per guide event to `WINKU_DEBUG_HINT_LOG` (default
 /// `winku-hint.log` in the temp dir): `hotkey_hint show`/`hide` for the main window, `guide show
-/// <x>,<y> <w>x<h>`/`guide hide` for the floating guide. CI's screenshot script reads it.
+/// <x>,<y> <w>x<h>`/`guide hide` for the floating guide; `selection query <n>: ...` with each
+/// selection query's answer, how long it took and which source gave it (or why none could);
+/// `hold: selection ...; guide floats|beside Winku (<why>)` with each show; `guide: ...` when a
+/// floating guide falls back beside Winku. CI's screenshot script reads it. Off in normal use.
 pub(crate) fn debug_log(line: &str) {
     if !DEBUG.load(Ordering::Relaxed) {
         return;
@@ -496,13 +547,21 @@ fn on_key(key: Key, down: bool) -> Timer {
         || !crate::fullscreen::active() && !APP.get().is_some_and(crate::hotkeys::summon_held);
     let outcome = with_state(|h| h.on_key_where(key, down, Instant::now(), may_ask));
     if outcome.hide {
-        emit(false, None);
+        emit(false, None, "");
     }
     if let Some(query) = outcome.query {
         // Off the raw input thread: UI Automation can take up to its time box.
         std::thread::spawn(move || {
-            let selection = crate::platform::selection_summary();
-            with_state(|h| h.answered(query, selection));
+            let started = Instant::now();
+            let answer = crate::platform::selection_summary();
+            debug_log(&format!(
+                "selection query {}: {} after {} ms ({})",
+                query.0,
+                describe(answer.selection),
+                started.elapsed().as_millis(),
+                answer.how
+            ));
+            with_state(|h| h.answered(query, answer.selection));
         });
     }
     outcome.timer
@@ -514,10 +573,10 @@ fn on_timer() -> Option<u32> {
     let allowed = !crate::fullscreen::active();
     match with_state(|h| {
         h.timer_fired(Instant::now(), allowed)
-            .map(|shown| shown.then(|| h.guide_selection()))
+            .map(|shown| shown.then(|| (h.guide_selection(), h.selection_note())))
     }) {
-        Ok(Some(selection)) => {
-            emit(true, selection);
+        Ok(Some((selection, note))) => {
+            emit(true, selection, &note);
             None
         }
         Ok(None) => None,
@@ -852,6 +911,54 @@ mod tests {
         assert_eq!(h.guide_selection(), None, "unknown");
         h.answered(q, Some(editable()));
         assert_eq!(h.guide_selection(), None, "late answer ignored");
+    }
+
+    #[test]
+    fn the_log_note_says_why_the_selection_is_unknown() {
+        let t = T0();
+        let mut late = ctrl_alt();
+        let q = hold(&mut late, t).unwrap();
+        assert_eq!(late.timer_fired(ms(t, 450), true), Ok(true));
+        assert_eq!(
+            late.selection_note(),
+            format!("unknown: query {} had not answered in time", q.0)
+        );
+
+        let mut none = ctrl_alt();
+        let q = hold(&mut none, t).unwrap();
+        none.answered(q, None);
+        assert_eq!(none.timer_fired(ms(t, 450), true), Ok(true));
+        assert_eq!(none.guide_selection(), None);
+        assert_eq!(
+            none.selection_note(),
+            format!("unknown: query {} found no answer", q.0)
+        );
+
+        let mut off = ctrl_alt();
+        off.set_follow_selection(false);
+        hold(&mut off, t);
+        assert!(off.selection_note().starts_with("unknown: not asked"));
+
+        let mut text = ctrl_alt();
+        let q = hold(&mut text, t).unwrap();
+        text.answered(
+            q,
+            Some(Selection::Text(SelectedText {
+                editable: false,
+                line: Some(crate::platform::ScreenRect {
+                    x: 208,
+                    y: 472,
+                    w: 180,
+                    h: 18,
+                }),
+            })),
+        );
+        assert_eq!(
+            text.selection_note(),
+            "text, read-only, first line 208,472 180x18"
+        );
+        assert_eq!(describe(Some(editable())), "text, editable, no rectangle");
+        assert_eq!(describe(Some(Selection::Nothing)), "nothing selected");
     }
 
     #[test]

@@ -26,7 +26,7 @@
 	const transcript = $derived(app.mode === "transcript");
 	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
 	const showHints = $derived(app.hotkeyHints && app.settings !== null);
-	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null || showHints);
+	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null);
 	const above = $derived(app.layout.above);
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
@@ -41,12 +41,14 @@
 	const STEP = 48;
 	const roomy = (h: number) => Math.ceil((h + STEP / 2) / STEP) * STEP;
 	let bubbleH = $state(0);
+	// The hints draw over the bubble, so the window only has to be as tall as the taller of the two.
+	let hintH = $state(0);
 	let sent: { headW: number; bubbleH: number; key: string } | null = null;
 	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
 		const next = {
 			headW: open ? d.barW : d.pillW,
-			bubbleH: showBubble ? roomy(bubbleH) : 0,
+			bubbleH: Math.max(showBubble ? roomy(bubbleH) : 0, showHints ? Math.ceil(hintH) : 0),
 			key: `${app.settings?.eyes.size}:${app.layout.alignRight}:${app.layout.above}`,
 		};
 		const dims = d;
@@ -105,11 +107,6 @@
 				in:fly={{ y: above ? 8 : -8, duration: ms(220), delay: ms(open ? 40 : 0), easing: cubicOut }}
 				out:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicIn }}
 			>
-				{#if showHints && app.settings}
-					<div class="bubble hint-bubble" in:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicOut }} out:fly={{ duration: ms(90), opacity: 0 }}>
-						<HotkeyHints settings={app.settings} />
-					</div>
-				{/if}
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
 				{:else if transcript}
@@ -125,6 +122,18 @@
 						{/if}
 					</div>
 				{/if}
+			</div>
+		{/if}
+
+		<!-- Over the bubble, not in its column: the chat keeps its size while the hints show. -->
+		{#if showHints && app.settings}
+			<div
+				class="bubble hint-bubble"
+				bind:offsetHeight={hintH}
+				in:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicOut }}
+				out:fly={{ duration: ms(90), opacity: 0 }}
+			>
+				<HotkeyHints settings={app.settings} />
 			</div>
 		{/if}
 	</div>
@@ -211,14 +220,26 @@
 		flex-direction: column;
 		overflow: hidden;
 	}
-	/* The hints hug the eyes' side rather than spanning the bar. */
+	/* The hints hug the eyes' side rather than spanning the bar, and sit on top of whatever the
+	   bubble shows. Opaque, so the chat underneath doesn't read through the keys. */
 	.hint-bubble {
-		flex: none;
-		align-self: flex-start;
+		position: absolute;
+		z-index: 2;
+		top: var(--gap);
+		left: 0;
 		max-width: 100%;
+		max-height: var(--bubble-max);
+		overflow: hidden;
+		background: rgb(14 16 21);
+		border-color: var(--line-strong);
 	}
 	.right .hint-bubble {
-		align-self: flex-end;
+		left: auto;
+		right: 0;
+	}
+	.above .hint-bubble {
+		top: auto;
+		bottom: var(--gap);
 	}
 	.toast {
 		flex: none;

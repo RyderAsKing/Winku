@@ -180,6 +180,30 @@ const cases = [
 		},
 	},
 	{
+		name: "hotkey-hints-transcript",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Control+j");
+			await page.getByText("Earlier conversation summarized").waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
+		name: "hotkey-hints-reply",
+		path: "/?left&low",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400);
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
 		name: "permission",
 		path: "/?ask=1",
 		ready: "text=Always allow this command",
@@ -224,11 +248,14 @@ const cases = [
 		name: "settings-actions",
 		path: "/settings.html#actions",
 		size: SETTINGS,
-		ready: "text=Use the conversation as context",
+		ready: "role=textbox[name='Action 5 prompt']",
 		prepare: async (page) => {
 			await page.getByRole("textbox", { name: "Action 2 prompt" }).fill("Fix spelling and grammar. Keep British spelling.");
 		},
 	},
+	// A maximised window, and the narrow one: the list must not stretch or overflow.
+	{ name: "settings-actions-wide", path: "/settings.html#actions", size: { width: 1700, height: 990 }, ready: "role=textbox[name='Action 5 prompt']" },
+	{ name: "settings-actions-narrow", path: "/settings.html#actions", size: { width: 520, height: 600 }, ready: "role=textbox[name='Action 5 prompt']" },
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
 	{ name: "settings", path: "/settings.html", size: SETTINGS, ready: "role=combobox[name='Provider']" },
 	{ name: "settings-narrow", path: "/settings.html#speech", size: { width: 520, height: 600 }, ready: "role=heading[name='Speech']" },
@@ -455,7 +482,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles, .window")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

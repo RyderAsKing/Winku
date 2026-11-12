@@ -5,7 +5,8 @@
 /** How close to the bottom counts as at the bottom, px. */
 const SLACK = 4;
 
-export function follow(node: HTMLElement) {
+export function follow(node: HTMLElement, enabled = true) {
+	if (!enabled) return {};
 	let pinned = true;
 
 	const atBottom = () => node.scrollHeight - node.scrollTop - node.clientHeight <= SLACK;

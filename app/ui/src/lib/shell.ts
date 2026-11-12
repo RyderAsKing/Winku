@@ -31,6 +31,8 @@ export type UiEvent =
 	| { kind: "action_error"; id?: string; slot: number; name: string; message: string }
 	| { kind: "talk_start" }
 	| { kind: "talk_level"; level: number }
+	/** Everything heard so far in this recording, sent as it changes. */
+	| { kind: "talk_partial"; text: string }
 	/** "" when nothing was heard. */
 	| { kind: "talk_end"; text: string }
 	/** Text-to-speech started (true) or finished or was stopped (false). */
@@ -40,6 +42,9 @@ export type UiEvent =
 	| { kind: "menu"; item: MenuItem }
 	/** An update is downloaded (auto) or available (notify): the eyes show a small dot. */
 	| { kind: "update_ready"; version: string }
+	/** "Bring Winku here": the pill starts gliding to the pointer (how far, logical px), or has arrived. */
+	| { kind: "bring"; phase: "start"; dx: number; dy: number }
+	| { kind: "bring"; phase: "end" }
 	/** The pill moved across the screen: things now grow the other way. */
 	| ({ kind: "layout" } & Layout)
 	/** The hotkey prefix has been held alone (true), or that hold ended (false). `selection`: what

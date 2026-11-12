@@ -324,6 +324,11 @@ export function createMockShell(): ShellImpl {
 		if (params.has("download")) emit("download_progress", { what: "stt", model: "moonshine-base", fraction: 0.42 });
 		if (ms < 0) return;
 		for (let t = 100; t < ms; t += 100) timers.push(setTimeout(() => emit("ui", { kind: "talk_level", level: 0.3 + 0.4 * Math.abs(Math.sin(t)) }), t));
+		// The words so far, a few more each time, as the shell sends them while recording.
+		const words = text.split(" ");
+		for (let n = 2; n < words.length; n += 2) {
+			timers.push(setTimeout(() => emit("ui", { kind: "talk_partial", text: words.slice(0, n).join(" ") }), (ms * n) / words.length));
+		}
 		timers.push(setTimeout(() => emit("ui", { kind: "talk_end", text }), ms));
 	};
 

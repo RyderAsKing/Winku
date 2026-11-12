@@ -970,8 +970,6 @@
 		height: 100%;
 		overflow-y: auto;
 		padding: 26px 28px 40px;
-		scrollbar-width: thin;
-		scrollbar-color: var(--line-strong) transparent;
 	}
 	header {
 		margin-bottom: 18px;

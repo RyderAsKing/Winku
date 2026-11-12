@@ -3,16 +3,20 @@
 	// toward the middle of the screen. Click the eyes to open or close, drag them to move Winku,
 	// right-click for the menu. Open: the message box, then the context meter and thinking level.
 	//
-	// The eyes are pinned to the anchored end and the body is laid out at the full bar width the
+	// The eyes are pinned to the anchored corner and the body is laid out at the full bar width the
 	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
+	// A long message makes the bar taller, away from the eyes' row, up to INPUT_LINES; then the
+	// message box scrolls.
 	import { cubicOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 	import { ms } from "../lib/motion.ts";
 	import Eyes from "../lib/eyes/Eyes.svelte";
 	import { shell } from "../lib/shell.ts";
+	import { INPUT_LINES } from "./stage.ts";
 	import type { MainState } from "./state.svelte.ts";
 
-	let { app, open }: { app: MainState; open: boolean } = $props();
+	/** `open`: the bar is showing. `height`: the bar's height, taller than the pill for a long message. */
+	let { app, open, height }: { app: MainState; open: boolean; height: number } = $props();
 
 	let eyes: Eyes | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
@@ -28,6 +32,19 @@
 	const d = $derived(app.dims);
 	const ctx = $derived(app.contextPercent === null ? null : Math.round(app.contextPercent));
 	const selectionWords = $derived(app.selectionChip ? app.selectionChip.trim().split(/\s+/).length : 0);
+	// While talking the box shows what has been heard; the typed draft comes back afterwards.
+	const dictating = $derived(app.dictation !== null);
+	const shown = $derived(app.dictation ?? text);
+	// Travelling to the pointer, the eyes lean the way they are going.
+	const lean = $derived.by(() => {
+		const t = app.travelling;
+		const far = t ? Math.hypot(t.dx, t.dy) : 0;
+		if (!t || far === 0) return { x: 0, y: 0 };
+		const reach = d.eye * 0.2;
+		return { x: (t.dx / far) * reach, y: (t.dy / far) * reach * 0.6 };
+	});
+	const LINE = 1.45;
+	const maxInput = $derived(Math.ceil(app.dims.font * LINE * INPUT_LINES));
 
 	let start: { x: number; y: number } | null = null;
 
@@ -59,16 +76,26 @@
 	function autosize() {
 		if (!input) return;
 		input.style.height = "auto";
-		input.style.height = `${Math.min(input.scrollHeight, d.pillH - 16)}px`;
+		const full = input.scrollHeight;
+		input.style.height = `${Math.min(full, maxInput)}px`;
+		input.classList.toggle("scrolls", full > maxInput);
+		// Spoken words arrive at the end: keep the end in view.
+		if (dictating) input.scrollTop = input.scrollHeight;
 	}
+
+	$effect(() => {
+		void shown;
+		void maxInput;
+		autosize();
+	});
 
 	function onkeydown(event: KeyboardEvent) {
 		if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
 			event.preventDefault();
 			if (app.needsConnect) return;
+			if (dictating) return;
 			const value = text;
 			text = "";
-			queueMicrotask(autosize);
 			void app.submit(value);
 		}
 	}
@@ -78,10 +105,18 @@
 	class="head"
 	class:open
 	class:right={app.layout.alignRight}
+	class:above={app.layout.above}
+	class:tall={height > d.pillH}
+	class:travelling={app.travelling !== null}
+	class:arrived={app.arrived}
+	style:--lean-x="{lean.x}px"
+	style:--lean-y="{lean.y}px"
 	style:width="{open ? d.barW : d.pillW}px"
-	style:height="{d.pillH}px"
+	style:height="{height}px"
 	style:--font="{d.font}px"
 	style:--pill-w="{d.pillW}px"
+	style:--pill-h="{d.pillH}px"
+	style:--radius="{d.pillH / 2}px"
 	style:--body-w="{d.barW - d.pillW}px"
 >
 	<button
@@ -115,32 +150,37 @@
 
 	{#if open}
 		<div class="body" in:fade={{ duration: ms(180), delay: ms(60), easing: cubicOut }} out:fade={{ duration: ms(110) }}>
-			<div class="field">
+			<div class="field" bind:clientHeight={app.inputH}>
 				{#if app.selectionChip || app.imageChip}
-					<div class="chips">
-						{#if app.selectionChip}
-							<span class="chip">
-								Selection, {selectionWords} {selectionWords === 1 ? "word" : "words"}
-								<button type="button" aria-label="Remove selection" onclick={() => (app.selectionChip = null)}>×</button>
-							</span>
-						{/if}
+					<div class="attached">
 						{#if app.imageChip}
-							<span class="chip">
-								Screenshot
-								<button type="button" aria-label="Remove screenshot" onclick={() => (app.imageChip = null)}>×</button>
-							</span>
+							<button type="button" class="shot" aria-label="Remove screenshot" title="Screenshot attached. Click to remove." onclick={() => (app.imageChip = null)}>
+								<img src="data:{app.imageChip.mimeType};base64,{app.imageChip.data}" alt="" />
+								<span class="x" aria-hidden="true"></span>
+							</button>
+						{/if}
+						{#if app.selectionChip}
+							<button type="button" class="quote" aria-label="Remove selection" title="Selected text attached. Click to remove." onclick={() => (app.selectionChip = null)}>
+								<span class="quote-text">{app.selectionChip.trim()}</span>
+								<span class="quote-count">{selectionWords} {selectionWords === 1 ? "word" : "words"}</span>
+								<span class="x" aria-hidden="true"></span>
+							</button>
 						{/if}
 					</div>
 				{/if}
 				<textarea
 					bind:this={input}
-					bind:value={text}
+					value={shown}
 					rows="1"
 					placeholder={app.listening ? "Listening…" : app.needsConnect ? "Connect a model first" : "Ask anything"}
 					disabled={app.needsConnect}
+					readonly={dictating}
+					class:dictating
 					aria-label="Message"
 					{onkeydown}
-					oninput={autosize}
+					oninput={(event) => {
+						if (!dictating) text = event.currentTarget.value;
+					}}
 				></textarea>
 			</div>
 
@@ -169,16 +209,22 @@
 		   bar is still narrow would scroll it into view, sliding the eyes. */
 		overflow: clip;
 		border: 1px solid var(--line);
-		border-radius: 999px;
+		/* Half the pill's height, in px: a bar that grows taller keeps the same corners. */
+		border-radius: var(--radius);
 		background: radial-gradient(ellipse 72% 72% at 50% 28%, var(--face-hi), var(--face-lo));
 		/* Closing eases in and finishes before the shell trims the window (App.svelte, 240 ms). */
-		transition: width 190ms cubic-bezier(0.4, 0, 0.6, 1);
+		transition:
+			width 190ms cubic-bezier(0.4, 0, 0.6, 1),
+			height 120ms cubic-bezier(0.22, 1, 0.36, 1);
 		contain: layout paint;
 	}
 	.head.open {
-		transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+		transition:
+			width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+			height 120ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
-	/* The eyes sit at the anchored end: left on the left half, right on the right half. */
+	/* The eyes sit in the anchored corner, in a box the size of the pill: left on the left half of
+	   the screen, right on the right half, and at the bottom when the bar grows upward. */
 	.eyes {
 		position: absolute;
 		top: 0;
@@ -188,7 +234,7 @@
 		place-items: center;
 		/* The pill's inner box, so the eyes are centred inside the border. */
 		width: calc(var(--pill-w) - 2px);
-		height: 100%;
+		height: calc(var(--pill-h) - 2px);
 		padding: 0;
 		border: 0;
 		border-radius: 999px;
@@ -201,8 +247,48 @@
 		left: auto;
 		right: 0;
 	}
+	.above .eyes {
+		top: auto;
+		bottom: 0;
+	}
 	.eyes:focus-visible {
 		outline-offset: -3px;
+	}
+	/* A press squeezes the eyes a little; letting go springs back. */
+	.eyes :global(.glancer) {
+		transition:
+			scale 260ms cubic-bezier(0.3, 1.6, 0.5, 1),
+			translate 260ms cubic-bezier(0.3, 1.6, 0.5, 1);
+	}
+	.eyes:active :global(.glancer) {
+		scale: 0.9;
+		transition-duration: 80ms;
+	}
+	/* On the way to the pointer the eyes lean into the trip and stretch a touch; arriving, they
+	   settle with a wobble. All inside the pill, so the window's outline never clips it. */
+	.travelling .eyes :global(.glancer) {
+		scale: 1.08 0.92;
+		translate: var(--lean-x, 0) var(--lean-y, 0);
+		transition:
+			scale 160ms ease-out,
+			translate 160ms ease-out;
+	}
+	.arrived .eyes :global(.glancer) {
+		animation: settle 620ms cubic-bezier(0.3, 0.6, 0.4, 1);
+	}
+	@keyframes settle {
+		0% {
+			scale: 1.14 0.84;
+		}
+		35% {
+			scale: 0.93 1.1;
+		}
+		65% {
+			scale: 1.04 0.97;
+		}
+		100% {
+			scale: 1;
+		}
 	}
 	/* An update is waiting (SPEC §1). Static: no pulse. */
 	.dot {
@@ -232,15 +318,17 @@
 		flex: 1;
 		min-width: 0;
 		display: grid;
-		gap: 3px;
+		gap: 7px;
 	}
 	.head:not(.right) .field {
-		padding-right: 4px;
+		padding-right: 12px;
 	}
 	.head.right .field {
 		padding-left: 20px;
+		padding-right: 12px;
 	}
 	textarea {
+		display: block;
 		width: 100%;
 		resize: none;
 		border: 0;
@@ -249,50 +337,134 @@
 		font-size: var(--font);
 		line-height: 1.45;
 		padding: 0;
+		overflow-y: hidden;
+		transition: color 160ms;
+	}
+	/* Past INPUT_LINES the box scrolls, with the bar's thin thumb. */
+	textarea:global(.scrolls) {
+		overflow-y: auto;
+		padding-right: 6px;
+	}
+	textarea::-webkit-scrollbar {
+		width: 4px;
+	}
+	textarea::-webkit-scrollbar-thumb {
+		border: 0;
+		background: rgb(255 255 255 / 0.2);
 	}
 	textarea::placeholder {
 		color: var(--muted);
+	}
+	/* Words still being heard can change, so they sit back a little until they are sent. */
+	textarea.dictating {
+		color: var(--muted);
+		cursor: default;
 	}
 	/* The bar is the input: the caret shows focus, a ring around the text would box it in. */
 	textarea:focus-visible {
 		outline: none;
 	}
-	.chips {
+	/* What goes with the message: a thumbnail of the screenshot, the start of the selection.
+	   Each is one button; clicking it takes the attachment off. */
+	.attached {
 		display: flex;
 		gap: 6px;
-		flex-wrap: nowrap;
-		overflow: hidden;
+		min-width: 0;
 	}
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		padding: 0 2px 0 8px;
-		border-radius: 999px;
-		background: var(--panel-raised);
+	.shot,
+	.quote {
+		position: relative;
+		flex: none;
+		height: 38px;
+		padding: 0;
 		border: 1px solid var(--line-strong);
-		font-size: 11px;
-		color: var(--muted);
-		white-space: nowrap;
-	}
-	.chip button {
-		min-width: 20px;
-		min-height: 20px;
-		border: 0;
-		background: none;
-		color: var(--muted);
+		border-radius: 10px;
+		background: var(--panel-raised);
 		cursor: pointer;
-		padding: 0 4px;
-		font-size: 13px;
-		line-height: 1;
+		overflow: hidden;
+		animation: attach 240ms cubic-bezier(0.3, 1.5, 0.5, 1);
+	}
+	@keyframes attach {
+		from {
+			scale: 0.8;
+			opacity: 0;
+		}
+	}
+	.shot {
+		width: 56px;
+	}
+	.shot img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: top left;
+	}
+	.quote {
+		flex: 0 1 auto;
+		min-width: 0;
+		max-width: 190px;
+		display: grid;
+		align-content: center;
+		gap: 1px;
+		padding: 0 26px 0 10px;
+		text-align: left;
+		box-shadow: inset 2px 0 0 var(--accent);
+	}
+	.quote-text {
+		font-size: 12px;
+		line-height: 1.25;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.quote-count {
+		font-size: 10px;
+		line-height: 1.25;
+		color: var(--faint);
+	}
+	/* The remove mark: a small cross in the corner, drawn with two strokes. */
+	.x {
+		position: absolute;
+		top: 3px;
+		right: 3px;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: rgb(7 8 12 / 0.78);
+	}
+	.x::before,
+	.x::after {
+		content: "";
+		position: absolute;
+		top: 6.5px;
+		left: 3.5px;
+		width: 7px;
+		height: 1px;
+		background: var(--text);
+		rotate: 45deg;
+	}
+	.x::after {
+		rotate: -45deg;
+	}
+	.quote .x {
+		top: 50%;
+		right: 6px;
+		translate: 0 -50%;
+		background: none;
 	}
 	.meta {
 		flex: none;
+		align-self: flex-start;
+		height: calc(var(--pill-h) - 2px);
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		color: var(--faint);
 		font-size: 11px;
+	}
+	.above .meta {
+		align-self: flex-end;
 	}
 	.head:not(.right) .meta {
 		padding-right: 14px;

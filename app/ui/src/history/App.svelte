@@ -146,8 +146,6 @@
 		padding: 0 8px 12px;
 		list-style: none;
 		overflow-y: auto;
-		scrollbar-width: thin;
-		scrollbar-color: var(--line-strong) transparent;
 	}
 	li button {
 		display: grid;

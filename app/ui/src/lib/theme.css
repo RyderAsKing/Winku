@@ -125,9 +125,32 @@ textarea {
 
 /* Shared interaction rules also apply to native controls in every window. */
 :root {
-	scrollbar-color: #515866 var(--panel);
-	scrollbar-width: thin;
 	caret-color: var(--accent);
+}
+/* Scrollbars: a slim rounded thumb that floats on whatever is behind, with no track and no arrow
+   buttons. (Setting scrollbar-width or scrollbar-color would switch these rules off.) */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+::-webkit-scrollbar-button {
+	display: none;
+}
+::-webkit-scrollbar-thumb {
+	border: 3px solid transparent;
+	border-radius: 999px;
+	background: rgb(255 255 255 / 0.2);
+	background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background-color: rgb(255 255 255 / 0.34);
+}
+::-webkit-scrollbar-thumb:active {
+	background-color: rgb(255 255 255 / 0.46);
 }
 ::selection {
 	background: #275c65;

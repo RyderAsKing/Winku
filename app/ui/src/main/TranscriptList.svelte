@@ -6,7 +6,8 @@
 	import ReplyView from "./ReplyView.svelte";
 	import type { MainState } from "./state.svelte.ts";
 
-	let { app, items, live = true }: { app?: MainState; items: TranscriptItem[]; live?: boolean } = $props();
+	/** `embedded`: rows only, inside someone else's scroll box (the reply bubble's way back). */
+	let { app, items, live = true, embedded = false }: { app?: MainState; items: TranscriptItem[]; live?: boolean; embedded?: boolean } = $props();
 
 	const showLive = $derived(live && app?.reply && app.reply.kind === "prompt" && !app.reply.done);
 </script>
@@ -14,8 +15,8 @@
 <!-- It follows the newest message while scrolled to the bottom (lib/follow.ts). -->
 <!-- Keyboard users need to focus this scroll region to read older messages. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="list" use:follow tabindex="0" role="region" aria-label="Conversation">
-	{#if items.length === 0 && !showLive}
+<div class="list" class:embedded use:follow={!embedded} tabindex={embedded ? undefined : 0} role={embedded ? undefined : "region"} aria-label={embedded ? undefined : "Conversation"}>
+	{#if items.length === 0 && !showLive && !embedded}
 		<p class="empty">Nothing here yet.</p>
 	{/if}
 	{#each items as item (item.id)}
@@ -67,8 +68,11 @@
 		height: 100%;
 		overflow-y: auto;
 		padding: 16px 20px 20px;
-		scrollbar-width: thin;
-		scrollbar-color: var(--line-strong) transparent;
+	}
+	.list.embedded {
+		height: auto;
+		overflow: visible;
+		padding: 0;
 	}
 	.empty {
 		margin: auto;

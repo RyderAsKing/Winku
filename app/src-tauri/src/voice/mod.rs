@@ -86,6 +86,9 @@ fn voice_error(app: &AppHandle, message: &str) {
 }
 
 fn talk_end(app: &AppHandle, text: &str) {
+    app.state::<crate::engine::Engine>()
+        .activity
+        .set_talking(false);
     emit_ui(app, json!({ "kind": "talk_end", "text": text }));
 }
 
@@ -123,6 +126,10 @@ pub fn hold_start(app: &AppHandle) {
         old.partials.close();
         let _ = old.stop.send(());
     }
+    // Scheduled runs wait until the recording is transcribed (`talk_end`).
+    app.state::<crate::engine::Engine>()
+        .activity
+        .set_talking(true);
     emit_ui(app, json!({ "kind": "talk_start" }));
     ensure_download(app, model);
     let thread_app = app.clone();

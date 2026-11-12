@@ -1120,7 +1120,14 @@ pub enum Page {
 }
 
 /// Shows the Settings or History window, creating it if needed. It is destroyed on close.
-pub fn open_page(app: &AppHandle, page: Page) -> Result<(), String> {
+/// `section` ("schedules") opens Settings on that section: a new window loads
+/// `settings.html?section=…`, an open one gets `ui` `{ kind: "settings_section", section }`.
+pub fn open_page(app: &AppHandle, page: Page, section: Option<&str>) -> Result<(), String> {
+    let section = section.filter(|s| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    });
     let (label, url, title, size) = match page {
         Page::Settings => (
             "settings",
@@ -1131,10 +1138,21 @@ pub fn open_page(app: &AppHandle, page: Page) -> Result<(), String> {
         Page::History => ("history", "history.html", "Winku History", (720.0, 560.0)),
     };
     if let Some(window) = app.get_webview_window(label) {
+        if let Some(section) = section {
+            let _ = window.emit_to(
+                label,
+                "ui",
+                &serde_json::json!({ "kind": "settings_section", "section": section }),
+            );
+        }
         let _ = window.unminimize();
         let _ = window.show();
         return window.set_focus().map_err(|e| e.to_string());
     }
+    let url = match section {
+        Some(section) => format!("{url}?section={section}"),
+        None => url.to_string(),
+    };
     tauri::WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(title)
         .inner_size(size.0, size.1)

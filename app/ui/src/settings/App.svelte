@@ -213,6 +213,7 @@
 					{ label: "Attach a screenshot", get: (s: Settings) => s.hotkeys.screenshot, key: "screenshot" as const },
 					{ label: "Clear context", get: (s: Settings) => s.hotkeys.clear, key: "clear" as const },
 					{ label: "Cycle thinking level", get: (s: Settings) => s.hotkeys.cycleThinking, key: "cycleThinking" as const },
+					{ label: "Bring Winku here", get: (s: Settings) => s.hotkeys.bring, key: "bring" as const },
 				]
 			: [],
 	);
@@ -380,6 +381,7 @@
 				screenshot: swap(h.screenshot),
 				clear: swap(h.clear),
 				cycleThinking: swap(h.cycleThinking),
+				bring: swap(h.bring),
 			},
 		});
 	}

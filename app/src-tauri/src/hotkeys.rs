@@ -34,6 +34,7 @@ pub enum Binding {
     Screenshot,
     Clear,
     CycleThinking,
+    Bring,
 }
 
 impl Binding {
@@ -46,6 +47,7 @@ impl Binding {
             Binding::Screenshot => "screenshot".into(),
             Binding::Clear => "clear".into(),
             Binding::CycleThinking => "cycleThinking".into(),
+            Binding::Bring => "bring".into(),
         }
     }
 }
@@ -59,6 +61,7 @@ pub fn bindings(hotkeys: &Hotkeys) -> Vec<(Binding, String)> {
     list.push((Binding::Screenshot, hotkeys.screenshot.clone()));
     list.push((Binding::Clear, hotkeys.clear.clone()));
     list.push((Binding::CycleThinking, hotkeys.cycle_thinking.clone()));
+    list.push((Binding::Bring, hotkeys.bring.clone()));
     list.into_iter()
         .filter(|(_, key)| !key.trim().is_empty())
         .collect()
@@ -237,7 +240,7 @@ pub fn summon_release(release: Release, talking: bool, paused: bool) -> SummonRe
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Failure {
     /// Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear",
-    /// "cycleThinking", or "leaderKey".
+    /// "cycleThinking", "bring", or "leaderKey".
     pub name: String,
     pub binding: String,
     pub error: String,
@@ -438,6 +441,7 @@ fn dispatch(app: &AppHandle, binding: Binding, pressed: bool) {
         Binding::Action(slot) if pressed => crate::actions::on_action_hotkey(app, slot),
         Binding::AskSelection if pressed => crate::actions::on_ask_hotkey(app),
         Binding::Screenshot if pressed => crate::capture::on_screenshot_hotkey(app),
+        Binding::Bring if pressed => crate::window::bring_here(app),
         _ => {}
     }
 }
@@ -570,7 +574,7 @@ mod tests {
             };
             assert!(parse(&text).is_ok(), "{binding:?} {text}");
         }
-        assert_eq!(bindings(&Hotkeys::default()).len(), 10);
+        assert_eq!(bindings(&Hotkeys::default()).len(), 11);
     }
 
     #[test]

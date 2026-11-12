@@ -84,6 +84,7 @@ With text selected, the hints float in their own small window just above the fir
 | `Ctrl+Alt+S` | attach a screenshot of the current window |
 | `Ctrl+Alt+X` | clear context (wipe + 5 s Undo toast) |
 | `Ctrl+Alt+T` | cycle Main's thinking level |
+| `Ctrl+Alt+B` | bring Winku here: the eyes glide over to rest just beside the pointer, on its monitor (nothing happens while they are hidden or the pointer is already next to them) |
 | `Esc` | first press stops the reply, tool or speech; second hides the bar |
 | `Ctrl+J` | expand or collapse the transcript |
 

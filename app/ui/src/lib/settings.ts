@@ -12,6 +12,7 @@ export interface Hotkeys {
 	screenshot: string;
 	clear: string;
 	cycleThinking: string;
+	bring: string;
 }
 
 export type EyeSize = "small" | "medium" | "large";

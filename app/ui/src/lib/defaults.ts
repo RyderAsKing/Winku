@@ -58,6 +58,7 @@ export function defaultSettings(): Settings {
 			screenshot: "Ctrl+Alt+S",
 			clear: "Ctrl+Alt+X",
 			cycleThinking: "Ctrl+Alt+T",
+			bring: "Ctrl+Alt+B",
 		},
 		leaderKey: null,
 		guideFollowsSelection: true,

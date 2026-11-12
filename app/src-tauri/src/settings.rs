@@ -92,6 +92,8 @@ pub struct Hotkeys {
     pub screenshot: String,
     pub clear: String,
     pub cycle_thinking: String,
+    /// "Bring Winku here". Missing from files saved before 0.1.6; the struct default fills it in.
+    pub bring: String,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -189,6 +191,7 @@ impl Default for Hotkeys {
             screenshot: "Ctrl+Alt+S".into(),
             clear: "Ctrl+Alt+X".into(),
             cycle_thinking: "Ctrl+Alt+T".into(),
+            bring: "Ctrl+Alt+B".into(),
             extra: Extra::new(),
         }
     }
@@ -587,6 +590,23 @@ mod tests {
         assert!(settings.ask_before_running);
         assert_eq!(settings.actions.len(), 5);
         assert_eq!(settings.hotkeys, Hotkeys::default());
+    }
+
+    #[test]
+    fn hotkeys_from_before_bring_get_its_default() {
+        let old = json!({
+            "hotkeys": {
+                "summon": "F13",
+                "actions": ["Ctrl+Alt+1", "Ctrl+Alt+2", "Ctrl+Alt+3", "Ctrl+Alt+4", "Ctrl+Alt+5"],
+                "askSelection": "Ctrl+Alt+Q",
+                "screenshot": "Ctrl+Alt+S",
+                "clear": "Ctrl+Alt+X",
+                "cycleThinking": "Ctrl+Alt+T"
+            }
+        });
+        let settings: Settings = serde_json::from_value(old).unwrap();
+        assert_eq!(settings.hotkeys.summon, "F13");
+        assert_eq!(settings.hotkeys.bring, "Ctrl+Alt+B");
     }
 
     #[test]

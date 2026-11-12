@@ -6,13 +6,15 @@
 	let { settings, selection = "unknown" }: { settings: Settings; selection?: SelectionState } = $props();
 
 	const hints = $derived(hintsFor(settings, selection));
+	// A second column holding one key looks stranded, so it joins the first.
+	const lists = $derived(hints.actions.length && hints.other.length === 1 ? [[...hints.actions, ...hints.other]] : [hints.actions, hints.other]);
 	const prefix = $derived(settings.leaderKey?.trim() || "Ctrl+Alt");
 </script>
 
 <div class="hints" role="status" aria-label="{prefix} keys">
 	<p class="prefix mono">{prefix} +</p>
 	<div class="columns">
-		{#each [hints.actions, hints.other] as list, i (i)}
+		{#each lists as list, i (i)}
 			{#if list.length}
 				<dl>
 					{#each list as hint (hint.key)}
@@ -35,6 +37,7 @@
 	}
 	.columns {
 		display: flex;
+		align-items: flex-start;
 		gap: 22px;
 	}
 	dl {

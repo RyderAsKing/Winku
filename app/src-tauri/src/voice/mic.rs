@@ -73,12 +73,36 @@ struct Shared {
     failed: AtomicBool,
 }
 
+/// A view of a recording in progress, for transcribing it while it grows.
+pub struct Tap {
+    shared: Arc<Shared>,
+    /// Mono samples per second.
+    pub rate: u32,
+}
+
+impl Tap {
+    /// A copy of the samples from index `start` on. Holds the buffer's lock only for the copy.
+    /// Empty once the recording has ended.
+    pub fn copy_from(&self, start: usize) -> Vec<f32> {
+        let samples = self
+            .shared
+            .samples
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        samples
+            .get(start..)
+            .map(<[f32]>::to_vec)
+            .unwrap_or_default()
+    }
+}
+
 /// Records until `stop` receives (or its sender is dropped) or `max` has passed. `on_open` runs
-/// once the microphone is capturing; `on_level` gets 0–1 at most every `LEVEL_INTERVAL`.
+/// once the microphone is capturing, with a `Tap` on the samples so far; `on_level` gets 0–1 at
+/// most every `LEVEL_INTERVAL`.
 pub fn record(
     stop: &Receiver<()>,
     max: Duration,
-    on_open: impl FnOnce(),
+    on_open: impl FnOnce(Tap),
     mut on_level: impl FnMut(f32),
 ) -> Result<Recording, MicError> {
     let host = cpal::default_host();
@@ -104,7 +128,10 @@ pub fn record(
         ))),
     }?;
     stream.play().map_err(from_cpal)?;
-    on_open();
+    on_open(Tap {
+        shared: Arc::clone(&shared),
+        rate,
+    });
 
     let started = Instant::now();
     loop {
@@ -166,6 +193,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tap_hands_out_only_new_samples() {
+        let shared = Arc::new(Shared {
+            samples: Mutex::new(vec![1.0, 2.0]),
+            peak: AtomicU32::new(0),
+            failed: AtomicBool::new(false),
+        });
+        let tap = Tap {
+            shared: Arc::clone(&shared),
+            rate: 16_000,
+        };
+        assert_eq!(tap.copy_from(0), [1.0, 2.0]);
+        shared.samples.lock().unwrap().push(3.0);
+        assert_eq!(tap.copy_from(2), [3.0]);
+        assert!(tap.copy_from(3).is_empty());
+        // The recording ended and took its samples.
+        shared.samples.lock().unwrap().clear();
+        assert!(tap.copy_from(3).is_empty());
+    }
 
     #[test]
     fn errors_get_plain_advice() {

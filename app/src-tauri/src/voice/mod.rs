@@ -3,13 +3,15 @@
 //! recogniser and the reading voice load on demand and unload after `stt::IDLE_UNLOAD` idle.
 //!
 //! Threads: each hold records on its own thread (cpal streams stay on the thread that made them)
-//! and transcribes there afterwards; each download and each `speak` gets a thread too. The hotkey
+//! and transcribes there afterwards, while a second thread transcribes the recording so far for
+//! `talk_partial`; each download and each `speak` gets a thread too. The hotkey
 //! handler and Tauri commands only start work and return.
 
 pub mod audio;
 pub mod download;
 pub mod mic;
 pub mod models;
+pub mod partial;
 pub mod stt;
 pub mod tts;
 
@@ -28,6 +30,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::settings::Store;
 use download::Downloads;
 use models::{Kind, Model};
+use partial::Gate;
 use stt::Slot;
 
 /// A recording stops by itself after this long.
@@ -40,6 +43,8 @@ const JANITOR_INTERVAL: Duration = Duration::from_secs(20);
 struct Session {
     id: u64,
     stop: Sender<()>,
+    /// Closed as soon as the hold ends, so no `talk_partial` follows.
+    partials: Arc<Gate>,
 }
 
 /// A recording waiting for its model to finish downloading.
@@ -100,33 +105,43 @@ fn chosen_stt(app: &AppHandle) -> &'static Model {
 // ───────────────────────────── hold to talk ─────────────────────────────
 
 /// The summon key has been held past the tap limit (and listening isn't paused): stop any
-/// speech, send `talk_start` and start recording.
+/// speech, send `talk_start` and start recording, with `talk_partial` while it records.
 pub fn hold_start(app: &AppHandle) {
     stop_speaking(app);
     let voice = app.state::<Voice>();
     let model = chosen_stt(app);
-    emit_ui(app, json!({ "kind": "talk_start" }));
-    ensure_download(app, model);
 
     let (tx, rx) = mpsc::channel();
     let id = voice.next_id.fetch_add(1, Ordering::Relaxed);
-    if let Some(old) = lock(&voice.session).replace(Session { id, stop: tx }) {
+    let partials = Arc::new(Gate::default());
+    if let Some(old) = lock(&voice.session).replace(Session {
+        id,
+        stop: tx,
+        partials: Arc::clone(&partials),
+    }) {
+        // Before `talk_start`, so the old recording's words don't land in this one.
+        old.partials.close();
         let _ = old.stop.send(());
     }
+    emit_ui(app, json!({ "kind": "talk_start" }));
+    ensure_download(app, model);
     let thread_app = app.clone();
     let spawned = std::thread::Builder::new()
         .name("winku-mic".into())
         .spawn(move || {
             let app = thread_app;
             let level_app = app.clone();
+            let worker_app = app.clone();
+            let worker_gate = Arc::clone(&partials);
             let result = mic::record(
                 &rx,
                 MAX_RECORDING,
-                || {},
+                |tap| start_partials(worker_app, model, tap, worker_gate),
                 |level| {
                     emit_ui(&level_app, json!({ "kind": "talk_level", "level": level }));
                 },
             );
+            partials.close();
             let voice = app.state::<Voice>();
             {
                 let mut session = lock(&voice.session);
@@ -152,7 +167,83 @@ pub fn hold_start(app: &AppHandle) {
 /// The summon key was released after a hold: stop recording (it is then transcribed).
 pub fn hold_end(app: &AppHandle) {
     if let Some(session) = lock(&app.state::<Voice>().session).take() {
+        session.partials.close();
         let _ = session.stop.send(());
+    }
+}
+
+/// Starts the thread that sends `talk_partial` while the recording behind `tap` grows. Without
+/// the model on disk there are no partials.
+fn start_partials(app: AppHandle, model: &'static Model, tap: mic::Tap, gate: Arc<Gate>) {
+    if !model.installed(&models_dir(&app)) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("winku-partials".into())
+        .spawn(move || send_partials(&app, model, &tap, &gate));
+    if let Err(e) = spawned {
+        eprintln!("winku: couldn't start live transcription: {e}");
+    }
+}
+
+/// Transcribes the recording so far, again and again, until `gate` closes. A pass starts only
+/// with the gate open while holding the recogniser's slot, so after the gate closes the final
+/// transcription waits for at most the pass already running. Loads the model if needed; if that
+/// fails it gives up quietly and the final transcription reports the error.
+fn send_partials(app: &AppHandle, model: &'static Model, tap: &mic::Tap, gate: &Gate) {
+    let voice = app.state::<Voice>();
+    let dir = model.dir(&models_dir(app));
+    let mut resampler = audio::StreamResampler::new(tap.rate, audio::STT_RATE);
+    let mut read = 0;
+    let mut speech = Vec::new();
+    let mut last_pass: Option<Instant> = None;
+    let mut last_sent = String::new();
+    // Load now, so the first pass doesn't wait for it.
+    {
+        let mut slot = lock(&voice.stt);
+        if !gate.is_open() {
+            return;
+        }
+        let loaded = slot
+            .get_or_load(model.id, Instant::now(), || stt::load(model, &dir))
+            .is_ok();
+        slot.touch(Instant::now());
+        if !loaded {
+            return;
+        }
+    }
+    ensure_janitor(app);
+    while gate.is_open() {
+        std::thread::sleep(partial::TICK);
+        let new = tap.copy_from(read);
+        read += new.len();
+        resampler.push(&new, &mut speech);
+        let audio = Duration::from_secs_f64(speech.len() as f64 / audio::STT_RATE as f64);
+        if !partial::due(audio, last_pass.map(|t| t.elapsed()))
+            || !audio::has_speech(&speech, audio::STT_RATE)
+        {
+            continue;
+        }
+        let text = {
+            let mut slot = lock(&voice.stt);
+            if !gate.is_open() {
+                return;
+            }
+            let result = slot
+                .get_or_load(model.id, Instant::now(), || stt::load(model, &dir))
+                .map(|recognizer| stt::transcribe(recognizer, &speech));
+            slot.touch(Instant::now());
+            result
+        };
+        ensure_janitor(app);
+        last_pass = Some(Instant::now());
+        let Ok(text) = text else { return };
+        if partial::should_emit(&text, &last_sent) {
+            gate.send_if_open(|| {
+                emit_ui(app, json!({ "kind": "talk_partial", "text": text }));
+            });
+            last_sent = text;
+        }
     }
 }
 
@@ -556,7 +647,7 @@ mod e2e {
     /// moonshine-base and Supertonic into that folder (through `download::install`), has
     /// Supertonic read sentences with numbers, pushes them through the playback resampler (the
     /// path `tts::play` uses, at 48 kHz in awkward chunks), writes WAVs next to the models and
-    /// transcribes them with Moonshine.
+    /// transcribes them with Moonshine, whole and in the growing passes live transcription makes.
     #[test]
     #[ignore]
     fn supertonic_speech_round_trips_through_moonshine() {
@@ -629,5 +720,30 @@ mod e2e {
         assert!(lower.contains("12 apples"), "{text}");
         assert!(lower.contains("15%"), "{text}");
         assert!(lower.contains("march"), "{text}");
+
+        // Live transcription: passes over the growing recording, as `send_partials` makes them.
+        let step = audio::STT_RATE as usize / 2;
+        let mut last_sent = String::new();
+        let mut sent = Vec::new();
+        for end in (step..=samples.len()).step_by(step) {
+            let prefix = &samples[..end];
+            let audio = Duration::from_secs_f64(end as f64 / audio::STT_RATE as f64);
+            if !partial::due(audio, None) || !audio::has_speech(prefix, audio::STT_RATE) {
+                continue;
+            }
+            let started = Instant::now();
+            let partial = stt::transcribe(&recognizer, prefix);
+            eprintln!(
+                "partial at {:.1}s ({:.2}s): {partial:?}",
+                audio.as_secs_f32(),
+                started.elapsed().as_secs_f32()
+            );
+            if partial::should_emit(&partial, &last_sent) {
+                sent.push(partial.clone());
+                last_sent = partial;
+            }
+        }
+        assert!(sent.len() >= 3, "{sent:?}");
+        assert!(sent[0].to_lowercase().contains("here"), "{sent:?}");
     }
 }

@@ -3,7 +3,7 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { ClipboardContent } from "../protocol.ts";
+import type { ClipboardContent, ClipboardHistory } from "../protocol.ts";
 import type { ShellRequests } from "../requests.ts";
 
 export const CLIPBOARD_TIMEOUT_MS = 10_000;
@@ -15,6 +15,19 @@ async function readClipboard(requests: ShellRequests, includeImage: boolean, sig
 		| ClipboardContent
 		| undefined;
 	return data ?? { kind: "empty" };
+}
+
+/** "5 s ago", "3 min ago", "2 h ago". */
+function age(seconds: number): string {
+	if (seconds < 60) return `${seconds} s ago`;
+	if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+	return `${Math.floor(seconds / 3600)} h ago`;
+}
+
+export function describeHistory(history: ClipboardHistory): string {
+	if (!history.entries.length) return "The clipboard history is empty: nothing was copied as text since Winku started.";
+	const rows = history.entries.map((e) => `${e.index}: ${age(e.ageSeconds)}, ${e.chars} ${e.chars === 1 ? "character" : "characters"}: ${e.preview}`);
+	return `The clipboard history, newest first (0 is the latest text copy). Read one with its index:\n${rows.join("\n")}`;
 }
 
 export function describeClipboard(clip: ClipboardContent, imageIncluded: boolean): string {
@@ -40,9 +53,27 @@ export function clipboardTools(requests: ShellRequests, supportsImages: () => bo
 		label: "Read the clipboard",
 		description:
 			"Read what is on the user's clipboard now: text, an image (when you can see images) or file paths. " +
-			'Use it when the user refers to something they copied ("this", "what I copied").',
-		parameters: Type.Object({}),
-		async execute(_id, _params, signal) {
+			'Use it when the user refers to something they copied ("this", "what I copied"). ' +
+			"Winku also keeps the last 20 text copies of this session: list: true lists them as index, age and a short preview, " +
+			'and index reads one in full (0 is the latest text copy), for "what I copied before this".',
+		parameters: Type.Object({
+			index: Type.Optional(Type.Integer({ minimum: 0, description: "Read this entry of the clipboard history (0 is the latest text copy)" })),
+			list: Type.Optional(Type.Boolean({ description: "List the clipboard history instead of reading the clipboard" })),
+		}),
+		async execute(_id, params, signal) {
+			if (params.list) {
+				const data = (await requests.request("clipboard_read", { includeImage: false, list: true }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal })) as
+					| ClipboardHistory
+					| undefined;
+				return text(describeHistory(data ?? { entries: [] }));
+			}
+			if (params.index !== undefined) {
+				const clip = (await requests.request("clipboard_read", { includeImage: false, index: params.index }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal })) as
+					| ClipboardContent
+					| undefined;
+				if (clip?.kind !== "text") throw new Error(`There is no copy ${params.index} in the clipboard history.`);
+				return text(`Copy ${params.index} from the clipboard history:\n${clip.text}`);
+			}
 			const includeImage = supportsImages();
 			const clip = await readClipboard(requests, includeImage, signal);
 			const image = includeImage && clip.kind === "image" ? clip.image : undefined;

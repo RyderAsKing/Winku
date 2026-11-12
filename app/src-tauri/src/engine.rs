@@ -247,7 +247,7 @@ enum Route {
     /// Answer a `screen_target` Request ourselves (computer use).
     ScreenTarget { id: String },
     /// Answer a `clipboard_read` Request ourselves.
-    ClipboardRead { id: String, include_image: bool },
+    ClipboardRead { id: String, params: Value },
     /// Answer a `clipboard_write` Request ourselves.
     ClipboardWrite { id: String, params: Value },
     /// Answer this Request ourselves with an error Response.
@@ -270,7 +270,7 @@ fn route(record: &Value) -> Route {
                 Some("screen_target") => Route::ScreenTarget { id },
                 Some("clipboard_read") => Route::ClipboardRead {
                     id,
-                    include_image: record["params"]["includeImage"].as_bool() == Some(true),
+                    params: record["params"].clone(),
                 },
                 Some("clipboard_write") => Route::ClipboardWrite {
                     id,
@@ -337,10 +337,10 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                         .send(&crate::capture::response_with(&id, outcome));
                 });
             }
-            Route::ClipboardRead { id, include_image } => {
+            Route::ClipboardRead { id, params } => {
                 let app = app.clone();
                 std::thread::spawn(move || {
-                    let outcome = crate::clipboard::read(include_image);
+                    let outcome = crate::clipboard::read(&params);
                     let _ = app
                         .state::<Engine>()
                         .send(&crate::capture::response_with(&id, outcome));
@@ -495,7 +495,7 @@ mod tests {
             ),
             Route::ClipboardRead {
                 id: "r6".into(),
-                include_image: true
+                params: json!({ "includeImage": true })
             }
         );
         assert_eq!(

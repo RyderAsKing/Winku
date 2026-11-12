@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
 use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
-    GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
+    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, EnumClipboardFormats,
+    GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
     RegisterClipboardFormatW, SetClipboardData,
 };
 use windows_sys::Win32::System::Memory::{
@@ -886,12 +886,42 @@ impl Saved {
     }
 }
 
+/// Private, unless the mark is Winku's own: its paste-back text and the clipboard it restores
+/// carry the "exclude from history" formats, but content that wasn't private before stays
+/// readable (clipboard_history.rs, `own`).
+fn private_now(open: &Open) -> bool {
+    open.is_private() && crate::clipboard_history::with(|h| h.own(sequence())) != Some(false)
+}
+
+/// Marks Winku's own clipboard changes until dropped, so the history skips them.
+struct OwnChanges {
+    id: u64,
+    /// What Winku leaves on the clipboard was private before.
+    private: bool,
+}
+
+impl OwnChanges {
+    fn begin() -> Self {
+        Self {
+            id: crate::clipboard_history::with(|h| h.begin_own(sequence())),
+            private: false,
+        }
+    }
+}
+
+impl Drop for OwnChanges {
+    fn drop(&mut self) {
+        let (id, private) = (self.id, self.private);
+        crate::clipboard_history::with(|h| h.end_own(id, sequence(), private));
+    }
+}
+
 /// What is on the clipboard now (the clipboard_read tool). Private content is never read.
 pub fn clipboard_read() -> Result<crate::clipboard::Raw, String> {
     use crate::clipboard::Raw;
     let owner = Owner::new()?;
     let open = Open::new(&owner)?;
-    if open.is_private() {
+    if private_now(&open) {
         return Ok(Raw::Private);
     }
     if let Some(data) = open.read(CF_HDROP) {
@@ -930,7 +960,7 @@ pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
     use crate::clipboard::Summary;
     let owner = Owner::new().ok()?;
     let open = Open::new(&owner).ok()?;
-    if open.is_private() {
+    if private_now(&open) {
         return Some(Summary::Private);
     }
     if let Some(data) = open.read(CF_HDROP) {
@@ -948,7 +978,12 @@ pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
 /// None when the copy didn't change the clipboard within 400 ms (nothing selected).
 pub fn selection_via_copy() -> Option<String> {
     let owner = Owner::new().ok()?;
-    let saved = Open::new(&owner).ok()?.save();
+    let mut own = OwnChanges::begin();
+    let saved = {
+        let open = Open::new(&owner).ok()?;
+        own.private = open.is_private();
+        open.save()
+    };
     let before = sequence();
     send_ctrl(b'C').ok()?;
     let deadline = Instant::now() + COPY_TIMEOUT;
@@ -969,9 +1004,10 @@ pub fn selection_via_copy() -> Option<String> {
 /// clipboard about 500 ms later (unless something else has written to it since).
 pub fn paste_text(text: &str) -> Result<(), String> {
     let owner = Owner::new()?;
-    let saved = {
+    let own = OwnChanges::begin();
+    let (saved, was_private) = {
         let open = Open::new(&owner)?;
-        let saved = open.save();
+        let saved = (open.save(), open.is_private());
         open.empty();
         let data: Vec<u8> = text
             .encode_utf16()
@@ -985,6 +1021,7 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         saved
     };
     let ours = sequence();
+    drop(own);
     drop(owner);
     let sent = send_ctrl(b'V');
     std::thread::spawn(move || {
@@ -992,11 +1029,98 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         if sequence() != ours {
             return;
         }
+        let mut own = OwnChanges::begin();
+        own.private = was_private;
         if let Ok(owner) = Owner::new() {
             let _ = saved.restore(&owner);
         }
     });
     sent
+}
+
+/// Starts the clipboard history listener: a thread with a hidden message-only window registered
+/// with `AddClipboardFormatListener`, so it gets `WM_CLIPBOARDUPDATE` after every change. It
+/// reads the change and hands it to the history (clipboard_history.rs), which decides what to
+/// keep. Safe to call once.
+pub fn watch_clipboard() {
+    use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, MSG, WM_CLIPBOARDUPDATE,
+        WNDCLASSW,
+    };
+
+    unsafe extern "system" fn proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if msg == WM_CLIPBOARDUPDATE {
+            on_clipboard_change();
+            return 0;
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        std::thread::spawn(|| {
+            // SAFETY: the window belongs to this thread and is serviced by its message loop.
+            unsafe {
+                let class: Vec<u16> = "WinkuClipboardWatch\0".encode_utf16().collect();
+                let wc = WNDCLASSW {
+                    lpfnWndProc: Some(proc),
+                    lpszClassName: class.as_ptr(),
+                    ..std::mem::zeroed()
+                };
+                RegisterClassW(&wc);
+                let hwnd = CreateWindowExW(
+                    0,
+                    class.as_ptr(),
+                    std::ptr::null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                );
+                if hwnd.is_null() || AddClipboardFormatListener(hwnd) == 0 {
+                    eprintln!("winku: clipboard listener failed, no clipboard history");
+                    return;
+                }
+                let mut msg: MSG = std::mem::zeroed();
+                while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                    DispatchMessageW(&msg);
+                }
+            }
+        });
+    });
+}
+
+/// Reads what a clipboard change left: private, text, or something else (only its formats
+/// unless it is text). The sequence number is read with the clipboard open, so it matches.
+fn on_clipboard_change() {
+    use crate::clipboard_history::Change;
+    let Ok(owner) = Owner::new() else { return };
+    let Ok(open) = Open::new(&owner) else { return };
+    let seq = sequence();
+    let available = |format| {
+        // SAFETY: plain Win32 call; the clipboard is open.
+        unsafe { IsClipboardFormatAvailable(format) != 0 }
+    };
+    let change = if open.is_private() {
+        Change::Private
+    } else if available(CF_HDROP) || available(CF_DIB) {
+        Change::Other
+    } else {
+        open.unicode_text().map_or(Change::Other, Change::Text)
+    };
+    drop(open);
+    crate::clipboard_history::with(|h| h.observe(seq, change, Instant::now()));
 }
 
 // ---------------------------------------------------------------------------------------------

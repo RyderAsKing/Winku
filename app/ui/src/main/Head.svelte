@@ -314,8 +314,8 @@
 	.dot.tasks {
 		top: auto;
 		right: auto;
-		bottom: 18%;
-		left: 22%;
+		bottom: 16%;
+		left: 16%;
 	}
 	/* Fixed at the open width, beside the eyes, so it is uncovered rather than squeezed. */
 	.body {
@@ -371,6 +371,10 @@
 	}
 	textarea::placeholder {
 		color: var(--muted);
+		/* One line, cut short: the meta row can leave the box narrow (update, waiting tasks). */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	/* Words still being heard can change, so they sit back a little until they are sent. */
 	textarea.dictating {

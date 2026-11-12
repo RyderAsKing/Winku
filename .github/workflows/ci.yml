@@ -137,7 +137,7 @@ jobs:
           # the release level, 13 s without), so pull requests skip it. The dependencies stay
           # optimised either way, and main builds the crate as a release does.
           $cargo = @()
-          if ($env:GITHUB_EVENT_NAME -eq "pull_request") { $cargo = "--", "--config", "profile.release.package.winku.opt-level=0" }
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") { $cargo = "--", "-v", "--config", "profile.release.package.winku.opt-level=0" }
           bunx tauri build --no-bundle @cargo
           Get-Item src-tauri/target/release/winku.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
 

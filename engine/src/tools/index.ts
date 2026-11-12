@@ -10,6 +10,7 @@ import {
 	createWriteToolDefinition,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { ScheduledRun } from "../protocol.ts";
 import type { ShellRequests } from "../requests.ts";
 import { clipboardTools } from "./clipboard.ts";
 import type { DesktopRunner } from "./desktop/cli.ts";
@@ -19,6 +20,7 @@ import { type Launcher, launchDetached, openTool } from "./open.ts";
 import { gated, type PermissionPolicy } from "./permission.ts";
 import { lookAtScreenTool } from "./screen.ts";
 import type { ShellChoice } from "./shell.ts";
+import { taskTools } from "./tasks.ts";
 import { defaultWebDeps, type WebDeps, webFetchTool, webSearchTool } from "./web.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: pi's tool definitions differ in params and details
@@ -34,6 +36,10 @@ export interface AgentToolDeps {
 	requests: ShellRequests;
 	/** The reply the tool call belongs to, for permission requests. */
 	replyId: () => string | undefined;
+	/** The active reply is a scheduled run (#43): its job. The task tools pass its id as `from`. */
+	scheduledRun: () => ScheduledRun | undefined;
+	/** The active reply's prompt was dictated. */
+	spoken: () => boolean;
 	supportsImages: () => boolean;
 	searchKey: () => string | undefined;
 	web?: WebDeps;
@@ -72,6 +78,7 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 		webSearchTool(deps.searchKey, deps.web ?? defaultWebDeps),
 		lookAtScreenTool(deps.requests, deps.supportsImages, desktop?.glance),
 		...(clipboardTools(deps.requests, deps.supportsImages) as AnyTool[]),
+		...(taskTools({ requests: deps.requests, scheduledRun: deps.scheduledRun, spoken: deps.spoken, shells, ...(deps.platform ? { platform: deps.platform } : {}) }) as AnyTool[]),
 		...((desktop?.tools ?? []) as AnyTool[]),
 	);
 	const gate = {
@@ -79,6 +86,7 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 		...(desktop ? { describe: desktop.describe } : {}),
 		home,
 		replyId: deps.replyId,
+		scheduled: () => !!deps.scheduledRun(),
 		ask: (params: Parameters<ShellRequests["request"]>[1], signal: AbortSignal | undefined) =>
 			deps.requests.request("permission", params as never, { signal, timeoutMs: PERMISSION_TIMEOUT_MS }),
 	};

@@ -5,7 +5,10 @@ import { RequestAborted } from "../requests.ts";
 import { resolveFromHome } from "./paths.ts";
 
 export const DECLINED = "The user declined to run this.";
-export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open", "desktop_act", "desktop_press", "desktop_window", "clipboard_write", "clipboard_edit"]);
+export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open", "watch", "desktop_act", "desktop_press", "desktop_window", "clipboard_write", "clipboard_edit"]);
+
+/** In a scheduled run nobody is at the keyboard: these ask even when "Ask before running" is off. */
+export const ASK_IN_SCHEDULED_RUN = new Set(["desktop_act", "desktop_press", "desktop_window"]);
 
 export type Decision = "allow_once" | "always" | "deny";
 
@@ -69,6 +72,14 @@ export function describeCall(tool: string, args: Record<string, unknown>, home: 
 				coverable: !isCompoundCommand(command),
 			};
 		}
+		case "watch": {
+			const command = str("command");
+			return {
+				summary: `Watch, running in the background: ${oneLine(command)}`,
+				allowKey: `powershell:${firstCommandWord(command)}`,
+				coverable: !isCompoundCommand(command),
+			};
+		}
 		case "open": {
 			const target = str("target").trim();
 			return { summary: `Open ${oneLine(target)}`, allowKey: `open:${target}`, coverable: true };
@@ -89,12 +100,15 @@ export interface GateDeps {
 	ask: (request: ToolPermissionRequest, signal: AbortSignal | undefined) => Promise<unknown>;
 	/** Summaries for tools whose description needs live state (the desktop_* tools); undefined falls back to describeCall. */
 	describe?: (tool: string, args: Record<string, unknown>) => GateCheck | undefined;
+	/** The current reply is a scheduled run. */
+	scheduled?: () => boolean;
 }
 
 /** Ask the user if needed. Resolves when the call may run; throws DECLINED otherwise. */
 export async function checkPermission(tool: string, args: Record<string, unknown>, deps: GateDeps, signal?: AbortSignal): Promise<void> {
 	const policy = deps.policy();
-	if (!policy.askBeforeRunning || !GATED_TOOLS.has(tool)) return;
+	if (!GATED_TOOLS.has(tool)) return;
+	if (!policy.askBeforeRunning && !(ASK_IN_SCHEDULED_RUN.has(tool) && deps.scheduled?.())) return;
 	const call = deps.describe?.(tool, args) ?? describeCall(tool, args, deps.home);
 	const key = call.allowKey.toLowerCase();
 	if (call.coverable && policy.alwaysAllow.has(key)) return;

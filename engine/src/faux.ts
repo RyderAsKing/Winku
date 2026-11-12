@@ -27,6 +27,8 @@ export interface FauxStep {
 	echoSystemPrompt?: boolean;
 	/** Reply with the full text of the last user message, including the <now> tag and image count. */
 	echoUser?: boolean;
+	/** Reply with every user-role message in the request (custom messages too), separated by "\n---\n". */
+	echoThread?: boolean;
 	/** Reply with "<model id> reasoning=<level>" of the request (which model and thinking level was used). */
 	echoModel?: boolean;
 	/** Reply with "tools: a,b,c", the tool names sent with the request, sorted. */
@@ -74,6 +76,7 @@ export function createFauxProvider(modelIds: string[], options: FauxOptions = {}
 			if (!step) return fauxAssistantMessage(`Hello from winku-engine. You said: ${userText(lastUser).text}`);
 			if (step.error) return fauxAssistantMessage("", { stopReason: "error", errorMessage: step.error });
 			if (step.echoSystemPrompt) return fauxAssistantMessage(getCurrentSystemPrompt(context.messages));
+			if (step.echoThread) return fauxAssistantMessage(context.messages.filter((m) => m.role === "user").map((m) => userText(m).text).join("\n---\n"));
 			if (step.echoModel) return fauxAssistantMessage(`${model.id} reasoning=${options?.reasoning ?? "off"}`);
 			if (step.echoTools) {
 				const names = getCurrentTools(context.messages).map((t) => t.name).sort();

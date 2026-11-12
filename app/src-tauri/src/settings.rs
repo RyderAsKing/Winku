@@ -33,6 +33,9 @@ pub struct Settings {
     pub actions: Vec<ActionSpec>,
     pub hotkeys: Hotkeys,
     pub leader_key: Option<String>,
+    /// Ask the focused app what is selected when the hotkey prefix is held, and list only the
+    /// keys that fit (beta, SPEC §5). Off: no query in any app, the full guide.
+    pub guide_follows_selection: bool,
     pub eyes: Eyes,
     pub voice: Voice,
     pub updates: String,
@@ -157,6 +160,7 @@ impl Default for Settings {
             actions: default_actions(),
             hotkeys: Hotkeys::default(),
             leader_key: None,
+            guide_follows_selection: true,
             eyes: Eyes::default(),
             voice: Voice::default(),
             updates: "auto".into(),
@@ -560,6 +564,7 @@ mod tests {
         assert_eq!(value["voice"]["listeningPaused"], false);
         assert_eq!(value["updates"], "auto");
         assert_eq!(value["launchAtLogin"], true);
+        assert_eq!(value["guideFollowsSelection"], true);
         let names: Vec<_> = value["actions"]
             .as_array()
             .unwrap()

@@ -42,8 +42,9 @@ export type UiEvent =
 	| { kind: "update_ready"; version: string }
 	/** The pill moved across the screen: things now grow the other way. */
 	| ({ kind: "layout" } & Layout)
-	/** The hotkey prefix has been held alone (true), or that hold ended (false). */
-	| { kind: "hotkey_hint"; show: boolean };
+	/** The hotkey prefix has been held alone (true), or that hold ended (false). `selection`: what
+	 *  the focused app said when the hold began; absent when unknown, null when nothing is selected. */
+	| { kind: "hotkey_hint"; show: boolean; selection?: { editable: boolean } | null };
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {

@@ -133,7 +133,7 @@
 				in:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicOut }}
 				out:fly={{ duration: ms(90), opacity: 0 }}
 			>
-				<HotkeyHints settings={app.settings} />
+				<HotkeyHints settings={app.settings} selection={app.hintSelection} />
 			</div>
 		{/if}
 	</div>

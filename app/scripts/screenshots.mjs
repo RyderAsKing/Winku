@@ -180,6 +180,33 @@ const cases = [
 		},
 	},
 	{
+		name: "hotkey-hints-nothing-selected",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true, selection: null });
+		},
+	},
+	{
+		name: "hotkey-hints-read-only",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: false } });
+		},
+	},
+	{
+		name: "hotkey-hints-editable",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Open Winku" }).waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: true } });
+		},
+	},
+	{
 		name: "hotkey-hints-transcript",
 		path: "/",
 		ready: "role=status[name='Ctrl+Alt keys']",
@@ -264,6 +291,15 @@ const cases = [
 		path: "/settings.html?altgr=1&taken=action2#keys",
 		size: SETTINGS,
 		ready: "text=Use Ctrl+Shift instead",
+	},
+	{
+		name: "settings-keys-guide",
+		path: "/settings.html#keys",
+		size: SETTINGS,
+		ready: "role=switch[name='Guide follows the selection']",
+		prepare: async (page) => {
+			await page.getByRole("switch", { name: "Guide follows the selection" }).scrollIntoViewIfNeeded();
+		},
 	},
 	{
 		name: "history",

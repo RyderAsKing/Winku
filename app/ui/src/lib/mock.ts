@@ -8,6 +8,8 @@
 //   ?long=1        transcript with long paths, unbroken text, code and a table
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
+//   ?selection=editable  what the hotkey hints are told is selected: none, read-only or editable
+//                  (absent: unknown, the full list)
 import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
@@ -324,7 +326,14 @@ export function createMockShell(): ShellImpl {
 		timers.push(setTimeout(() => emit("ui", { kind: "talk_end", text }), ms));
 	};
 
-	// The shell's hotkey hints, in the browser: Ctrl+Alt held on its own for 450 ms.
+	// The shell's hotkey hints, in the browser: Ctrl+Alt held on its own for 450 ms, with the
+	// selection the URL asks for.
+	const mockSelection = () => {
+		const pick = params.get("selection");
+		if (pick === "none") return { selection: null };
+		if (pick === "editable" || pick === "read-only") return { selection: { editable: pick === "editable" } };
+		return {};
+	};
 	let hintTimer: ReturnType<typeof setTimeout> | undefined;
 	let hintShown = false;
 	const endHint = () => {
@@ -339,7 +348,7 @@ export function createMockShell(): ShellImpl {
 		if (hintTimer === undefined && !hintShown) {
 			hintTimer = setTimeout(() => {
 				hintShown = true;
-				emit("ui", { kind: "hotkey_hint", show: true });
+				emit("ui", { kind: "hotkey_hint", show: true, ...mockSelection() });
 			}, 450);
 		}
 	});

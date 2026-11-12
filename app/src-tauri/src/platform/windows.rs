@@ -271,6 +271,82 @@ fn uia_selection_on_this_thread() -> Option<String> {
     })
 }
 
+/// What the focused element has selected, for the hotkey guide: whether any text is selected and
+/// whether it can be edited. Never reads the text. Unlike `selection_via_uia` it is asked of
+/// every app, Chromium-based ones included (SPEC §7). None when the element exposes no text, or
+/// UIA takes longer than 300 ms (the worker thread is then left to finish on its own).
+pub fn selection_summary() -> Option<super::Selection> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(uia_selection_summary_on_this_thread());
+    });
+    rx.recv_timeout(UIA_TIMEOUT).ok().flatten()
+}
+
+fn uia_selection_summary_on_this_thread() -> Option<super::Selection> {
+    use super::{SelectedText, Selection};
+    use windows::core::Interface;
+    use windows::Win32::System::Variant::{VariantClear, VT_BOOL};
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationTextPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
+        UIA_IsReadOnlyAttributeId, UIA_TextPattern2Id, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+
+    with_com(|| {
+        // SAFETY: COM calls on this thread.
+        let summary = (|| -> windows::core::Result<Selection> {
+            unsafe {
+                let element = automation()?.GetFocusedElement()?;
+                let pattern: IUIAutomationTextPattern = match element
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                {
+                    Ok(pattern) => pattern,
+                    Err(_) => element
+                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
+                        .cast()?,
+                };
+                let ranges = pattern.GetSelection()?;
+                let mut first = None;
+                for i in 0..ranges.Length()? {
+                    let range = ranges.GetElement(i)?;
+                    // One character is enough to know the range isn't an empty caret.
+                    if !range.GetText(1)?.is_empty() {
+                        first = Some(range);
+                        break;
+                    }
+                }
+                let Some(range) = first else {
+                    return Ok(Selection::Nothing);
+                };
+                // The range's own attribute first. Mixed or unsupported values come back as an
+                // object, not a bool; then the element's value pattern decides.
+                let flag = range
+                    .GetAttributeValue(UIA_IsReadOnlyAttributeId)
+                    .ok()
+                    .and_then(|mut attribute| {
+                        let flag = (attribute.Anonymous.Anonymous.vt == VT_BOOL)
+                            .then(|| attribute.Anonymous.Anonymous.Anonymous.boolVal.0 != 0);
+                        let _ = VariantClear(&mut attribute);
+                        flag
+                    });
+                // Neither answers: assume editable, as the guide did before it asked.
+                let read_only = match flag {
+                    Some(read_only) => read_only,
+                    None => element
+                        .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                        .and_then(|p| p.CurrentIsReadOnly())
+                        .map(|b| b.as_bool())
+                        .unwrap_or(false),
+                };
+                Ok(Selection::Text(SelectedText {
+                    editable: !read_only,
+                }))
+            }
+        })();
+        summary.ok()
+    })
+}
+
 const WINDOW_TEXT_TIMEOUT: Duration = Duration::from_millis(500);
 const WINDOW_TEXT_CAP: usize = 8000;
 const WINDOW_TEXT_MAX_NODES: usize = 4000;

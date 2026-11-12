@@ -17,6 +17,23 @@ pub struct RoundRect {
     pub radius: i32,
 }
 
+/// What the focused element has selected, as the hotkey guide needs it (SPEC §5). The text itself
+/// is never read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))] // only Windows asks
+pub enum Selection {
+    /// The element exposes text and none of it is selected.
+    Nothing,
+    Text(SelectedText),
+}
+
+/// A non-empty text selection. The floating guide will add the first line's rectangle here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectedText {
+    /// False when the selected text can't be changed (a web page, a read-only field).
+    pub editable: bool,
+}
+
 /// Captured pixels, RGBA, rows top to bottom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawImage {

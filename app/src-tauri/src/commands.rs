@@ -19,6 +19,9 @@ pub fn apply_settings(app: &AppHandle, old: &Settings, new: &Settings) {
     if settings::hotkeys_changed(old, new) {
         hotkeys::register_all(app, new);
     }
+    if old.guide_follows_selection != new.guide_follows_selection {
+        crate::hint::set_follow_selection(new.guide_follows_selection);
+    }
     if settings::engine_relevant_changed(old, new) {
         engine::configure(app);
     }

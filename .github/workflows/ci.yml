@@ -117,6 +117,15 @@ jobs:
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Bun packages
+        # Installing the engine's packages takes about 17 s on Windows.
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/node_modules
+            app/node_modules
+          key: bun-modules-${{ runner.os }}-${{ hashFiles('engine/bun.lock', 'app/bun.lock') }}
+
       - name: Build app (release, no installer)
         working-directory: app
         shell: pwsh
@@ -124,23 +133,13 @@ jobs:
           bun install --frozen-lockfile
           bun run engine
           Get-Item ../engine/dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
-          bunx tauri build --no-bundle
+          # Optimising the shell crate itself is 35 of the build's 115 seconds (measured: 47 s at
+          # the release level, 13 s without), so pull requests skip it. The dependencies stay
+          # optimised either way, and main builds the crate as a release does.
+          $cargo = @()
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") { $cargo = "--", "--config", "profile.release.package.winku.opt-level=0" }
+          bunx tauri build --no-bundle @cargo
           Get-Item src-tauri/target/release/winku.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
-
-      - name: TEMPORARY where the shell build's time goes
-        working-directory: app/src-tauri
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $build = { cargo build --release --bins --features tauri/custom-protocol 2>&1 | Select-Object -Last 2 | Write-Host }
-          "nothing changed: {0:n1} s" -f (Measure-Command $build).TotalSeconds
-          (Get-Item src/main.rs).LastWriteTime = Get-Date
-          "main.rs touched (link only): {0:n1} s" -f (Measure-Command $build).TotalSeconds
-          foreach ($level in 1, 0) {
-            $t = Measure-Command { cargo build --release --bins --features tauri/custom-protocol --config "profile.release.package.winku.opt-level=$level" 2>&1 | Select-Object -Last 2 | Write-Host }
-            "winku at opt-level ${level}: {0:n1} s" -f $t.TotalSeconds
-          }
-          Get-Item target/release/winku.exe | Select-Object Length
 
       - name: Smoke test, idle memory and idle CPU
         working-directory: app
@@ -220,6 +219,15 @@ jobs:
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Bun packages
+        # Installing the engine's packages takes about 17 s on Windows.
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/node_modules
+            app/node_modules
+          key: bun-modules-${{ runner.os }}-${{ hashFiles('engine/bun.lock', 'app/bun.lock') }}
 
       - name: Engine tests (compiled exe)
         # The engine ships as a compiled exe, so that is what Windows tests. The same tests run

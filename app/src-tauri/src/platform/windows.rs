@@ -201,9 +201,10 @@ fn send_ctrl(key: u8) -> Result<(), String> {
 
 const UIA_TIMEOUT: Duration = Duration::from_millis(300);
 
-/// The focused element's selected text through UI Automation's TextPattern. None when the
-/// element has no text pattern, nothing is selected, or UIA takes longer than 300 ms (the
-/// worker thread is then left to finish on its own).
+/// The focused element's selected text through UI Automation's TextPattern, asking its nearest
+/// ancestor with one when it has none. None when neither has a text pattern, nothing is
+/// selected, or UIA takes longer than 300 ms (the worker thread is then left to finish on its
+/// own).
 pub fn selection_via_uia() -> Option<String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -236,25 +237,51 @@ fn automation() -> windows::core::Result<windows::Win32::UI::Accessibility::IUIA
     unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
 }
 
-fn uia_selection_on_this_thread() -> Option<String> {
+/// Ancestors of the focused element asked for a text pattern when it has none.
+const TEXT_ANCESTORS: usize = 4;
+
+/// The text pattern of the focused element, or of its nearest ancestor that has one within
+/// four levels (in a document, focus can sit on a child such as a link), with that element.
+/// Call with COM initialised on this thread; the caller's time box bounds the walk.
+fn focused_text_pattern() -> windows::core::Result<(
+    windows::Win32::UI::Accessibility::IUIAutomationElement,
+    windows::Win32::UI::Accessibility::IUIAutomationTextPattern,
+)> {
     use windows::core::Interface;
     use windows::Win32::UI::Accessibility::{
         IUIAutomationTextPattern, IUIAutomationTextPattern2, UIA_TextPattern2Id, UIA_TextPatternId,
     };
 
+    // SAFETY: COM calls on this thread (with_com).
+    unsafe {
+        let automation = automation()?;
+        let walker = automation.ControlViewWalker()?;
+        let mut element = automation.GetFocusedElement()?;
+        for level in 0..=TEXT_ANCESTORS {
+            let pattern = element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .or_else(|_| {
+                    element
+                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
+                        .cast()
+                });
+            if let Ok(pattern) = pattern {
+                return Ok((element, pattern));
+            }
+            if level < TEXT_ANCESTORS {
+                element = walker.GetParentElement(&element)?;
+            }
+        }
+        Err(windows::Win32::Foundation::E_FAIL.into())
+    }
+}
+
+fn uia_selection_on_this_thread() -> Option<String> {
     with_com(|| {
         // SAFETY: COM calls on this thread.
         let text = (|| -> windows::core::Result<String> {
             unsafe {
-                let element = automation()?.GetFocusedElement()?;
-                let pattern: IUIAutomationTextPattern = match element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                {
-                    Ok(pattern) => pattern,
-                    Err(_) => element
-                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
-                        .cast()?,
-                };
+                let (_, pattern) = focused_text_pattern()?;
                 let ranges = pattern.GetSelection()?;
                 let mut text = String::new();
                 for i in 0..ranges.Length()? {
@@ -273,9 +300,11 @@ fn uia_selection_on_this_thread() -> Option<String> {
 }
 
 /// What the focused element has selected, for the hotkey guide: whether any text is selected,
-/// whether it can be edited and where its first line is on screen. Never reads the text. Unlike `selection_via_uia` it is asked of
-/// every app, Chromium-based ones included (SPEC §7). None when the element exposes no text, or
-/// UIA takes longer than 300 ms (the worker thread is then left to finish on its own).
+/// whether it can be edited and where its first line is on screen. Never reads the text. When
+/// the focused element has no text pattern, the nearest ancestor with one answers (a few levels
+/// up). Unlike `selection_via_uia` it is asked of every app, Chromium-based ones included
+/// (SPEC §7). None when no element answers, or UIA takes longer than 300 ms (the worker thread
+/// is then left to finish on its own).
 pub fn selection_summary() -> Option<super::Selection> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -286,26 +315,16 @@ pub fn selection_summary() -> Option<super::Selection> {
 
 fn uia_selection_summary_on_this_thread() -> Option<super::Selection> {
     use super::{SelectedText, Selection};
-    use windows::core::Interface;
     use windows::Win32::System::Variant::{VariantClear, VT_BOOL};
     use windows::Win32::UI::Accessibility::{
-        IUIAutomationTextPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
-        UIA_IsReadOnlyAttributeId, UIA_TextPattern2Id, UIA_TextPatternId, UIA_ValuePatternId,
+        IUIAutomationValuePattern, UIA_IsReadOnlyAttributeId, UIA_ValuePatternId,
     };
 
     with_com(|| {
         // SAFETY: COM calls on this thread.
         let summary = (|| -> windows::core::Result<Selection> {
             unsafe {
-                let element = automation()?.GetFocusedElement()?;
-                let pattern: IUIAutomationTextPattern = match element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                {
-                    Ok(pattern) => pattern,
-                    Err(_) => element
-                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
-                        .cast()?,
-                };
+                let (element, pattern) = focused_text_pattern()?;
                 let ranges = pattern.GetSelection()?;
                 let mut first = None;
                 for i in 0..ranges.Length()? {

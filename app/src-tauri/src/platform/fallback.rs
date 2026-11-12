@@ -102,15 +102,15 @@ pub fn animations_enabled() -> bool {
 pub fn set_window_region(_window: WindowHandle, _rects: &[RoundRect]) {}
 
 /// Places and shows the floating guide without activating it. Windows only.
-#[allow(dead_code)]
+#[allow(dead_code)] // the floating guide exists only on Windows
 pub fn show_floating(_window: WindowHandle, _rect: (i32, i32, i32, i32), _radius: i32) {}
 
 /// Hides a window without waiting for its thread. Windows only.
-#[allow(dead_code)]
+#[allow(dead_code)] // the floating guide exists only on Windows
 pub fn hide_window(_window: WindowHandle) {}
 
 /// The floating guide's frame and styles. Windows only.
-#[allow(dead_code)]
+#[allow(dead_code)] // the floating guide exists only on Windows
 pub fn floating_frame(_window: WindowHandle) {}
 
 const NO_CLIPBOARD: &str = "The clipboard isn't available on this system.";

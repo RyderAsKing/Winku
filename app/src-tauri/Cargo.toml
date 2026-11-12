@@ -5,9 +5,18 @@ description = "A small desktop assistant that lives as a pair of eyes"
 license = "MIT"
 edition = "2021"
 
+# A plain Rust library: Winku is desktop only. Tauri's template also asks for a static and a
+# dynamic library (for mobile), and each one is another full link of the speech libraries on
+# every build.
 [lib]
 name = "winku_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+doctest = false
+
+# main.rs only calls the library; without this, `cargo test` links a second, empty test program.
+[[bin]]
+name = "winku"
+path = "src/main.rs"
+test = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

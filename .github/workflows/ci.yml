@@ -3,8 +3,11 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
+    # Nothing here builds or checks the docs.
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
 
 # A new push to a pull request cancels the run that is still going for the old one.
 concurrency:
@@ -15,6 +18,10 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # Tests don't need debug info: without it the build and the link are quicker and the cache
+      # is much smaller. Job-level, so rust-cache keys its cache on it.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +61,8 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run typecheck
-          bun test
+          # Every test starts its own engine process; run the test files side by side.
+          bun test --parallel
 
       - name: UI check and build, stage the engine sidecar
         working-directory: app
@@ -68,7 +76,7 @@ jobs:
       - name: Eyes motion budget (Playwright, mock shell)
         working-directory: app
         run: |
-          bunx playwright install --with-deps chromium
+          bunx playwright install --with-deps --only-shell chromium
           bun run motion-check
 
       - name: Shell fmt, clippy, tests
@@ -79,7 +87,8 @@ jobs:
           cargo test
 
   # Windows is split in two jobs that run side by side: the release build with the smoke test
-  # and measurements, and the tests (which need their own debug build).
+  # and measurements, and the tests (which need their own debug build). The build job is the
+  # longest of the three, so it sets how long a pull request waits.
   windows-build:
     runs-on: windows-latest
     env:
@@ -108,6 +117,15 @@ jobs:
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Bun packages
+        # Installing the engine's packages takes about 17 s on Windows.
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/node_modules
+            app/node_modules
+          key: bun-modules-${{ runner.os }}-${{ hashFiles('engine/bun.lock', 'app/bun.lock') }}
+
       - name: Build app (release, no installer)
         working-directory: app
         shell: pwsh
@@ -115,16 +133,30 @@ jobs:
           bun install --frozen-lockfile
           bun run engine
           Get-Item ../engine/dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
-          bunx tauri build --no-bundle
+          # Optimising the shell crate itself took 35 s of this step (measured: 47 s at the
+          # release level, 13 s without), so pull requests skip it. The dependencies stay
+          # optimised either way, and main builds the crate as a release does. About 20 s more
+          # pass before cargo compiles anything; keeping its registry index between runs didn't
+          # shorten that.
+          $cargo = @()
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") { $cargo = "--", "--config", "profile.release.package.winku.opt-level=0" }
+          bunx tauri build --no-bundle @cargo
           Get-Item src-tauri/target/release/winku.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
 
       - name: Smoke test, idle memory and idle CPU
         working-directory: app
-        # About 45 s. Once hung for 28 minutes before printing anything (a stuck WMI query on the
-        # runner, not the app): fail fast instead of waiting out the job timeout.
+        # About 45 s on main, where the numbers are kept; pull requests settle and sample for
+        # half as long, which is enough to see a change. The budgets only warn. Once hung for 28
+        # minutes before printing anything (a stuck WMI query on the runner, not the app): fail
+        # fast instead of waiting out the job timeout.
         timeout-minutes: 5
         shell: pwsh
-        run: ./scripts/measure-memory.ps1
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") {
+            ./scripts/measure-memory.ps1 -SettleSeconds 10 -CpuSampleSeconds 10
+          } else {
+            ./scripts/measure-memory.ps1
+          }
 
       - name: Computer use end to end (agent-desktop drives Notepad)
         # The desktop_* tool code with the bundled agent-desktop: launch Notepad, observe, set and
@@ -168,6 +200,9 @@ jobs:
 
   windows-tests:
     runs-on: windows-latest
+    env:
+      # As on Linux: no debug info in the test build.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -187,20 +222,26 @@ jobs:
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Engine tests (source)
-        working-directory: engine
-        run: |
-          bun install --frozen-lockfile
-          bun run typecheck
-          bun test
+      - name: Bun packages
+        # Installing the engine's packages takes about 17 s on Windows.
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/node_modules
+            app/node_modules
+          key: bun-modules-${{ runner.os }}-${{ hashFiles('engine/bun.lock', 'app/bun.lock') }}
 
       - name: Engine tests (compiled exe)
+        # The engine ships as a compiled exe, so that is what Windows tests. The same tests run
+        # from source on Linux, with the typecheck; from source here they took over 90 s, since
+        # every test starts an engine and Bun starts slowly from source on Windows.
         working-directory: engine
         shell: pwsh
         run: |
+          bun install --frozen-lockfile
           bun run build
           $env:WINKU_ENGINE_BIN = (Resolve-Path dist/winku-engine.exe).Path
-          bun test
+          bun test --parallel
 
       - name: Shell tests
         working-directory: app/src-tauri

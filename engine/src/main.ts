@@ -33,17 +33,17 @@ async function handle(message: Command): Promise<unknown> {
 			return undefined;
 		case "prompt": {
 			if (!engine.configured) throw new Error("Engine is not configured");
-			return { queued: engine.replies.prompt(message) };
+			return { steered: engine.replies.prompt(message) };
 		}
 		case "run_action": {
 			if (!engine.configured) throw new Error("Engine is not configured");
 			const { action } = message;
 			if (action.output === "agent") {
 				const text = `${action.prompt}\n\nSelected text:\n"""\n${message.selection}\n"""`;
-				return { queued: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
+				return { steered: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
 			}
 			engine.runOneOff({ ...message, action: { ...action, output: action.output } });
-			return { queued: false };
+			return { steered: false };
 		}
 		case "abort":
 			await engine.abort();

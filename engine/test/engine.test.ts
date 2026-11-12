@@ -45,7 +45,7 @@ test("streams one reply from the scripted model and exits cleanly", async () => 
 	expect(context).toMatchObject({ type: "context", contextWindow: 200_000 });
 	// The prompt itself gets exactly one Result.
 	expect(engine.records.filter((r) => r.type === "result" && r.id === end.id)).toEqual([
-		{ type: "result", id: end.id, ok: true, data: { queued: false } },
+		{ type: "result", id: end.id, ok: true, data: { steered: false } },
 	]);
 }, T);
 
@@ -237,20 +237,79 @@ test("abort stops the reply", async () => {
 	await engine.shutdown();
 }, T);
 
-test("a prompt while streaming is queued as a follow-up", async () => {
+test("a prompt while streaming steers the reply instead of waiting", async () => {
 	const engine = start();
-	await engine.configure({ faux: { tokensPerSecond: 200, replies: [{ text: "first reply ".repeat(10) }, { text: "second reply" }] } });
+	await engine.configure({
+		faux: { tokensPerSecond: 200, replies: [{ text: "first reply ".repeat(10) }, { echoUser: true }] },
+	});
 	const from = engine.records.length;
 	engine.send({ type: "prompt", id: "a", text: "one" });
 	await engine.waitFor((r) => r.type === "text_delta" && r.id === "a", from);
 	engine.send({ type: "prompt", id: "b", text: "two" });
 	const resultB = await engine.waitFor((r) => r.type === "result" && r.id === "b", from);
-	expect(resultB).toMatchObject({ ok: true, data: { queued: true } });
+	expect(resultB).toMatchObject({ ok: true, data: { steered: true } });
 	const endB = await engine.waitFor((r) => r.type === "reply_end" && r.id === "b", from);
 	const endA = engine.records.find((r) => r.type === "reply_end" && r.id === "a");
 	expect(endA).toMatchObject({ text: "first reply ".repeat(10).trimEnd(), aborted: false });
-	expect(endB).toMatchObject({ text: "second reply", aborted: false });
+	// The model's next call saw the steering message.
+	expect(endB).toMatchObject({ aborted: false });
+	expect((endB as { text: string }).text).toContain("two");
 	expect(engine.records.indexOf(endA as OutboundMessage)).toBeLessThan(engine.records.indexOf(endB));
+	await engine.shutdown();
+}, T);
+
+test("a steer during a tool call arrives after the tool result, before the next model call", async () => {
+	const engine = start();
+	await engine.configure({
+		faux: {
+			tokensPerSecond: 50,
+			replies: [{ text: "looking ".repeat(6), toolCalls: [{ name: "ls", arguments: { path: "." } }] }, { echoUser: true }],
+		},
+	});
+	const from = engine.records.length;
+	engine.send({ type: "prompt", id: "a", text: "list things" });
+	await engine.waitFor((r) => r.type === "text_delta" && r.id === "a", from);
+	engine.send({ type: "prompt", id: "b", text: "actually the other folder" });
+	const toolEnd = await engine.waitFor((r) => r.type === "tool_end", from);
+	expect(toolEnd).toMatchObject({ id: "a", ok: true });
+	const endB = await engine.waitFor((r) => r.type === "reply_end" && r.id === "b", from);
+	expect((endB as { text: string }).text).toContain("actually the other folder");
+	expect(engine.records.indexOf(toolEnd)).toBeLessThan(engine.records.indexOf(endB));
+	await engine.shutdown();
+}, T);
+
+test("two steers in one step are both delivered, in order", async () => {
+	const engine = start();
+	await engine.configure({ faux: { tokensPerSecond: 200, replies: [{ text: "first reply ".repeat(10) }, { echoUser: true }] } });
+	const from = engine.records.length;
+	engine.send({ type: "prompt", id: "a", text: "one" });
+	await engine.waitFor((r) => r.type === "text_delta" && r.id === "a", from);
+	engine.send({ type: "prompt", id: "b", text: "two" });
+	engine.send({ type: "prompt", id: "c", text: "three" });
+	const endC = await engine.waitFor((r) => r.type === "reply_end" && r.id === "c", from);
+	const endB = engine.records.find((r) => r.type === "reply_end" && r.id === "b");
+	expect(endB).toMatchObject({ aborted: false });
+	expect(endC).toMatchObject({ aborted: false });
+	expect((endC as { text: string }).text).toContain("three");
+	// One model call answered both: no reply was left for a later turn.
+	const ends = engine.records.slice(from).filter((r) => r.type === "reply_end");
+	expect(ends.map((r) => (r as { id: string }).id)).toEqual(["a", "b", "c"]);
+	await engine.shutdown();
+}, T);
+
+test("Esc with a steer pending ends every reply aborted", async () => {
+	const engine = start();
+	await engine.configure({ faux: { tokensPerSecond: 50, replies: [{ text: "first reply ".repeat(20) }] } });
+	const from = engine.records.length;
+	engine.send({ type: "prompt", id: "a", text: "one" });
+	await engine.waitFor((r) => r.type === "text_delta" && r.id === "a", from);
+	engine.send({ type: "prompt", id: "b", text: "two" });
+	await engine.waitFor((r) => r.type === "result" && r.id === "b", from);
+	engine.send({ type: "abort" });
+	const endB = await engine.waitFor((r) => r.type === "reply_end" && r.id === "b", from);
+	const endA = engine.records.find((r) => r.type === "reply_end" && r.id === "a");
+	expect(endA).toMatchObject({ aborted: true });
+	expect(endB).toMatchObject({ aborted: true });
 	await engine.shutdown();
 }, T);
 
@@ -552,7 +611,7 @@ test("replace streams action_delta then action_end and stays out of the thread",
 	await engine.prompt("hello");
 	const before = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
 	const { result, end, records } = await action(engine, "action-1");
-	expect(result).toMatchObject({ ok: true, data: { queued: false } });
+	expect(result).toMatchObject({ ok: true, data: { steered: false } });
 	expect(end).toMatchObject({ text: "the cat", output: "replace", aborted: false });
 	expect(records.filter((r) => r.type === "action_delta").map((r) => (r as { delta: string }).delta).join("")).toBe("the cat");
 	expect(records.some((r) => r.type === "reply_end" || r.type === "text_delta")).toBe(false);
@@ -688,7 +747,7 @@ test("an agent action is a normal prompt in the thread with the selection", asyn
 	await engine.configure({ faux: { replies: [{ text: "done" }] } });
 	const from = engine.records.length;
 	const result = await callAs(engine, "action-16", { type: "run_action", action: spec({ output: "agent", prompt: "Summarise this" }), selection: "long text" });
-	expect(result).toMatchObject({ ok: true, data: { queued: false } });
+	expect(result).toMatchObject({ ok: true, data: { steered: false } });
 	const end = await engine.waitFor((r) => r.type === "reply_end" && r.id === "action-16", from);
 	expect(end).toMatchObject({ text: "done", aborted: false });
 	const records = engine.records.slice(from).filter((r) => "id" in r && r.id === "action-16").map((r) => r.type);

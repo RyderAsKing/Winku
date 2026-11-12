@@ -224,6 +224,8 @@ export class Engine {
 					...(keepRecentTokens !== undefined ? { keepRecentTokens } : {}),
 				},
 				retry: { enabled: !faux, maxRetries: 2 },
+				// A message sent mid-reply steers it; every waiting one goes in at the next step (#44).
+				steeringMode: "all",
 			}),
 			sessionManager: this.thread.manager,
 			customTools: this.tools(),

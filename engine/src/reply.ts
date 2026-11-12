@@ -62,7 +62,11 @@ export class Replies {
 		return session.subscribe((event) => this.handle(event));
 	}
 
-	/** Start a reply, or queue it as a follow-up if one is streaming. Returns whether it was queued. */
+	/**
+	 * Start a reply, or steer the one running: pi delivers the message once the current step ends
+	 * (tool calls returned, or the streamed text finished), before the next model call. The running
+	 * reply then ends and this prompt's id carries the rest of the run. Returns whether it steered.
+	 */
 	prompt(command: PromptCommand): boolean {
 		const session = this.session;
 		if (!session) throw new Error("Engine is not configured");
@@ -71,21 +75,21 @@ export class Replies {
 			data: image.data,
 			mimeType: image.mimeType,
 		}));
-		const queued = this.busy;
+		const steered = this.busy;
 		this.queue.push(command.id);
 		if (command.speak) this.spoken.add(command.id);
-		if (!queued) this.emit({ type: "thinking", id: command.id });
+		if (!steered) this.emit({ type: "thinking", id: command.id });
 		session
 			.prompt(userMessageText(command), {
 				images,
 				expandPromptTemplates: false,
-				...(queued ? { streamingBehavior: "followUp" as const } : {}),
+				...(steered ? { streamingBehavior: "steer" as const } : {}),
 			})
 			.catch((error) => this.fail(command.id, error));
-		return queued;
+		return steered;
 	}
 
-	/** Stop the run and drop queued follow-ups. Every pending reply gets reply_end aborted:true. */
+	/** Stop the run and drop undelivered steering messages. Every pending reply gets reply_end aborted:true. */
 	async abort(): Promise<void> {
 		const session = this.session;
 		if (!session) return;

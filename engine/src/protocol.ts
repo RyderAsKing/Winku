@@ -190,7 +190,7 @@ export type Command =
 	| { type: "history_restore"; id?: string; entryId: string }
 	/**
 	 * Run an action on a selection (SPEC §6). The shell sends this from an action hotkey, with
-	 * an id of its own ("action-…"). Result data: { queued: boolean }, as soon as it starts.
+	 * an id of its own ("action-…"). Result data: { steered: boolean }, as soon as it starts.
 	 *  - replace/show: a one-off call on the Quick model (Main if no Quick). Not added to the
 	 *    thread. Streams action_delta, then action_end; a failure sends error (with this id)
 	 *    then action_end with aborted: true. Recorded in engine\actions.jsonl for History.

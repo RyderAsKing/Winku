@@ -31,6 +31,8 @@ export interface Settings {
 	actions: ActionSpec[];
 	hotkeys: Hotkeys;
 	leaderKey: string | null;
+	/** Ask the focused app what is selected when the hotkey prefix is held (beta, SPEC §5). */
+	guideFollowsSelection: boolean;
 	eyes: { hidden: boolean; size: EyeSize; positions: Record<string, { x: number; y: number }> };
 	voice: {
 		stt: "moonshine-base" | "whisper-base-en" | "parakeet";

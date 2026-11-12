@@ -833,6 +833,16 @@
 						</div>
 					</div>
 				</div>
+				<h3>Guide</h3>
+				<div class="group">
+					<div class="row">
+						<div class="label">
+							<span class="title">Guide follows the selection</span>
+							<span class="desc">Beta. Holding the keys lists only what fits the selected text. Browsers and Electron apps may run slower until they restart.</span>
+						</div>
+						<Switch label="Guide follows the selection" checked={settings.guideFollowsSelection} onchange={(v) => save({ guideFollowsSelection: v })} />
+					</div>
+				</div>
 			{:else if page === "eyes"}
 				<div class="group">
 					<div class="row">

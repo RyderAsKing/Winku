@@ -182,9 +182,11 @@ export const shell = {
 	voiceModels: () => invoke<VoiceModel[]>("voice_models"),
 	voiceModelDownload: (id: VoiceModelId) => invoke<void>("voice_model_download", { id }),
 	voiceModelRemove: (id: VoiceModelId) => invoke<void>("voice_model_remove", { id }),
-	/** Start dragging the current window (the resting pill). Needs core:window:allow-start-dragging. */
-	startDrag: async () => {
+	/** Drag the main window by the eyes until the button comes up. The shell follows the mouse
+	 * itself; touch and pen use the OS move (core:window:allow-start-dragging). */
+	startDrag: async (pointerType: string) => {
 		if (!isTauri) return;
+		if (pointerType === "mouse") return invoke<void>("window_drag");
 		const { getCurrentWindow } = await import("@tauri-apps/api/window");
 		await getCurrentWindow().startDragging();
 	},

@@ -42,7 +42,7 @@
 		if (!start) return;
 		if (Math.hypot(event.screenX - start.x, event.screenY - start.y) > 3) {
 			start = null;
-			void shell.startDrag();
+			void shell.startDrag(event.pointerType);
 		}
 	}
 

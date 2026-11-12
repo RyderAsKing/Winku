@@ -28,8 +28,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::{RawImage, RoundRect, WindowHandle};
 
+/// Whether the primary mouse button is held: the right one when the buttons are swapped.
 pub fn mouse_button_down() -> bool {
-    key_down(VK_LBUTTON)
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_RBUTTON;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+    // SAFETY: plain Win32 call with no pointers.
+    let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
+    key_down(if swapped { VK_RBUTTON } else { VK_LBUTTON })
 }
 
 fn key_down(vk: u16) -> bool {
@@ -853,6 +858,49 @@ pub fn plain_frame(window: WindowHandle) {
     set(DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED);
     set(DWMWA_TRANSITIONS_FORCEDISABLED, 1);
     set(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND);
+    // SAFETY: called on the thread that owns the window; the callback is a plain function that
+    // lives as long as the process.
+    unsafe {
+        windows_sys::Win32::UI::Shell::SetWindowSubclass(hwnd, Some(frameless_proc), 1, 0);
+    }
+}
+
+/// Keeps Windows from drawing a title bar on the main window. The window is undecorated, but it
+/// still has the caption style (the windowing library hides the caption by claiming the whole
+/// window as client area). With DWM's frame off, Windows itself paints the caption whenever the
+/// window is activated or its frame is redrawn, straight over the eyes: an old-style title bar
+/// with minimise, maximise and close buttons. So those paints never reach it, and neither do the
+/// title bar's commands (minimise, maximise, size, the system menu).
+unsafe extern "system" fn frameless_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    use windows_sys::Win32::UI::Shell::DefSubclassProc;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SC_KEYMENU, SC_MAXIMIZE, SC_MINIMIZE, SC_MOUSEMENU, SC_SIZE, WM_NCACTIVATE, WM_NCPAINT,
+        WM_SYSCOMMAND,
+    };
+    /// Undocumented: the themed caption and frame paints.
+    const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
+    const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
+    match msg {
+        // -1 for the update region: the active state changes, nothing is repainted.
+        WM_NCACTIVATE => DefSubclassProc(hwnd, msg, wparam, -1),
+        WM_NCPAINT | WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => 0,
+        WM_SYSCOMMAND
+            if matches!(
+                wparam as u32 & 0xFFF0,
+                SC_MINIMIZE | SC_MAXIMIZE | SC_SIZE | SC_KEYMENU | SC_MOUSEMENU
+            ) =>
+        {
+            0
+        }
+        _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1038,6 +1086,84 @@ pub fn set_window_rect(window: WindowHandle, x: i32, y: i32, w: i32, h: i32) -> 
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
         ) != 0
     }
+}
+
+/// Moves `window` without resizing or activating it. Safe from any thread.
+pub fn move_window(window: WindowHandle, x: i32, y: i32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    // SAFETY: plain Win32 call on our own window.
+    unsafe {
+        SetWindowPos(
+            window.0 as HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+        ) != 0
+    }
+}
+
+/// `window`'s rectangle on screen (x, y, width, height), physical px.
+pub fn window_rect(window: WindowHandle) -> Option<(i32, i32, i32, i32)> {
+    // SAFETY: the out-pointer is a live RECT; a stale HWND makes the call fail.
+    unsafe {
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(window.0 as HWND, &mut rect) == 0 {
+            return None;
+        }
+        Some((
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        ))
+    }
+}
+
+/// The pointer on screen, physical px.
+pub fn cursor_position() -> Option<(i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = POINT { x: 0, y: 0 };
+    // SAFETY: the out-pointer is a live POINT.
+    (unsafe { GetCursorPos(&mut point) } != 0).then_some((point.x, point.y))
+}
+
+/// Blocks until the compositor has shown the next frame, so a loop that moves a window runs once
+/// per frame on any display. Never returns sooner than a couple of milliseconds, so a compositor
+/// that isn't pacing (a remote session, a display that is off) can't turn the loop into a spin.
+pub fn wait_frame() {
+    use windows_sys::Win32::Graphics::Dwm::DwmFlush;
+    let started = Instant::now();
+    // SAFETY: plain Win32 call with no arguments.
+    let paced = unsafe { DwmFlush() } >= 0;
+    let floor = Duration::from_millis(if paced { 2 } else { 8 });
+    if let Some(rest) = floor.checked_sub(started.elapsed()) {
+        std::thread::sleep(rest);
+    }
+}
+
+/// Whether Windows has animations on (Settings > Accessibility > Visual effects > Animation
+/// effects): the setting the UI reads as "reduce motion".
+pub fn animations_enabled() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
+    };
+    let mut enabled: i32 = 1;
+    // SAFETY: the out-pointer is a live BOOL.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        )
+    };
+    ok == 0 || enabled != 0
 }
 
 /// Clips `window` to the union of `rects` (window px). Outside the region nothing paints and clicks

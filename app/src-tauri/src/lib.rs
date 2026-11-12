@@ -79,6 +79,7 @@ pub fn run() {
             commands::window_mode,
             commands::window_shape,
             commands::window_layout,
+            commands::window_drag,
             commands::open_window,
             commands::context_menu,
             commands::hotkeys_status,

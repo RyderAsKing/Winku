@@ -5,9 +5,9 @@
 //! neither paints nor takes clicks, and nothing is resized while a reply streams. Geometry is pure
 //! (physical pixels, `Rect`, `MonitorInfo`) and unit-tested; the Tauri glue feeds it real monitors.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -22,6 +22,8 @@ pub const MAIN: &str = "main";
 pub const SNAP_DISTANCE: f64 = 24.0;
 /// How long the pill must be still after a move before it snaps and is saved.
 const SETTLE: Duration = Duration::from_millis(250);
+/// How long a dropped pill takes to glide onto the edge it snaps to.
+const GLIDE: Duration = Duration::from_millis(140);
 
 /// The eyes' size preset (Settings > Appearance). Everything else scales from the pill.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +258,36 @@ pub fn resize_anchor(anchor: Rect, pill: (f64, f64), work: Rect) -> Rect {
     }
 }
 
+/// Where the pill comes to rest when the window is let go at `window`: kept on its monitor and
+/// snapped to a nearby edge. Returns the pill and the monitor it is on.
+pub fn rest_anchor(
+    monitors: &[MonitorInfo],
+    pill: (f64, f64),
+    window: Rect,
+    layout: Layout,
+) -> Option<(Rect, MonitorInfo)> {
+    let first = monitor_at(monitors, window.x, window.y)?;
+    let pill = scaled(pill, first.scale);
+    let dropped = anchor_in(window, pill, layout);
+    let monitor = monitor_at(
+        monitors,
+        dropped.x + dropped.w / 2.0,
+        dropped.y + dropped.h / 2.0,
+    )?;
+    let (x, y) = snap(
+        (dropped.x, dropped.y),
+        pill,
+        monitor.work,
+        SNAP_DISTANCE * monitor.scale,
+    );
+    Some((Rect { x, y, ..dropped }, monitor))
+}
+
+/// Ease-out cubic: fast at first, settling into place.
+pub fn ease_out(t: f64) -> f64 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
 /// Logical size to physical.
 pub fn scaled(size: (f64, f64), scale: f64) -> (f64, f64) {
     ((size.0 * scale).round(), (size.1 * scale).round())
@@ -268,6 +300,10 @@ pub struct WindowState {
     mode: Mutex<Mode>,
     view: Mutex<View>,
     move_generation: AtomicU64,
+    /// A thread is waiting for the window to come to rest (`on_moved`).
+    settling: AtomicBool,
+    /// `start_drag` is moving the window.
+    dragging: AtomicBool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -275,6 +311,9 @@ struct View {
     /// The pill on screen, physical px. None until first placed.
     anchor: Option<Rect>,
     layout: Option<Layout>,
+    /// The layout the window was last placed with. It trails `layout` between a drop that flips
+    /// the layout and the UI's next shape report.
+    placed: Option<Layout>,
     /// The stage size the UI asked for, logical px.
     stage: Option<(f64, f64)>,
     /// The window spans the stage (rather than just the pill).
@@ -287,6 +326,8 @@ impl Default for WindowState {
             mode: Mutex::new(Mode::Pill),
             view: Mutex::new(View::default()),
             move_generation: AtomicU64::new(0),
+            settling: AtomicBool::new(false),
+            dragging: AtomicBool::new(false),
         }
     }
 }
@@ -419,10 +460,15 @@ fn saved_pill(app: &AppHandle, window: &WebviewWindow) -> Option<(Rect, MonitorI
 
 /// Puts the window where the view says: the stage around the anchor once the UI has asked for
 /// one (always on Windows, where the region hides the rest), otherwise just the pill.
-fn apply_view(window: &WebviewWindow, view: &View, monitor: &MonitorInfo) -> Result<(), String> {
+fn apply_view(
+    window: &WebviewWindow,
+    view: &mut View,
+    monitor: &MonitorInfo,
+) -> Result<(), String> {
     let (Some(anchor), Some(layout)) = (view.anchor, view.layout) else {
         return Ok(());
     };
+    view.placed = Some(layout);
     match view.stage {
         Some(stage) if view.staged => place(
             window,
@@ -433,8 +479,12 @@ fn apply_view(window: &WebviewWindow, view: &View, monitor: &MonitorInfo) -> Res
 }
 
 /// Places the pill from settings: at startup, when the eyes' size changes, and when the bar
-/// closes (monitors may have changed meanwhile).
+/// closes (monitors may have changed meanwhile). Not during a drag: the pill is under the pointer
+/// then, and the saved position is where it was picked up.
 pub fn place_pill(app: &AppHandle) -> Result<(), String> {
+    if app.state::<WindowState>().dragging.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let window = main_window(app)?;
     let Some((anchor, monitor)) = saved_pill(app, &window) else {
         return Ok(());
@@ -445,7 +495,7 @@ pub fn place_pill(app: &AppHandle) -> Result<(), String> {
     let changed = view.layout != Some(layout);
     view.anchor = Some(anchor);
     view.layout = Some(layout);
-    apply_view(&window, &view, &monitor)?;
+    apply_view(&window, &mut view, &monitor)?;
     drop(view);
     if changed {
         emit_layout(app, layout);
@@ -495,7 +545,7 @@ pub fn set_shape(app: &AppHandle, stage: (f64, f64), shapes: &[Shape]) -> Result
     let bare_pill = shapes.len() == 1 && shapes[0].w <= pill.0 + 0.5 && shapes[0].h <= pill.1 + 0.5;
     view.stage = Some(stage);
     view.staged = cfg!(windows) || !bare_pill;
-    apply_view(&window, &view, &monitor)?;
+    apply_view(&window, &mut view, &monitor)?;
     if let Some(hwnd) = handle(&window) {
         let s = monitor.scale;
         let rects: Vec<crate::platform::RoundRect> = shapes
@@ -593,28 +643,177 @@ pub fn apply_eyes_visibility(app: &AppHandle) {
     }
 }
 
-/// Called on every `Moved` of the main window, resting or open. Once it has been still for a
-/// moment (and the mouse button is up), snap the pill to a nearby edge and save the position for
-/// this setup, so closing the bar leaves the eyes where they were dropped.
-pub fn on_moved(app: &AppHandle) {
+/// Drags the main window by the eyes until the mouse button comes up, then glides the pill onto
+/// a nearby edge and saves where it is.
+///
+/// Windows' own move loop (`start_dragging`) treats the window as a title bar being dragged: it
+/// paints a caption, and on release it can pull the window back down when its top is above the
+/// screen, which the stage's often is while the pill at its bottom is well inside. Here the
+/// window follows the pointer once per frame instead, and nothing else about it changes.
+pub fn start_drag(app: &AppHandle) -> Result<(), String> {
+    let window = main_window(app)?;
+    let os_drag = || window.start_dragging().map_err(|e| e.to_string());
+    let Some(hwnd) = handle(&window) else {
+        return os_drag();
+    };
     let state = app.state::<WindowState>();
-    let generation = state.move_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let (anchor, layout) = {
+        let view = state.view();
+        (view.anchor, view.placed.or(view.layout))
+    };
+    let (Some(anchor), Some(layout), Some(cursor), Some(rect)) = (
+        anchor,
+        layout,
+        crate::platform::cursor_position(),
+        crate::platform::window_rect(hwnd),
+    ) else {
+        return os_drag();
+    };
+    if state.dragging.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    // The pill sits in one corner of the window. Track that corner, so the pill stays under the
+    // pointer even if the window is resized on the way (a monitor with another scale).
+    let corner = move |(x, y, w, h): (i32, i32, i32, i32)| {
+        (
+            if layout.align_right { x + w } else { x },
+            if layout.above { y + h } else { y },
+        )
+    };
+    let origin = move |(cx, cy): (i32, i32), (_, _, w, h): (i32, i32, i32, i32)| {
+        (
+            if layout.align_right { cx - w } else { cx },
+            if layout.above { cy - h } else { cy },
+        )
+    };
+    let grab = {
+        let (cx, cy) = corner(rect);
+        (cursor.0 - cx, cursor.1 - cy)
+    };
     let app = app.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(SETTLE);
+    std::thread::spawn(move || {
+        use crate::platform::{cursor_position, move_window, wait_frame, window_rect};
         let state = app.state::<WindowState>();
-        if state.move_generation.load(Ordering::SeqCst) != generation {
-            return;
+        // Moves the window so its pill corner is at `to`, and keeps the view's anchor with it, so
+        // a shape report that lands mid-drag places the window where it already is.
+        let move_corner = |to: (i32, i32)| {
+            let Some(now) = window_rect(hwnd) else { return };
+            let (x, y) = origin(to, now);
+            state.view().anchor = Some(Rect {
+                x: if layout.align_right {
+                    to.0 as f64 - anchor.w
+                } else {
+                    to.0 as f64
+                },
+                y: if layout.above {
+                    to.1 as f64 - anchor.h
+                } else {
+                    to.1 as f64
+                },
+                ..anchor
+            });
+            if (x, y) != (now.0, now.1) {
+                move_window(hwnd, x, y);
+            }
+        };
+        while crate::platform::mouse_button_down() {
+            if let Some((x, y)) = cursor_position() {
+                move_corner((x - grab.0, y - grab.1));
+            }
+            wait_frame();
         }
-        if crate::platform::mouse_button_down() {
-            continue;
+        // Dropped: glide to where the pill rests.
+        if let (Some(now), Ok(window)) = (window_rect(hwnd), main_window(&app)) {
+            let from = corner(now);
+            let dropped = Rect {
+                x: now.0 as f64,
+                y: now.1 as f64,
+                w: now.2 as f64,
+                h: now.3 as f64,
+            };
+            let rest = rest_anchor(&monitors(&window), eye_size(&app).pill(), dropped, layout);
+            if let Some((rest, _)) = rest {
+                let was = anchor_in(dropped, (rest.w, rest.h), layout);
+                let (dx, dy) = (rest.x - was.x, rest.y - was.y);
+                if (dx, dy) != (0.0, 0.0) && crate::platform::animations_enabled() {
+                    let started = Instant::now();
+                    loop {
+                        let t = started.elapsed().as_secs_f64() / GLIDE.as_secs_f64();
+                        if t >= 1.0 {
+                            break;
+                        }
+                        let e = ease_out(t);
+                        move_corner((
+                            from.0 + (dx * e).round() as i32,
+                            from.1 + (dy * e).round() as i32,
+                        ));
+                        wait_frame();
+                    }
+                }
+                move_corner((from.0 + dx.round() as i32, from.1 + dy.round() as i32));
+            }
         }
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || settle_pill(&handle));
+        let finish = move || {
+            handle
+                .state::<WindowState>()
+                .dragging
+                .store(false, Ordering::SeqCst);
+            settle_pill(&handle);
+        };
+        if app.run_on_main_thread(finish).is_err() {
+            state.dragging.store(false, Ordering::SeqCst);
+        }
+    });
+    Ok(())
+}
+
+/// Called on every `Moved` of the main window, resting or open. Once it has been still for a
+/// moment (and the mouse button is up), snap the pill to a nearby edge and save the position for
+/// this setup, so closing the bar leaves the eyes where they were dropped. One thread waits out
+/// a whole run of moves; `start_drag` settles its own.
+pub fn on_moved(app: &AppHandle) {
+    let state = app.state::<WindowState>();
+    state.move_generation.fetch_add(1, Ordering::SeqCst);
+    if state.dragging.load(Ordering::SeqCst) || state.settling.swap(true, Ordering::SeqCst) {
         return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<WindowState>();
+        loop {
+            let generation = state.move_generation.load(Ordering::SeqCst);
+            std::thread::sleep(SETTLE);
+            if state.move_generation.load(Ordering::SeqCst) != generation
+                || crate::platform::mouse_button_down()
+            {
+                continue;
+            }
+            state.settling.store(false, Ordering::SeqCst);
+            if state.move_generation.load(Ordering::SeqCst) == generation {
+                break;
+            }
+            // A move slipped in before the flag cleared and left the wait to this thread, unless
+            // a later one has already started its own.
+            if state.settling.swap(true, Ordering::SeqCst) {
+                return;
+            }
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !handle
+                .state::<WindowState>()
+                .dragging
+                .load(Ordering::SeqCst)
+            {
+                settle_pill(&handle);
+            }
+        });
     });
 }
 
+/// The window has come to rest: snap the pill to a nearby edge, note which way things grow from
+/// there, and save the position.
 fn settle_pill(app: &AppHandle) {
     let Ok(window) = main_window(app) else { return };
     let Some(rect) = current_rect(&window) else {
@@ -622,41 +821,24 @@ fn settle_pill(app: &AppHandle) {
     };
     let state = app.state::<WindowState>();
     let mut view = state.view();
-    let Some(layout) = view.layout else { return };
+    let (Some(known), Some(placed)) = (view.layout, view.placed.or(view.layout)) else {
+        return;
+    };
     let all = monitors(&window);
-    let probe = Rect {
-        w: 1.0,
-        h: 1.0,
-        ..rect
-    };
-    let Some(first) = monitor_at(&all, probe.x, probe.y) else {
+    let Some((anchor, monitor)) = rest_anchor(&all, eye_size(app).pill(), rect, placed) else {
         return;
     };
-    let pill = scaled(eye_size(app).pill(), first.scale);
-    let dropped = anchor_in(rect, pill, layout);
-    let Some(monitor) = monitor_at(
-        &all,
-        dropped.x + dropped.w / 2.0,
-        dropped.y + dropped.h / 2.0,
-    ) else {
-        return;
-    };
-    let (x, y) = snap(
-        (dropped.x, dropped.y),
-        pill,
-        monitor.work,
-        SNAP_DISTANCE * monitor.scale,
-    );
-    let anchor = Rect { x, y, ..dropped };
-    if view.anchor == Some(anchor) {
-        return;
-    }
     let next = layout_for(anchor, monitor.work);
     view.anchor = Some(anchor);
     view.layout = Some(next);
-    let _ = apply_view(&window, &view, &monitor);
+    if next == placed {
+        let _ = apply_view(&window, &mut view, &monitor);
+    }
+    // Otherwise the pill moves to another corner of the stage. The UI redraws it there and
+    // reports its shapes, and `set_shape` then moves the window and its clip in one go. Moving
+    // the window now would show the old drawing in the new place until the UI caught up.
     drop(view);
-    if next != layout {
+    if next != known {
         emit_layout(app, next);
     }
     save_position(app, &all, anchor);
@@ -887,6 +1069,36 @@ mod tests {
         };
         let small = resize_anchor(floating, (92.0, 56.0), WORK);
         assert_eq!((small.x, small.y), (624.0, 0.0));
+    }
+
+    #[test]
+    fn a_dropped_window_rests_on_a_nearby_edge() {
+        let m = monitor(0.0, 0.0, 1920.0, 1080.0, 1.0);
+        let pill = EyeSize::Small.pill();
+        let layout = Layout {
+            align_right: true,
+            above: true,
+        };
+        // A stage whose pill (bottom right corner) is 10 px from the right edge, mid-height.
+        let stage = stage_rect(pill_at(1818.0, 500.0), (400.0, 424.0), layout);
+        let (rest, on) = rest_anchor(&[m], pill, stage, layout).unwrap();
+        assert_eq!((rest.x, rest.y), (1828.0, 500.0));
+        assert_eq!(on, m);
+        // Well away from every edge it stays where it was dropped, even with the stage's top
+        // above the screen.
+        let stage = stage_rect(pill_at(900.0, 200.0), (400.0, 424.0), layout);
+        assert!(stage.y < 0.0);
+        let (rest, _) = rest_anchor(&[m], pill, stage, layout).unwrap();
+        assert_eq!((rest.x, rest.y), (900.0, 200.0));
+        assert_eq!(rest_anchor(&[], pill, stage, layout), None);
+    }
+
+    #[test]
+    fn the_glide_starts_fast_and_ends_at_rest() {
+        assert_eq!(ease_out(0.0), 0.0);
+        assert_eq!(ease_out(1.0), 1.0);
+        assert_eq!(ease_out(2.0), 1.0);
+        assert!(ease_out(0.5) > 0.5);
     }
 
     #[test]

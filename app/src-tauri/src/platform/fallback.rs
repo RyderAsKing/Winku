@@ -1,6 +1,6 @@
 //! Non-Windows stand-ins.
 
-/// Whether the left mouse button is held (used to wait for a pill drag to finish).
+/// Whether the primary mouse button is held (used to wait for a pill drag to finish).
 pub fn mouse_button_down() -> bool {
     false
 }
@@ -66,6 +66,30 @@ pub fn capture_window(_window: WindowHandle) -> Result<RawImage, String> {
 /// Moves and resizes a window in one step. False: not supported here, use Tauri's calls.
 pub fn set_window_rect(_window: WindowHandle, _x: i32, _y: i32, _w: i32, _h: i32) -> bool {
     false
+}
+
+/// Moves a window without resizing it. Not supported here.
+pub fn move_window(_window: WindowHandle, _x: i32, _y: i32) -> bool {
+    false
+}
+
+/// A window's rectangle on screen (x, y, width, height). Unknown here.
+pub fn window_rect(_window: WindowHandle) -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+/// The pointer on screen. Unknown here.
+pub fn cursor_position() -> Option<(i32, i32)> {
+    None
+}
+
+/// Waits about one frame.
+pub fn wait_frame() {
+    std::thread::sleep(Duration::from_millis(8));
+}
+
+pub fn animations_enabled() -> bool {
+    true
 }
 
 /// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.

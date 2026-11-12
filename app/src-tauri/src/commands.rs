@@ -160,6 +160,12 @@ pub fn window_shape(
     window::set_shape(&app, (width, height), &shapes)
 }
 
+/// Drag the main window by the eyes until the mouse button comes up.
+#[tauri::command]
+pub fn window_drag(app: AppHandle) -> Result<(), String> {
+    window::start_drag(&app)
+}
+
 #[tauri::command]
 pub fn window_layout(app: AppHandle) -> Option<window::Layout> {
     window::layout(&app)

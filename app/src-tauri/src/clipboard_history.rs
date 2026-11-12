@@ -4,6 +4,11 @@
 //! This module is pure: the platform's clipboard listener reports each change with its
 //! clipboard sequence number, and Winku's own clipboard use (the selection capture and the
 //! paste-back) opens and closes "own" spans of sequence numbers whose changes are skipped.
+//!
+//! Winku marks what it leaves on the clipboard with the formats that keep it out of clipboard
+//! history, the same mark a password manager uses. The history remembers the last state Winku
+//! left, and whether it was private before Winku touched it, so `private` can tell the two
+//! apart however many spans have passed since.
 // Only the Windows listener and selection capture write to the history.
 #![cfg_attr(not(windows), allow(dead_code))]
 
@@ -55,17 +60,26 @@ struct Own {
     private: bool,
 }
 
+/// What Winku last left on the clipboard: its sequence number, and whether that content was
+/// private before Winku touched it.
+#[derive(Clone, Copy, Debug)]
+struct Left {
+    seq: u32,
+    private: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct History {
     entries: VecDeque<Entry>,
     own: VecDeque<Own>,
     next_id: u64,
+    left: Option<Left>,
 }
 
 impl History {
     /// A clipboard change, as the listener read it at sequence number `seq`.
     pub fn observe(&mut self, seq: u32, change: Change, at: Instant) {
-        if self.own(seq).is_some() {
+        if self.own(seq).is_some() || self.left.is_some_and(|l| l.seq == seq) {
             return;
         }
         let Change::Text(text) = change else { return };
@@ -95,10 +109,28 @@ impl History {
 
     /// Winku is done; `seq` is the sequence number of what it left on the clipboard, and
     /// `private` says whether that content was private before Winku touched it.
+    /// A span that changed nothing leaves the record of what Winku last left alone.
     pub fn end_own(&mut self, id: u64, seq: u32, private: bool) {
-        if let Some(span) = self.own.iter_mut().find(|s| s.id == id) {
-            span.until = Some(seq);
-            span.private = private;
+        let Some(span) = self.own.iter_mut().find(|s| s.id == id) else {
+            return;
+        };
+        span.until = Some(seq);
+        span.private = private;
+        if seq != span.after && self.left.is_none_or(|l| seq >= l.seq) {
+            self.left = Some(Left { seq, private });
+        }
+    }
+
+    /// Whether the content at `seq` is private, given whether it carries the exclude-from-history
+    /// mark (`marked`). A mark Winku put there itself counts only if the content was private
+    /// before Winku touched it; any other mark is a password manager's.
+    pub fn private(&self, seq: u32, marked: bool) -> bool {
+        if !marked {
+            return false;
+        }
+        match self.left {
+            Some(left) if left.seq == seq => left.private,
+            _ => self.own(seq) != Some(false),
         }
     }
 
@@ -146,6 +178,7 @@ pub static HISTORY: Mutex<History> = Mutex::new(History {
     entries: VecDeque::new(),
     own: VecDeque::new(),
     next_id: 0,
+    left: None,
 });
 
 pub fn with<T>(f: impl FnOnce(&mut History) -> T) -> T {
@@ -240,6 +273,43 @@ mod tests {
         h.end_own(span, 7, true);
         assert_eq!(h.own(7), Some(true));
         assert_eq!(h.own(8), None);
+    }
+
+    #[test]
+    fn a_restored_ordinary_copy_stays_readable_after_many_own_spans() {
+        let mut h = History::default();
+        let t = Instant::now();
+        h.observe(10, text("user copy"), t);
+        // A selection capture: the app's copy (11), Winku's restore (12) carries the mark.
+        let span = h.begin_own(10);
+        h.end_own(span, 12, false);
+        assert!(!h.private(12, true));
+        // Many captures that changed nothing, each seeing the mark Winku left.
+        for _ in 0..(OWN_SPANS + 2) {
+            let span = h.begin_own(12);
+            h.end_own(span, 12, true);
+        }
+        assert!(!h.private(12, true), "still the user's ordinary copy");
+        // A late message for the restore is still Winku's own.
+        h.observe(12, text("restored"), t);
+        assert_eq!(texts(&h), vec!["user copy"]);
+    }
+
+    #[test]
+    fn password_manager_content_stays_private() {
+        let mut h = History::default();
+        // Marked by a password manager, Winku never touched it.
+        assert!(h.private(20, true));
+        // A capture over it restores it private.
+        let span = h.begin_own(20);
+        h.end_own(span, 22, true);
+        assert!(h.private(22, true));
+        // An ordinary copy restored earlier doesn't excuse a later marked copy.
+        let span = h.begin_own(22);
+        h.end_own(span, 24, false);
+        assert!(h.private(25, true));
+        // Unmarked content is never private.
+        assert!(!h.private(25, false));
     }
 
     #[test]

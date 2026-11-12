@@ -18,6 +18,9 @@ use crate::settings::{self, Point};
 
 pub const MAIN: &str = "main";
 
+/// The bubble's corner radius, logical px (`BUBBLE_RADIUS` in `app/ui/src/main/stage.ts`).
+pub const BUBBLE_RADIUS: f64 = 18.0;
+
 /// Logical px within which the pill snaps to a work-area edge.
 pub const SNAP_DISTANCE: f64 = 24.0;
 /// How long the pill must be still after a move before it snaps and is saved.
@@ -373,6 +376,16 @@ fn to_info(m: &tauri::Monitor) -> MonitorInfo {
         },
         scale: m.scale_factor(),
     }
+}
+
+/// Every monitor, from the main window's point of view. Empty when it is missing.
+pub fn all_monitors(app: &AppHandle) -> Vec<MonitorInfo> {
+    main_window(app).map(|w| monitors(&w)).unwrap_or_default()
+}
+
+/// The OS handle of any of Winku's windows.
+pub fn handle_of(window: &WebviewWindow) -> Option<crate::platform::WindowHandle> {
+    handle(window)
 }
 
 fn handle(window: &WebviewWindow) -> Option<crate::platform::WindowHandle> {

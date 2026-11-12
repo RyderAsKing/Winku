@@ -9,7 +9,8 @@
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
 //   ?selection=editable  what the hotkey hints are told is selected: none, read-only or editable
-//                  (absent: unknown, the full list)
+//                  (absent: unknown, the full list). guide.html, the floating guide, shows
+//                  read-only or editable (the default).
 import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
@@ -450,6 +451,8 @@ export function createMockShell(): ShellImpl {
 					return undefined as T;
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;
+				case "guide_current":
+					return { id: 1, editable: params.get("selection") !== "read-only" } as T;
 				case "window_layout":
 				case "window_shape":
 					return layout as T;

@@ -100,3 +100,15 @@ pub fn animations_enabled() -> bool {
 
 /// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.
 pub fn set_window_region(_window: WindowHandle, _rects: &[RoundRect]) {}
+
+/// Places and shows the floating guide without activating it. Windows only.
+#[allow(dead_code)]
+pub fn show_floating(_window: WindowHandle, _rect: (i32, i32, i32, i32), _radius: i32) {}
+
+/// Hides a window without waiting for its thread. Windows only.
+#[allow(dead_code)]
+pub fn hide_window(_window: WindowHandle) {}
+
+/// The floating guide's frame and styles. Windows only.
+#[allow(dead_code)]
+pub fn floating_frame(_window: WindowHandle) {}

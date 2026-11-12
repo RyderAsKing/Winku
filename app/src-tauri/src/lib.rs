@@ -3,6 +3,7 @@ mod capture;
 mod commands;
 mod engine;
 mod fullscreen;
+mod guide;
 mod hint;
 mod hotkeys;
 mod menu;
@@ -81,6 +82,8 @@ pub fn run() {
             commands::window_layout,
             commands::window_drag,
             commands::open_window,
+            commands::guide_current,
+            commands::guide_size,
             commands::context_menu,
             commands::hotkeys_status,
             commands::hotkeys_altgr,

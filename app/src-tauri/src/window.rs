@@ -27,6 +27,14 @@ pub const SNAP_DISTANCE: f64 = 24.0;
 const SETTLE: Duration = Duration::from_millis(250);
 /// How long a dropped pill takes to glide onto the edge it snaps to.
 const GLIDE: Duration = Duration::from_millis(140);
+/// How long "Bring Winku here" takes to glide the pill to the pointer.
+const BRING: Duration = Duration::from_millis(420);
+/// Logical px between the pointer and the nearest edge of a brought pill.
+pub const BRING_GAP: f64 = 12.0;
+/// Logical px: a pointer this close to the pill already has it, and the key does nothing.
+pub const BRING_NEAR: f64 = 40.0;
+/// How far `ease_out_back` overshoots: 1.4 peaks about 7% past the target.
+const OVERSHOOT: f64 = 1.4;
 
 /// The eyes' size preset (Settings > Appearance). Everything else scales from the pill.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,6 +294,49 @@ pub fn rest_anchor(
     Some((Rect { x, y, ..dropped }, monitor))
 }
 
+/// Where the pill goes when it is brought to the pointer at `cursor`: beside it, `BRING_GAP` px
+/// from it, inside the work area of the pointer's monitor. Below and to the right when that fits,
+/// else on the other side on that axis; pulled inside the work area when neither fits (a pointer
+/// over the taskbar). Returns the pill and the monitor it lands on.
+pub fn bring_target(
+    monitors: &[MonitorInfo],
+    pill: (f64, f64),
+    cursor: (f64, f64),
+) -> Option<(Rect, MonitorInfo)> {
+    let monitor = monitor_at(monitors, cursor.0, cursor.1)?;
+    let (w, h) = scaled(pill, monitor.scale);
+    let gap = BRING_GAP * monitor.scale;
+    let work = monitor.work;
+    let side = |at: f64, size: f64, lo: f64, hi: f64| {
+        let after = at + gap;
+        let before = at - gap - size;
+        if after + size <= hi {
+            after
+        } else if before >= lo {
+            before
+        } else {
+            after
+        }
+    };
+    let x = side(cursor.0, w, work.x, work.right());
+    let y = side(cursor.1, h, work.y, work.bottom());
+    let (x, y) = clamp_into((x, y), (w, h), work);
+    Some((Rect { x, y, w, h }, monitor))
+}
+
+/// Whether `point` is within `distance` px of `rect` (inside counts as zero).
+pub fn within(rect: Rect, point: (f64, f64), distance: f64) -> bool {
+    let dx = (rect.x - point.0).max(point.0 - rect.right()).max(0.0);
+    let dy = (rect.y - point.1).max(point.1 - rect.bottom()).max(0.0);
+    dx.hypot(dy) <= distance
+}
+
+/// Ease-out-back: fast at first, a small overshoot (about 7%), then settling onto the target.
+pub fn ease_out_back(t: f64) -> f64 {
+    let u = t.clamp(0.0, 1.0) - 1.0;
+    1.0 + (OVERSHOOT + 1.0) * u.powi(3) + OVERSHOOT * u.powi(2)
+}
+
 /// Ease-out cubic: fast at first, settling into place.
 pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
@@ -298,6 +349,36 @@ pub fn scaled(size: (f64, f64), scale: f64) -> (f64, f64) {
 
 // ───────────────────────────── runtime ─────────────────────────────
 
+/// What a frame of `animate` asks for next.
+enum Step {
+    Next,
+    /// Stop here; `animate` returns false.
+    Stop,
+    /// Start the clock again (the target moved); the next frame gets progress 0.
+    Restart,
+}
+
+/// Calls `frame` once per display frame with the eased progress, ending with exactly 1.0. Jumps
+/// straight to 1.0 when Windows animations are off. False when a frame stopped it.
+fn animate(duration: Duration, curve: fn(f64) -> f64, mut frame: impl FnMut(f64) -> Step) -> bool {
+    let animated = crate::platform::animations_enabled();
+    let mut started = Instant::now();
+    loop {
+        let t = if animated {
+            started.elapsed().as_secs_f64() / duration.as_secs_f64()
+        } else {
+            1.0
+        };
+        let done = t >= 1.0;
+        match frame(if done { 1.0 } else { curve(t) }) {
+            Step::Stop => return false,
+            Step::Restart => started = Instant::now(),
+            Step::Next if done => return true,
+            Step::Next => crate::platform::wait_frame(),
+        }
+    }
+}
+
 /// Managed state for the main window.
 pub struct WindowState {
     mode: Mutex<Mode>,
@@ -307,6 +388,21 @@ pub struct WindowState {
     settling: AtomicBool,
     /// `start_drag` is moving the window.
     dragging: AtomicBool,
+    /// A bring glide is moving the window, or has just finished and its moves aren't settled yet.
+    bringing: AtomicBool,
+    bring: Mutex<Bring>,
+}
+
+/// The pill's trip to the pointer. Changed under one lock, so a press either retargets the running
+/// glide or starts a new one, never neither.
+#[derive(Debug, Default)]
+struct Bring {
+    /// Bumped by every press that sets a target.
+    generation: u64,
+    /// Where the pill is headed, physical px.
+    target: Option<Rect>,
+    /// A glide thread is running.
+    active: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -321,6 +417,9 @@ struct View {
     stage: Option<(f64, f64)>,
     /// The window spans the stage (rather than just the pill).
     staged: bool,
+    /// Where the last bring left the pill. Settling a window still there keeps it off the edge
+    /// snap, which would pull it away from the pointer.
+    brought: Option<Rect>,
 }
 
 impl Default for WindowState {
@@ -331,6 +430,8 @@ impl Default for WindowState {
             move_generation: AtomicU64::new(0),
             settling: AtomicBool::new(false),
             dragging: AtomicBool::new(false),
+            bringing: AtomicBool::new(false),
+            bring: Mutex::new(Bring::default()),
         }
     }
 }
@@ -342,6 +443,10 @@ impl WindowState {
 
     fn view(&self) -> std::sync::MutexGuard<'_, View> {
         self.view.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn bring(&self) -> std::sync::MutexGuard<'_, Bring> {
+        self.bring.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -495,7 +600,8 @@ fn apply_view(
 /// closes (monitors may have changed meanwhile). Not during a drag: the pill is under the pointer
 /// then, and the saved position is where it was picked up.
 pub fn place_pill(app: &AppHandle) -> Result<(), String> {
-    if app.state::<WindowState>().dragging.load(Ordering::SeqCst) {
+    let state = app.state::<WindowState>();
+    if state.dragging.load(Ordering::SeqCst) || state.bring().active {
         return Ok(());
     }
     let window = main_window(app)?;
@@ -685,6 +791,8 @@ pub fn start_drag(app: &AppHandle) -> Result<(), String> {
     if state.dragging.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    // A running bring glide sees `dragging` and stops; the drag decides where the pill rests.
+    state.view().brought = None;
     // The pill sits in one corner of the window. Track that corner, so the pill stays under the
     // pointer even if the window is resized on the way (a monitor with another scale).
     let corner = move |(x, y, w, h): (i32, i32, i32, i32)| {
@@ -748,20 +856,14 @@ pub fn start_drag(app: &AppHandle) -> Result<(), String> {
             if let Some((rest, _)) = rest {
                 let was = anchor_in(dropped, (rest.w, rest.h), layout);
                 let (dx, dy) = (rest.x - was.x, rest.y - was.y);
-                if (dx, dy) != (0.0, 0.0) && crate::platform::animations_enabled() {
-                    let started = Instant::now();
-                    loop {
-                        let t = started.elapsed().as_secs_f64() / GLIDE.as_secs_f64();
-                        if t >= 1.0 {
-                            break;
-                        }
-                        let e = ease_out(t);
+                if (dx, dy) != (0.0, 0.0) {
+                    animate(GLIDE, ease_out, |e| {
                         move_corner((
                             from.0 + (dx * e).round() as i32,
                             from.1 + (dy * e).round() as i32,
                         ));
-                        wait_frame();
-                    }
+                        Step::Next
+                    });
                 }
                 move_corner((from.0 + dx.round() as i32, from.1 + dy.round() as i32));
             }
@@ -788,7 +890,10 @@ pub fn start_drag(app: &AppHandle) -> Result<(), String> {
 pub fn on_moved(app: &AppHandle) {
     let state = app.state::<WindowState>();
     state.move_generation.fetch_add(1, Ordering::SeqCst);
-    if state.dragging.load(Ordering::SeqCst) || state.settling.swap(true, Ordering::SeqCst) {
+    if state.dragging.load(Ordering::SeqCst)
+        || state.bringing.load(Ordering::SeqCst)
+        || state.settling.swap(true, Ordering::SeqCst)
+    {
         return;
     }
     let app = app.clone();
@@ -814,11 +919,8 @@ pub fn on_moved(app: &AppHandle) {
         }
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            if !handle
-                .state::<WindowState>()
-                .dragging
-                .load(Ordering::SeqCst)
-            {
+            let state = handle.state::<WindowState>();
+            if !state.dragging.load(Ordering::SeqCst) && !state.bringing.load(Ordering::SeqCst) {
                 settle_pill(&handle);
             }
         });
@@ -838,7 +940,17 @@ fn settle_pill(app: &AppHandle) {
         return;
     };
     let all = monitors(&window);
-    let Some((anchor, monitor)) = rest_anchor(&all, eye_size(app).pill(), rect, placed) else {
+    // Still where a bring left it: keep it beside the pointer rather than snapping it.
+    let brought = view.brought.filter(|b| {
+        let now = anchor_in(rect, (b.w, b.h), placed);
+        (now.x - b.x).abs() <= 1.5 && (now.y - b.y).abs() <= 1.5
+    });
+    view.brought = brought;
+    let rest = match brought {
+        Some(b) => monitor_at(&all, b.x + b.w / 2.0, b.y + b.h / 2.0).map(|m| (b, m)),
+        None => rest_anchor(&all, eye_size(app).pill(), rect, placed),
+    };
+    let Some((anchor, monitor)) = rest else {
         return;
     };
     let next = layout_for(anchor, monitor.work);
@@ -855,6 +967,162 @@ fn settle_pill(app: &AppHandle) {
         emit_layout(app, next);
     }
     save_position(app, &all, anchor);
+}
+
+fn emit_bring(app: &AppHandle, payload: serde_json::Value) {
+    let _ = app.emit_to(MAIN, "ui", payload);
+}
+
+/// "Bring Winku here": glides the pill to beside the pointer (`bring_target`), stage and all. A
+/// press during a glide retargets it; a drag that starts during one cancels it. Nothing happens
+/// while the eyes are hidden or tucked away for a fullscreen app, or when the pointer is already
+/// next to the pill. The shell moves the window itself only on Windows, so elsewhere this does
+/// nothing either.
+pub fn bring_here(app: &AppHandle) {
+    let hidden = app.state::<settings::Store>().get().eyes.hidden;
+    let state = app.state::<WindowState>();
+    if hidden || crate::fullscreen::active() || state.dragging.load(Ordering::SeqCst) {
+        return;
+    }
+    let Ok(window) = main_window(app) else { return };
+    let (Some(hwnd), Some(cursor)) = (handle(&window), crate::platform::cursor_position()) else {
+        return;
+    };
+    let cursor = (cursor.0 as f64, cursor.1 as f64);
+    let Some(anchor) = state.view().anchor else {
+        return;
+    };
+    let all = monitors(&window);
+    let Some(here) = monitor_at(&all, anchor.x + anchor.w / 2.0, anchor.y + anchor.h / 2.0) else {
+        return;
+    };
+    if within(anchor, cursor, BRING_NEAR * here.scale) {
+        return;
+    }
+    let Some((target, on)) = bring_target(&all, eye_size(app).pill(), cursor) else {
+        return;
+    };
+    let start = {
+        let mut bring = state.bring();
+        bring.generation += 1;
+        bring.target = Some(target);
+        let start = !bring.active;
+        bring.active = true;
+        start
+    };
+    state.bringing.store(true, Ordering::SeqCst);
+    emit_bring(
+        app,
+        serde_json::json!({
+            "kind": "bring",
+            "phase": "start",
+            "dx": (target.x - anchor.x) / on.scale,
+            "dy": (target.y - anchor.y) / on.scale,
+        }),
+    );
+    if start {
+        let app = app.clone();
+        std::thread::spawn(move || glide_to_pointer(&app, hwnd));
+    }
+}
+
+/// The bring glide's thread. Drives the pill's anchor along the curve and derives the window from
+/// it each frame, with the layout the UI last drew (`placed`), so the pill never jumps. When the
+/// anchor crosses into another layout, the new one is announced; the UI redraws and its shape
+/// report moves the window to the new corner (`set_shape`), as after a drag.
+fn glide_to_pointer(app: &AppHandle, hwnd: crate::platform::WindowHandle) {
+    let state = app.state::<WindowState>();
+    let pill = eye_size(app).pill();
+    let mut seen = 0;
+    let (mut from, mut to) = (None::<Rect>, None::<Rect>);
+    let mut arrived;
+    loop {
+        arrived = animate(BRING, ease_out_back, |e| {
+            if state.dragging.load(Ordering::SeqCst) {
+                return Step::Stop;
+            }
+            let (generation, target) = {
+                let bring = state.bring();
+                (bring.generation, bring.target)
+            };
+            if generation != seen {
+                seen = generation;
+                from = state.view().anchor;
+                to = target;
+                return Step::Restart;
+            }
+            let (Some(from), Some(to), Ok(window)) = (from, to, main_window(app)) else {
+                return Step::Stop;
+            };
+            let x = from.x + (to.x - from.x) * e;
+            let y = from.y + (to.y - from.y) * e;
+            let all = monitors(&window);
+            let Some(monitor) = monitor_at(&all, x + to.w / 2.0, y + to.h / 2.0) else {
+                return Step::Stop;
+            };
+            let anchor = if e >= 1.0 {
+                to
+            } else {
+                let (w, h) = scaled(pill, monitor.scale);
+                Rect { x, y, w, h }
+            };
+            let (rect, flipped) = {
+                let mut view = state.view();
+                view.anchor = Some(anchor);
+                let next = layout_for(anchor, monitor.work);
+                let flipped = (view.layout != Some(next)).then_some(next);
+                view.layout = Some(next);
+                let placed = view.placed.unwrap_or(next);
+                let rect = match view.stage {
+                    Some(stage) if view.staged => {
+                        stage_rect(anchor, scaled(stage, monitor.scale), placed)
+                    }
+                    _ => anchor,
+                };
+                (rect, flipped)
+            };
+            if let Some(next) = flipped {
+                emit_layout(app, next);
+            }
+            let (x, y, w, h) = (
+                rect.x.round() as i32,
+                rect.y.round() as i32,
+                rect.w.round().max(1.0) as i32,
+                rect.h.round().max(1.0) as i32,
+            );
+            if crate::platform::window_rect(hwnd) != Some((x, y, w, h)) {
+                crate::platform::set_window_rect(hwnd, x, y, w, h);
+            }
+            Step::Next
+        });
+        let mut bring = state.bring();
+        if arrived && bring.generation != seen {
+            continue; // a press landed after the last frame
+        }
+        bring.active = false;
+        bring.target = None;
+        break;
+    }
+    emit_bring(app, serde_json::json!({ "kind": "bring", "phase": "end" }));
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<WindowState>();
+        if state.bring().active {
+            return; // another press started a new glide meanwhile
+        }
+        state.bringing.store(false, Ordering::SeqCst);
+        if !arrived {
+            return; // a drag took over and settles itself
+        }
+        let Ok(window) = main_window(&handle) else {
+            return;
+        };
+        let Some(anchor) = state.view().anchor else {
+            return;
+        };
+        state.view().brought = Some(anchor);
+        save_position(&handle, &monitors(&window), anchor);
+    });
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1112,6 +1380,66 @@ mod tests {
         assert_eq!(ease_out(1.0), 1.0);
         assert_eq!(ease_out(2.0), 1.0);
         assert!(ease_out(0.5) > 0.5);
+    }
+
+    #[test]
+    fn the_bring_glide_overshoots_a_little_and_lands() {
+        assert_eq!(ease_out_back(0.0), 0.0);
+        assert_eq!(ease_out_back(1.0), 1.0);
+        assert!(ease_out_back(0.2) > 0.4, "starts fast");
+        let peak = (0..=1000)
+            .map(|i| ease_out_back(i as f64 / 1000.0))
+            .fold(0.0, f64::max);
+        assert!((1.06..=1.08).contains(&peak), "overshoot {peak}");
+    }
+
+    #[test]
+    fn a_brought_pill_lands_beside_the_pointer() {
+        let m = monitor(0.0, 0.0, 1920.0, 1080.0, 1.0);
+        let pill = EyeSize::Small.pill();
+        let at = |cursor| bring_target(&[m], pill, cursor).unwrap().0;
+        // Room everywhere: below and to the right, 12 px off.
+        assert_eq!(at((500.0, 400.0)), pill_at(512.0, 412.0));
+        // Near the right edge: to the left instead.
+        assert_eq!(at((1900.0, 400.0)), pill_at(1900.0 - 12.0 - 92.0, 412.0));
+        // Near the bottom of the work area: above.
+        assert_eq!(at((500.0, 1000.0)), pill_at(512.0, 1000.0 - 12.0 - 56.0));
+        // Bottom right corner: above and to the left.
+        assert_eq!(at((1915.0, 1025.0)), pill_at(1811.0, 957.0));
+        // Over the taskbar: kept inside the work area.
+        let r = at((500.0, 1070.0));
+        assert_eq!((r.x, r.bottom()), (512.0, 1032.0));
+        assert_eq!(bring_target(&[], pill, (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn a_brought_pill_stays_on_the_pointers_monitor_at_its_scale() {
+        let a = monitor(0.0, 0.0, 1920.0, 1080.0, 1.0);
+        let b = monitor(1920.0, 0.0, 3840.0, 2160.0, 2.0);
+        let (r, on) = bring_target(&[a, b], EyeSize::Small.pill(), (1925.0, 100.0)).unwrap();
+        assert_eq!(on, b);
+        assert_eq!(
+            r,
+            Rect {
+                x: 1949.0,
+                y: 124.0,
+                w: 184.0,
+                h: 112.0
+            }
+        );
+        // Left of the pointer would leave this monitor, so it stays on the right even right
+        // beside the boundary.
+        let (r, _) = bring_target(&[a, b], EyeSize::Small.pill(), (1910.0, 100.0)).unwrap();
+        assert_eq!(r.right(), 1898.0);
+    }
+
+    #[test]
+    fn near_means_within_the_distance_of_the_pill() {
+        let p = pill_at(100.0, 100.0);
+        assert!(within(p, (120.0, 120.0), 40.0), "inside");
+        assert!(within(p, (232.0, 120.0), 40.0), "40 px to the right");
+        assert!(!within(p, (233.0, 120.0), 40.0));
+        assert!(!within(p, (232.0, 196.0), 40.0), "diagonal is farther");
     }
 
     #[test]

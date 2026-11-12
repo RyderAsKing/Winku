@@ -44,7 +44,11 @@ export type UiEvent =
 	| ({ kind: "layout" } & Layout)
 	/** The hotkey prefix has been held alone (true), or that hold ended (false). `selection`: what
 	 *  the focused app said when the hold began; absent when unknown, null when nothing is selected. */
-	| { kind: "hotkey_hint"; show: boolean; selection?: { editable: boolean } | null };
+	| { kind: "hotkey_hint"; show: boolean; selection?: { editable: boolean } | null }
+	/** "Bring Winku here": the pill starts gliding to the pointer (or retargets), `dx`/`dy` logical
+	 *  px still to travel; then "end" when it arrives or the glide is cancelled. */
+	| { kind: "bring"; phase: "start"; dx: number; dy: number }
+	| { kind: "bring"; phase: "end" };
 
 /** The floating guide: which hold it is for, and whether the selected text can be changed. */
 export interface GuideShowing {
@@ -100,7 +104,7 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 }
 
 export interface HotkeyFailure {
-	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking" or "leaderKey". */
+	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking", "bring" or "leaderKey". */
 	name: string;
 	binding: string;
 	error: string;

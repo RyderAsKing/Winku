@@ -24,7 +24,6 @@ import {
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, dimsFor, shapesFor, stageSize } from "./stage.ts";
-import { type SelectionState, selectionState } from "./hints.ts";
 
 export interface LiveTool {
 	toolCallId: string;
@@ -102,8 +101,6 @@ export class MainState {
 	toast: Toast | null = $state(null);
 	/** The hotkey prefix is held alone: show what each key does. */
 	hotkeyHints = $state(false);
-	/** What was selected when that hold began, which picks the keys the hints list. */
-	hintSelection: SelectionState = $state("unknown");
 	/** Bumped to ask the input to take focus. */
 	focusTick = $state(0);
 	/** The talk key is held and the microphone is open. */
@@ -470,7 +467,6 @@ export class MainState {
 				break;
 			case "hotkey_hint":
 				this.hotkeyHints = event.show;
-				if (event.show) this.hintSelection = selectionState(event.selection);
 				break;
 		}
 	}

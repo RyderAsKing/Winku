@@ -180,43 +180,6 @@ const cases = [
 		},
 	},
 	{
-		name: "hotkey-hints-nothing-selected",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: null });
-		},
-	},
-	{
-		name: "hotkey-hints-read-only",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: false } });
-		},
-	},
-	{
-		name: "hotkey-hints-editable",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: true } });
-		},
-	},
-	{
-		name: "floating-guide",
-		path: "/guide.html?selection=editable",
-		ready: "role=status[name='Ctrl+Alt keys']",
-	},
-	{
-		name: "floating-guide-read-only",
-		path: "/guide.html?selection=read-only",
-		ready: "role=status[name='Ctrl+Alt keys']",
-	},
-	{
 		name: "hotkey-hints-transcript",
 		path: "/",
 		ready: "role=status[name='Ctrl+Alt keys']",
@@ -301,15 +264,6 @@ const cases = [
 		path: "/settings.html?altgr=1&taken=action2#keys",
 		size: SETTINGS,
 		ready: "text=Use Ctrl+Shift instead",
-	},
-	{
-		name: "settings-keys-guide",
-		path: "/settings.html#keys",
-		size: SETTINGS,
-		ready: "role=switch[name='Guide follows the selection']",
-		prepare: async (page) => {
-			await page.getByRole("switch", { name: "Guide follows the selection" }).scrollIntoViewIfNeeded();
-		},
 	},
 	{
 		name: "history",
@@ -519,7 +473,7 @@ try {
 				const page = await context.newPage();
 				const response = await page.goto(new URL(item.path, baseURL).href, { waitUntil: "domcontentloaded" });
 				if (!response?.ok()) throw new Error(`${item.name}: HTTP ${response?.status() ?? "no response"}`);
-				await page.getByRole("button", { name: "Open Winku" }).or(page.locator("main")).or(page.locator(".floating")).first().waitFor();
+				await page.getByRole("button", { name: "Open Winku" }).or(page.locator("main")).first().waitFor();
 				if (item.prepare) await item.prepare(page);
 				await page.locator(item.ready).first().waitFor({ state: "visible" });
 				await page.evaluate(() => document.fonts.ready);
@@ -528,7 +482,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window, .floating")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

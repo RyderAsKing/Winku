@@ -1,11 +1,11 @@
 <script lang="ts">
 	// What each key does, shown beside the eyes while the hotkey prefix is held alone (SPEC §5).
 	import type { Settings } from "../lib/settings.ts";
-	import { hintsFor, type SelectionState } from "./hints.ts";
+	import { hintsFor } from "./hints.ts";
 
-	let { settings, selection = "unknown" }: { settings: Settings; selection?: SelectionState } = $props();
+	let { settings }: { settings: Settings } = $props();
 
-	const hints = $derived(hintsFor(settings, selection));
+	const hints = $derived(hintsFor(settings));
 	// A second column holding one key looks stranded, so it joins the first.
 	const lists = $derived(hints.actions.length && hints.other.length === 1 ? [[...hints.actions, ...hints.other]] : [hints.actions, hints.other]);
 	const prefix = $derived(settings.leaderKey?.trim() || "Ctrl+Alt");

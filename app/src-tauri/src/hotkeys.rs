@@ -260,16 +260,6 @@ pub struct HotkeyState {
     talking: AtomicBool,
 }
 
-/// Whether the summon key is held down right now (a tap or a talk in progress).
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn summon_held(app: &AppHandle) -> bool {
-    app.state::<HotkeyState>()
-        .summon
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_down()
-}
-
 impl HotkeyState {
     pub fn status(&self) -> Status {
         self.status
@@ -343,7 +333,6 @@ pub fn register_all(app: &AppHandle, settings: &Settings) {
     *state.leader.lock().unwrap_or_else(|e| e.into_inner()) = leader_shortcut;
     state.leader_down.store(false, Ordering::SeqCst);
     crate::hint::configure(settings.leader_key.as_deref());
-    crate::hint::set_follow_selection(settings.guide_follows_selection);
     let status = Status { failed };
     for failure in &status.failed {
         eprintln!(

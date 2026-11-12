@@ -1,16 +1,9 @@
 //! Hotkey hints: tells the UI when the hotkey prefix (`Ctrl+Alt`, or the leader key) has been
 //! held on its own long enough that the user is probably looking for the next key.
 //!
-//! Events on the `ui` channel: `{ kind: "hotkey_hint", show: true, selection? }` after the prefix
-//! has been held alone for `HOLD_DELAY`, `{ show: false }` as soon as the hold is interrupted or
-//! ends.
-//!
-//! When a hold begins, and the "Guide follows the selection" setting is on, one query asks the
-//! focused app what is selected (`platform::selection_summary`, on its own thread: UI Automation,
-//! else window messages to a focused standard edit control). An answer
-//! that arrives before the guide shows picks its lists through `selection`; a later one is
-//! dropped, so the guide never changes while it shows. This query runs in Chromium-based apps
-//! too, unlike every other UI Automation read (SPEC §7).
+//! Events on the `ui` channel: `{ kind: "hotkey_hint", show: true }` after the prefix has been
+//! held alone for `HOLD_DELAY`, `{ show: false }` as soon as the hold is interrupted or ends.
+//! No app is queried while the prefix is held.
 //!
 //! Windows reads key state through Raw Input (`rawinput.rs`): a hidden message-only window on
 //! its own thread that sleeps in `GetMessageW`, plus one timer while a hold is pending. There is
@@ -24,10 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::json;
 use tauri::{AppHandle, Emitter};
-
-pub use crate::platform::Selection;
 
 #[cfg(windows)]
 mod rawinput;
@@ -162,51 +153,25 @@ pub enum Timer {
     Cancel,
 }
 
-/// One hold's selection query, to hand back with its answer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Query(u64);
-
-/// The result of one key event: the timer to adjust, a hide to emit, and a selection query to
-/// start.
+/// The result of one key event: the timer to adjust and a hide to emit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outcome {
     pub timer: Timer,
     pub hide: bool,
-    pub query: Option<Query>,
 }
 
 const NOTHING: Outcome = Outcome {
     timer: Timer::Keep,
     hide: false,
-    query: None,
 };
 
-/// Where this hold's selection query is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Asked {
-    /// No query this hold: the full guide.
-    Unknown,
-    Waiting(Query),
-    /// The guide showed before the query answered: the full guide.
-    Late(Query),
-    /// The query found no answer: the full guide.
-    NoAnswer(Query),
-    Answered(Selection),
-}
-
-/// Decides show/hide from key events, and when to ask what is selected. Pure: callers pass the
-/// time.
+/// Decides show/hide from key events. Pure: callers pass the time.
 #[derive(Debug)]
 pub struct Hint {
     prefix: Option<Prefix>,
     mods: u8,
     key_down: bool,
     phase: Phase,
-    /// The "Guide follows the selection" setting.
-    follow_selection: bool,
-    /// Queries started so far; numbers each one.
-    queries: u64,
-    asked: Asked,
 }
 
 impl Hint {
@@ -216,9 +181,6 @@ impl Hint {
             mods: 0,
             key_down: false,
             phase: Phase::Idle,
-            follow_selection: true,
-            queries: 0,
-            asked: Asked::Unknown,
         }
     }
 
@@ -229,45 +191,8 @@ impl Hint {
     /// Switches to another prefix. Returns true when a hint was showing and must be hidden.
     pub fn set_prefix(&mut self, prefix: Option<Prefix>) -> bool {
         let was_shown = self.is_shown();
-        *self = Hint {
-            follow_selection: self.follow_selection,
-            queries: self.queries,
-            ..Hint::new(prefix)
-        };
+        *self = Hint::new(prefix);
         was_shown
-    }
-
-    /// The "Guide follows the selection" setting. Off: holds never ask.
-    pub fn set_follow_selection(&mut self, on: bool) {
-        self.follow_selection = on;
-    }
-
-    /// The answer to `query`. Kept only while that hold is still waiting for the guide to show.
-    pub fn answered(&mut self, query: Query, selection: Option<Selection>) {
-        if matches!(self.phase, Phase::Armed(_)) && self.asked == Asked::Waiting(query) {
-            self.asked = selection.map_or(Asked::NoAnswer(query), Asked::Answered);
-        }
-    }
-
-    /// What the showing guide was told is selected. None: unknown, the full guide.
-    pub fn guide_selection(&self) -> Option<Selection> {
-        match (self.phase, self.asked) {
-            (Phase::Shown, Asked::Answered(selection)) => Some(selection),
-            _ => None,
-        }
-    }
-
-    /// The selection state that went with the showing guide and why, for the debug log.
-    pub fn selection_note(&self) -> String {
-        match self.asked {
-            Asked::Unknown => {
-                "unknown: not asked (setting off, fullscreen app or summon hold)".into()
-            }
-            Asked::Waiting(q) => format!("unknown: query {} still running", q.0),
-            Asked::Late(q) => format!("unknown: query {} had not answered in time", q.0),
-            Asked::NoAnswer(q) => format!("unknown: query {} found no answer", q.0),
-            Asked::Answered(selection) => describe(Some(selection)),
-        }
     }
 
     fn satisfied(&self, prefix: Prefix) -> bool {
@@ -279,21 +204,8 @@ impl Hint {
             && (prefix.key.is_none() || self.key_down)
     }
 
-    /// A key event, with every hold allowed to ask what is selected.
-    #[cfg(test)]
+    /// A key event.
     pub fn on_key(&mut self, key: Key, down: bool, now: Instant) -> Outcome {
-        self.on_key_where(key, down, now, || true)
-    }
-
-    /// A key event. `may_ask` is called only when a hold begins: false over a fullscreen app or
-    /// while the summon key is held, and then that hold doesn't ask what is selected.
-    pub fn on_key_where(
-        &mut self,
-        key: Key,
-        down: bool,
-        now: Instant,
-        may_ask: impl FnOnce() -> bool,
-    ) -> Outcome {
         let Some(prefix) = self.prefix else {
             return NOTHING;
         };
@@ -326,17 +238,9 @@ impl Hint {
         match self.phase {
             Phase::Idle if down && self.satisfied(prefix) && prefix_key_event(key, prefix) => {
                 self.phase = Phase::Armed(now);
-                self.asked = Asked::Unknown;
-                let mut query = None;
-                if self.follow_selection && may_ask() {
-                    self.queries += 1;
-                    query = Some(Query(self.queries));
-                    self.asked = Asked::Waiting(Query(self.queries));
-                }
                 Outcome {
                     timer: Timer::Start,
                     hide: false,
-                    query,
                 }
             }
             Phase::Armed(_) if !self.satisfied(prefix) => {
@@ -400,9 +304,6 @@ impl Hint {
         }
         if allowed {
             self.phase = Phase::Shown;
-            if let Asked::Waiting(query) = self.asked {
-                self.asked = Asked::Late(query); // too late now
-            }
             Ok(true)
         } else {
             self.phase = Phase::Blocked;
@@ -442,88 +343,26 @@ fn with_state<R>(f: impl FnOnce(&mut Hint) -> R) -> R {
 pub fn configure(leader: Option<&str>) {
     let hide = with_state(|h| h.set_prefix(Prefix::from_leader(leader)));
     if hide {
-        emit(false, None, "");
+        emit(false);
     }
-}
-
-/// Applies the "Guide follows the selection" setting.
-pub fn set_follow_selection(on: bool) {
-    with_state(|h| h.set_follow_selection(on));
-}
-
-/// A selection for the debug log: unknown, nothing, or text with its editability and first line.
-fn describe(selection: Option<Selection>) -> String {
-    match selection {
-        None => "unknown".into(),
-        Some(Selection::Nothing) => "nothing selected".into(),
-        Some(Selection::Text(text)) => format!(
-            "text, {}, {}",
-            if text.editable {
-                "editable"
-            } else {
-                "read-only"
-            },
-            match text.line {
-                Some(l) => format!("first line {},{} {}x{}", l.x, l.y, l.w, l.h),
-                None => "no rectangle".into(),
-            }
-        ),
-    }
-}
-
-/// The `hotkey_hint` event. `selection` is left out when unknown and null when nothing is
-/// selected.
-fn event(show: bool, selection: Option<Selection>) -> Value {
-    let mut event = json!({ "kind": "hotkey_hint", "show": show });
-    match selection {
-        Some(Selection::Nothing) => event["selection"] = Value::Null,
-        Some(Selection::Text(text)) => event["selection"] = json!({ "editable": text.editable }),
-        None => {}
-    }
-    event
-}
-
-/// Shows or hides the guide. `note`: the selection state that went with a show, for the log.
-fn emit(show: bool, selection: Option<Selection>, note: &str) {
-    let Some(app) = APP.get() else { return };
-    if show {
-        // With a usable selection rectangle the guide floats over the selection, and the main
-        // window shows none.
-        let beside = match selection {
-            Some(Selection::Text(text)) => match crate::guide::show(app, text) {
-                Ok(()) => {
-                    debug_log(&format!("hold: selection {note}; guide floats"));
-                    return;
-                }
-                Err(why) => why,
-            },
-            Some(Selection::Nothing) => "nothing is selected",
-            None => "the selection is unknown",
-        };
-        debug_log(&format!(
-            "hold: selection {note}; guide beside Winku ({beside})"
-        ));
-    } else {
-        crate::guide::hide(app);
-    }
-    emit_beside(app, show, selection);
 }
 
 /// The `hotkey_hint` event to the main window, which shows the guide beside the eyes.
-pub(crate) fn emit_beside(app: &AppHandle, show: bool, selection: Option<Selection>) {
+fn emit(show: bool) {
+    let Some(app) = APP.get() else { return };
     debug_log(&format!(
         "hotkey_hint {}",
         if show { "show" } else { "hide" }
     ));
-    let _ = app.emit_to(crate::window::MAIN, "ui", &event(show, selection));
+    let _ = app.emit_to(
+        crate::window::MAIN,
+        "ui",
+        &json!({ "kind": "hotkey_hint", "show": show }),
+    );
 }
 
-/// With `WINKU_DEBUG_HINT=1`, appends a line per guide event to `WINKU_DEBUG_HINT_LOG` (default
-/// `winku-hint.log` in the temp dir): `hotkey_hint show`/`hide` for the main window, `guide show
-/// <x>,<y> <w>x<h>`/`guide hide` for the floating guide; `selection query <n>: ...` with each
-/// selection query's answer, how long it took and which source gave it (or why none could);
-/// `hold: selection ...; guide floats|beside Winku (<why>)` with each show; `guide: ...` when a
-/// floating guide falls back beside Winku. CI's screenshot script reads it. Off in normal use.
+/// With `WINKU_DEBUG_HINT=1`, appends a `hotkey_hint show`/`hide` line per event to
+/// `WINKU_DEBUG_HINT_LOG` (default `winku-hint.log` in the temp dir). Off in normal use.
 pub(crate) fn debug_log(line: &str) {
     if !DEBUG.load(Ordering::Relaxed) {
         return;
@@ -543,26 +382,9 @@ pub(crate) fn debug_log(line: &str) {
 
 #[cfg(windows)]
 fn on_key(key: Key, down: bool) -> Timer {
-    let may_ask =
-        || !crate::fullscreen::active() && !APP.get().is_some_and(crate::hotkeys::summon_held);
-    let outcome = with_state(|h| h.on_key_where(key, down, Instant::now(), may_ask));
+    let outcome = with_state(|h| h.on_key(key, down, Instant::now()));
     if outcome.hide {
-        emit(false, None, "");
-    }
-    if let Some(query) = outcome.query {
-        // Off the raw input thread: UI Automation can take up to its time box.
-        std::thread::spawn(move || {
-            let started = Instant::now();
-            let answer = crate::platform::selection_summary();
-            debug_log(&format!(
-                "selection query {}: {} after {} ms ({})",
-                query.0,
-                describe(answer.selection),
-                started.elapsed().as_millis(),
-                answer.how
-            ));
-            with_state(|h| h.answered(query, answer.selection));
-        });
+        emit(false);
     }
     outcome.timer
 }
@@ -571,15 +393,12 @@ fn on_key(key: Key, down: bool) -> Timer {
 #[cfg(windows)]
 fn on_timer() -> Option<u32> {
     let allowed = !crate::fullscreen::active();
-    match with_state(|h| {
-        h.timer_fired(Instant::now(), allowed)
-            .map(|shown| shown.then(|| (h.guide_selection(), h.selection_note())))
-    }) {
-        Ok(Some((selection, note))) => {
-            emit(true, selection, &note);
+    match with_state(|h| h.timer_fired(Instant::now(), allowed)) {
+        Ok(true) => {
+            emit(true);
             None
         }
-        Ok(None) => None,
+        Ok(false) => None,
         Err(left) => Some(left.as_millis().max(1) as u32),
     }
 }
@@ -602,7 +421,6 @@ pub fn start(_app: &AppHandle) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::SelectedText;
 
     const T0: fn() -> Instant = Instant::now;
 
@@ -655,7 +473,6 @@ mod tests {
             Outcome {
                 timer: Timer::Cancel,
                 hide: false,
-                query: None
             }
         );
         assert_eq!(
@@ -678,7 +495,6 @@ mod tests {
             Outcome {
                 timer: Timer::Cancel,
                 hide: false,
-                query: None
             }
         );
         assert_eq!(h.timer_fired(ms(t, 450), true), Ok(false));
@@ -700,7 +516,6 @@ mod tests {
             Outcome {
                 timer: Timer::Keep,
                 hide: true,
-                query: None
             }
         );
         // Auto-repeat, the release and the modifiers going up send nothing more.
@@ -854,174 +669,6 @@ mod tests {
         );
         assert_eq!(Prefix::from_leader(Some("Nonsense")), None);
         assert_eq!(Prefix::from_leader(Some("F13+F14")), None);
-    }
-
-    fn hold(h: &mut Hint, t: Instant) -> Option<Query> {
-        h.on_key(Key::LCtrl, true, t);
-        h.on_key(Key::LAlt, true, t).query
-    }
-
-    fn editable() -> Selection {
-        Selection::Text(SelectedText {
-            editable: true,
-            line: None,
-        })
-    }
-
-    #[test]
-    fn one_query_per_hold_started_when_the_hold_begins() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        assert_eq!(h.on_key(Key::LCtrl, true, t).query, None, "Ctrl alone");
-        let first = h.on_key(Key::LAlt, true, t).query;
-        assert!(first.is_some());
-        // Auto-repeat, the timer and the release ask nothing more.
-        assert_eq!(h.on_key(Key::LAlt, true, ms(t, 30)).query, None);
-        assert_eq!(h.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(h.on_key(Key::LAlt, false, ms(t, 900)).query, None);
-        h.on_key(Key::LCtrl, false, ms(t, 900));
-        // The next hold asks again, with a new query.
-        let second = hold(&mut h, ms(t, 1000));
-        assert!(second.is_some());
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn the_guide_shows_what_the_app_answered() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        let q = hold(&mut h, t).unwrap();
-        h.answered(q, Some(editable()));
-        assert_eq!(h.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(h.guide_selection(), Some(editable()));
-
-        let mut g = ctrl_alt();
-        let q = hold(&mut g, t).unwrap();
-        g.answered(q, Some(Selection::Nothing));
-        assert_eq!(g.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(g.guide_selection(), Some(Selection::Nothing));
-    }
-
-    #[test]
-    fn no_answer_in_time_shows_the_full_guide_and_a_late_one_changes_nothing() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        let q = hold(&mut h, t).unwrap();
-        assert_eq!(h.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(h.guide_selection(), None, "unknown");
-        h.answered(q, Some(editable()));
-        assert_eq!(h.guide_selection(), None, "late answer ignored");
-    }
-
-    #[test]
-    fn the_log_note_says_why_the_selection_is_unknown() {
-        let t = T0();
-        let mut late = ctrl_alt();
-        let q = hold(&mut late, t).unwrap();
-        assert_eq!(late.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(
-            late.selection_note(),
-            format!("unknown: query {} had not answered in time", q.0)
-        );
-
-        let mut none = ctrl_alt();
-        let q = hold(&mut none, t).unwrap();
-        none.answered(q, None);
-        assert_eq!(none.timer_fired(ms(t, 450), true), Ok(true));
-        assert_eq!(none.guide_selection(), None);
-        assert_eq!(
-            none.selection_note(),
-            format!("unknown: query {} found no answer", q.0)
-        );
-
-        let mut off = ctrl_alt();
-        off.set_follow_selection(false);
-        hold(&mut off, t);
-        assert!(off.selection_note().starts_with("unknown: not asked"));
-
-        let mut text = ctrl_alt();
-        let q = hold(&mut text, t).unwrap();
-        text.answered(
-            q,
-            Some(Selection::Text(SelectedText {
-                editable: false,
-                line: Some(crate::platform::ScreenRect {
-                    x: 208,
-                    y: 472,
-                    w: 180,
-                    h: 18,
-                }),
-            })),
-        );
-        assert_eq!(
-            text.selection_note(),
-            "text, read-only, first line 208,472 180x18"
-        );
-        assert_eq!(describe(Some(editable())), "text, editable, no rectangle");
-        assert_eq!(describe(Some(Selection::Nothing)), "nothing selected");
-    }
-
-    #[test]
-    fn an_answer_from_an_earlier_hold_is_ignored() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        let old = hold(&mut h, t).unwrap();
-        h.on_key(Key::LAlt, false, ms(t, 100));
-        h.on_key(Key::LCtrl, false, ms(t, 100));
-        let _new = hold(&mut h, ms(t, 200)).unwrap();
-        h.answered(old, Some(editable()));
-        assert_eq!(h.timer_fired(ms(t, 650), true), Ok(true));
-        assert_eq!(h.guide_selection(), None);
-    }
-
-    #[test]
-    fn no_query_with_the_setting_off() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        h.set_follow_selection(false);
-        assert_eq!(hold(&mut h, t), None);
-        assert_eq!(
-            h.timer_fired(ms(t, 450), true),
-            Ok(true),
-            "the guide still shows"
-        );
-        assert_eq!(h.guide_selection(), None, "the full guide");
-    }
-
-    #[test]
-    fn no_query_over_a_fullscreen_app_or_during_a_summon_hold() {
-        let t = T0();
-        let mut h = ctrl_alt();
-        h.on_key_where(Key::LCtrl, true, t, || false);
-        let out = h.on_key_where(Key::LAlt, true, t, || false);
-        assert_eq!(out.timer, Timer::Start, "the hold still arms");
-        assert_eq!(out.query, None);
-    }
-
-    #[test]
-    fn the_event_carries_the_selection_only_when_known() {
-        assert_eq!(
-            event(true, None),
-            json!({ "kind": "hotkey_hint", "show": true })
-        );
-        assert_eq!(
-            event(true, Some(Selection::Nothing)),
-            json!({ "kind": "hotkey_hint", "show": true, "selection": null })
-        );
-        assert_eq!(
-            event(
-                true,
-                Some(Selection::Text(SelectedText {
-                    editable: false,
-                    line: None
-                }))
-            ),
-            json!({ "kind": "hotkey_hint", "show": true, "selection": { "editable": false } })
-        );
-        assert_eq!(
-            event(false, None),
-            json!({ "kind": "hotkey_hint", "show": false })
-        );
     }
 
     #[test]

@@ -113,6 +113,9 @@ pub fn clipboard_write(_text: &str) -> Result<(), String> {
     Err(NO_CLIPBOARD.into())
 }
 
+/// Starts the clipboard history listener. Windows only.
+pub fn watch_clipboard() {}
+
 /// Kind and size of what is on the clipboard, for the now line. Unknown here.
 pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
     None

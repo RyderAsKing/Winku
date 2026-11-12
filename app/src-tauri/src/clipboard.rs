@@ -1,11 +1,14 @@
 //! The clipboard tools (docs/ARCHITECTURE.md, "Agent tools"): `clipboard_read` and
-//! `clipboard_write` Requests, and the clipboard note on the now line.
+//! `clipboard_write` Requests, and the clipboard note on the now line. Reads by index and the
+//! list come from the clipboard history (clipboard_history.rs).
 //!
 //! The OS work is in `platform`; this module holds the pure parts: decoding the formats the
 //! platform hands over (CF_DIB images, CF_HDROP file lists), the Response data and the note.
 
+use std::time::Instant;
+
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::capture::{to_attachment, ImageAttachment};
 use crate::platform::{self, RawImage};
@@ -67,8 +70,37 @@ pub fn note(summary: Option<Summary>) -> Option<String> {
 }
 
 /// Answers a `clipboard_read` Request (call off the reader thread).
-pub fn read(include_image: bool) -> Result<Content, String> {
-    content(platform::clipboard_read()?, include_image)
+pub fn read(params: &Value) -> Result<Value, String> {
+    if let Some(answer) =
+        crate::clipboard_history::with(|h| from_history(params, h, Instant::now()))
+    {
+        return answer;
+    }
+    let include_image = params["includeImage"].as_bool() == Some(true);
+    let content = content(platform::clipboard_read()?, include_image)?;
+    serde_json::to_value(content).map_err(|e| e.to_string())
+}
+
+/// The answer to a `clipboard_read` with `list` or `index`, or None for the current clipboard.
+fn from_history(
+    params: &Value,
+    history: &crate::clipboard_history::History,
+    now: Instant,
+) -> Option<Result<Value, String>> {
+    if params["list"].as_bool() == Some(true) {
+        return Some(Ok(json!({ "entries": history.list(now) })));
+    }
+    let index = params.get("index").filter(|v| !v.is_null())?;
+    let entries = history.list(now).len();
+    Some(
+        index
+            .as_u64()
+            .and_then(|i| history.get(i as usize))
+            .map(|e| json!({ "kind": "text", "text": e.text }))
+            .ok_or_else(|| {
+                format!("There is no copy {index}; the clipboard history holds {entries}.")
+            }),
+    )
 }
 
 fn content(raw: Raw, include_image: bool) -> Result<Content, String> {
@@ -194,7 +226,6 @@ pub fn decode_hdrop(data: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     /// A 2×2 32-bit bottom-up DIB: bottom row red, green; top row blue, white.
     fn dib32(alpha: u8) -> Vec<u8> {
@@ -259,6 +290,37 @@ mod tests {
         );
         assert_eq!(note(Some(Summary::Files(3))).unwrap(), "files, 3 files");
         assert_eq!(note(Some(Summary::Private)).unwrap(), "private");
+    }
+
+    #[test]
+    fn reads_the_history_by_index_and_lists_it() {
+        use crate::clipboard_history::{Change, History};
+        let mut h = History::default();
+        let t = Instant::now();
+        h.observe(1, Change::Text("older".into()), t);
+        h.observe(2, Change::Text("newer".into()), t);
+        let now = t + std::time::Duration::from_secs(3);
+        assert_eq!(
+            from_history(&json!({ "includeImage": true }), &h, now),
+            None
+        );
+        assert_eq!(
+            from_history(&json!({ "index": 1 }), &h, now),
+            Some(Ok(json!({ "kind": "text", "text": "older" })))
+        );
+        assert_eq!(
+            from_history(&json!({ "index": 2 }), &h, now),
+            Some(Err(
+                "There is no copy 2; the clipboard history holds 2.".into()
+            ))
+        );
+        assert_eq!(
+            from_history(&json!({ "list": true }), &h, now),
+            Some(Ok(json!({ "entries": [
+                { "index": 0, "ageSeconds": 3, "chars": 5, "preview": "newer" },
+                { "index": 1, "ageSeconds": 3, "chars": 5, "preview": "older" },
+            ] })))
+        );
     }
 
     #[test]

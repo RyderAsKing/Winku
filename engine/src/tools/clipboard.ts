@@ -10,11 +10,15 @@ export const CLIPBOARD_TIMEOUT_MS = 10_000;
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 
+type ReadParams = { includeImage?: boolean; index?: number; list?: boolean };
+
+/** A clipboard_read Request: the current clipboard, or with index or list the history. */
+function readRequest<T>(requests: ShellRequests, params: ReadParams, signal: AbortSignal | undefined): Promise<T | undefined> {
+	return requests.request("clipboard_read", { includeImage: false, ...params }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal }) as Promise<T | undefined>;
+}
+
 async function readClipboard(requests: ShellRequests, includeImage: boolean, signal: AbortSignal | undefined): Promise<ClipboardContent> {
-	const data = (await requests.request("clipboard_read", { includeImage }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal })) as
-		| ClipboardContent
-		| undefined;
-	return data ?? { kind: "empty" };
+	return (await readRequest<ClipboardContent>(requests, { includeImage }, signal)) ?? { kind: "empty" };
 }
 
 /** "5 s ago", "3 min ago", "2 h ago". */
@@ -62,15 +66,11 @@ export function clipboardTools(requests: ShellRequests, supportsImages: () => bo
 		}),
 		async execute(_id, params, signal) {
 			if (params.list) {
-				const data = (await requests.request("clipboard_read", { includeImage: false, list: true }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal })) as
-					| ClipboardHistory
-					| undefined;
+				const data = await readRequest<ClipboardHistory>(requests, { list: true }, signal);
 				return text(describeHistory(data ?? { entries: [] }));
 			}
 			if (params.index !== undefined) {
-				const clip = (await requests.request("clipboard_read", { includeImage: false, index: params.index }, { timeoutMs: CLIPBOARD_TIMEOUT_MS, signal })) as
-					| ClipboardContent
-					| undefined;
+				const clip = await readRequest<ClipboardContent>(requests, { index: params.index }, signal);
 				if (clip?.kind !== "text") throw new Error(`There is no copy ${params.index} in the clipboard history.`);
 				return text(`Copy ${params.index} from the clipboard history:\n${clip.text}`);
 			}

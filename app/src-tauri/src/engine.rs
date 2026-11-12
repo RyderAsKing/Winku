@@ -5,7 +5,7 @@
 //!   `action_end` for a replace action also pastes the result (actions.rs).
 //! - Results are matched to `engine_call`s by id.
 //! - `screen_capture` and `screen_target` Requests are answered by the shell (capture.rs) on a
-//!   worker thread.
+//!   worker thread, and so are `clipboard_read` and `clipboard_write` (clipboard.rs).
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
 
 use std::collections::HashMap;
@@ -246,6 +246,10 @@ enum Route {
     ScreenCapture { id: String, include_image: bool },
     /// Answer a `screen_target` Request ourselves (computer use).
     ScreenTarget { id: String },
+    /// Answer a `clipboard_read` Request ourselves.
+    ClipboardRead { id: String, include_image: bool },
+    /// Answer a `clipboard_write` Request ourselves.
+    ClipboardWrite { id: String, params: Value },
     /// Answer this Request ourselves with an error Response.
     Refuse { id: String, error: String },
     /// Forward to the main window.
@@ -264,6 +268,14 @@ fn route(record: &Value) -> Route {
                     include_image: record["params"]["includeImage"].as_bool() == Some(true),
                 },
                 Some("screen_target") => Route::ScreenTarget { id },
+                Some("clipboard_read") => Route::ClipboardRead {
+                    id,
+                    include_image: record["params"]["includeImage"].as_bool() == Some(true),
+                },
+                Some("clipboard_write") => Route::ClipboardWrite {
+                    id,
+                    params: record["params"].clone(),
+                },
                 other => Route::Refuse {
                     id,
                     error: format!("unknown request method {other:?}"),
@@ -320,6 +332,24 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                 let app = app.clone();
                 std::thread::spawn(move || {
                     let outcome = crate::capture::screen_target(&app);
+                    let _ = app
+                        .state::<Engine>()
+                        .send(&crate::capture::response_with(&id, outcome));
+                });
+            }
+            Route::ClipboardRead { id, include_image } => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let outcome = crate::clipboard::read(include_image);
+                    let _ = app
+                        .state::<Engine>()
+                        .send(&crate::capture::response_with(&id, outcome));
+                });
+            }
+            Route::ClipboardWrite { id, params } => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let outcome = crate::clipboard::write(&params);
                     let _ = app
                         .state::<Engine>()
                         .send(&crate::capture::response_with(&id, outcome));
@@ -458,6 +488,24 @@ mod tests {
                 &json!({ "type": "request", "id": "r5", "method": "screen_target", "params": {} })
             ),
             Route::ScreenTarget { id: "r5".into() }
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r6", "method": "clipboard_read", "params": { "includeImage": true } })
+            ),
+            Route::ClipboardRead {
+                id: "r6".into(),
+                include_image: true
+            }
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r7", "method": "clipboard_write", "params": { "text": "hi" } })
+            ),
+            Route::ClipboardWrite {
+                id: "r7".into(),
+                params: json!({ "text": "hi" })
+            }
         );
         assert!(matches!(
             route(&json!({ "type": "request", "id": "r4", "method": "nope" })),

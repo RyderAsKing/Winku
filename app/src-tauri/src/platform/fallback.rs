@@ -94,3 +94,20 @@ pub fn animations_enabled() -> bool {
 
 /// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.
 pub fn set_window_region(_window: WindowHandle, _rects: &[RoundRect]) {}
+
+const NO_CLIPBOARD: &str = "The clipboard isn't available on this system.";
+
+/// What is on the clipboard (the clipboard_read tool). Windows only.
+pub fn clipboard_read() -> Result<crate::clipboard::Raw, String> {
+    Err(NO_CLIPBOARD.into())
+}
+
+/// Replaces the clipboard with text (the clipboard_write tool). Windows only.
+pub fn clipboard_write(_text: &str) -> Result<(), String> {
+    Err(NO_CLIPBOARD.into())
+}
+
+/// Kind and size of what is on the clipboard, for the now line. Unknown here.
+pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
+    None
+}

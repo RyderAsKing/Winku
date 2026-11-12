@@ -423,7 +423,8 @@
 	]);
 	const pageIds = ["model", "conversation", "tools", "speech", "memory", "actions", "keys", "eyes", "schedules", "app"];
 	const fromHash = () => {
-		const id = location.hash.slice(1);
+		// open_window with a section opens settings.html?section=… (window.rs); the hash wins after that.
+		const id = location.hash.slice(1) || (new URLSearchParams(location.search).get("section") ?? "");
 		return pageIds.includes(id) ? id : "model";
 	};
 	let page = $state(fromHash());

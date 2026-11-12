@@ -22,6 +22,7 @@
 	{#each items as item (item.id)}
 		{#if item.kind === "user"}
 			<div class="user">
+				{#if item.scheduled}<span class="meta">{item.scheduled.kind === "watch" ? "Watch" : "Scheduled"}: {item.scheduled.name}</span>{/if}
 				<p>{item.text}</p>
 				{#if item.spoken}<span class="meta">Spoken</span>{/if}
 				{#if item.images > 0}<span class="meta">{item.images === 1 ? "1 image" : `${item.images} images`}</span>{/if}
@@ -53,6 +54,8 @@
 			</p>
 		{:else if item.kind === "error"}
 			<p class="error" role="alert">{item.message}</p>
+		{:else if item.kind === "notice"}
+			<p class="note">{item.text}</p>
 		{/if}
 	{/each}
 	{#if showLive && app?.reply}

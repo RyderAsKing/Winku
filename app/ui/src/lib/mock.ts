@@ -8,7 +8,8 @@
 //   ?long=1        transcript with long paths, unbroken text, code and a table
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
-import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
+//   ?tasks=1       three scheduled tasks, and a scheduled run and a notice in the transcript
+import type { Command, HistoryEntry, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
 import type { ShellImpl } from "./shell.ts";
@@ -40,6 +41,18 @@ const SAMPLE_TRANSCRIPT: TranscriptItem[] = [
 	{ kind: "memory_saved", id: "m1", saveId: "s1", title: "Prefers WebP at quality 82 for screenshots", undone: false, at: now - 570_000 },
 	{ kind: "user", id: "u2", text: "thanks!", images: 0, at: now - 60_000 },
 	{ kind: "assistant", id: "a2", text: "Any time.", mood: "hearts", at: now - 58_000 },
+];
+
+const SAMPLE_TASKS: TaskInfo[] = [
+	{ id: "3f9a2c1d", name: "Check the oven", kind: "timer", selfPaced: false, nextRunAt: now + 14 * 60_000, runs: 0, status: "scheduled" },
+	{ id: "8b10e4f2", name: "Reply to Eg0", kind: "loop", selfPaced: false, everyMs: 120_000, nextRunAt: now + 90_000, expiresAt: now + 7 * 86_400_000, runs: 3, status: "scheduled" },
+	{ id: "c71d5a09", name: "Build fails", kind: "watch", selfPaced: false, description: "the nightly build fails", expiresAt: now + 7 * 86_400_000, runs: 0, status: "watching" },
+];
+
+const TASK_TRANSCRIPT: TranscriptItem[] = [
+	{ kind: "user", id: "su1", text: "Check Eg0's DM in Discord and answer anything new.", images: 0, scheduled: { name: "Reply to Eg0", kind: "loop" }, at: now - 40_000 },
+	{ kind: "assistant", id: "sa1", text: "Nothing new from Eg0 since the last check.", at: now - 38_000 },
+	{ kind: "notice", id: "n1", text: 'Missed while Winku was closed: "Stand-up notes" was due at 09:00.', at: now - 30_000 },
 ];
 
 const SAMPLE_HISTORY: HistoryEntry[] = [
@@ -179,6 +192,7 @@ export function createMockShell(): ShellImpl {
 	const handleCall = (message: Command): unknown => {
 		switch (message.type) {
 			case "transcript":
+				if (params.has("tasks")) return [...SAMPLE_TRANSCRIPT, ...TASK_TRANSCRIPT];
 				return params.has("long") ? [...SAMPLE_TRANSCRIPT, { kind: "assistant", id: "long", text: LONG_REPLY, at: now }] : SAMPLE_TRANSCRIPT;
 			case "history_list":
 				return (params.has("empty") ? [] : params.has("many") ? [...SAMPLE_HISTORY, ...Array.from({ length: 40 }, (_, i) => ({ ...SAMPLE_HISTORY[2], id: `archive-${i}`, title: `Archive ${i + 1}: ${"LongProjectPath".repeat(12)}`, updatedAt: now - (i + 4) * 86400000 }))] : SAMPLE_HISTORY).filter((h) => !message.query || h.title.toLowerCase().includes(message.query.toLowerCase()));
@@ -351,12 +365,21 @@ export function createMockShell(): ShellImpl {
 	window.addEventListener("keyup", endHint);
 	window.addEventListener("blur", endHint);
 
+	let tasks: TaskInfo[] = params.has("tasks") ? structuredClone(SAMPLE_TASKS) : [];
+	/** A scheduled run starting, as the shell would send it (#43). */
+	const scheduled = (name = "Reply to Eg0") => {
+		const id = `task-${Date.now().toString(36)}`;
+		emit("ui", { kind: "scheduled_started", id, name, taskKind: "loop" });
+		stream(id, false);
+	};
+
 	// Hooks for the screenshot script: fire shell `ui` events or engine events by hand.
 	(window as unknown as { __winkuMock: unknown }).__winkuMock = {
 		ui: (event: unknown) => emit("ui", event),
 		engine: (event: unknown) => emit("engine", event),
 		action,
 		talk,
+		scheduled,
 	};
 
 	return {
@@ -443,6 +466,14 @@ export function createMockShell(): ShellImpl {
 				}
 				case "stop_speaking":
 					stopSpeech();
+					return undefined as T;
+				case "tasks_list":
+					return structuredClone(tasks) as T;
+				case "task_cancel":
+					tasks = tasks.filter((t) => t.id !== args?.id);
+					emit("tasks_changed", structuredClone(tasks));
+					return undefined as T;
+				case "draft_state":
 					return undefined as T;
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;

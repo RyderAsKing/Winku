@@ -24,6 +24,9 @@
 
 	$effect(() => app.eyes.attach(eyes));
 
+	// Due scheduled tasks wait while there is a draft (#43).
+	$effect(() => app.setDraft(text.trim().length > 0));
+
 	$effect(() => {
 		void app.focusTick;
 		input?.focus({ preventScroll: true });
@@ -31,6 +34,7 @@
 
 	const d = $derived(app.dims);
 	const ctx = $derived(app.contextPercent === null ? null : Math.round(app.contextPercent));
+	const waiting = $derived(app.tasks.length);
 	const selectionWords = $derived(app.selectionChip ? app.selectionChip.trim().split(/\s+/).length : 0);
 	// While talking the box shows what has been heard; the typed draft comes back afterwards.
 	const dictating = $derived(app.dictation !== null);
@@ -146,6 +150,9 @@
 		{#if app.updateReady && !open}
 			<span class="dot" title="Winku {app.updateReady} installs when you quit or restart"></span>
 		{/if}
+		{#if waiting > 0 && !open}
+			<span class="dot tasks" style:background={app.tint} title="{waiting} scheduled {waiting === 1 ? 'task' : 'tasks'}"></span>
+		{/if}
 	</button>
 
 	{#if open}
@@ -191,6 +198,9 @@
 					{/if}
 					{#if app.download}
 						<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
+					{/if}
+					{#if waiting > 0}
+						<button type="button" class="mono level" title="Scheduled tasks" onclick={() => app.openSchedules()}>{waiting} waiting</button>
 					{/if}
 					{#if ctx !== null}<span class="mono" title="Context used">{ctx}% ctx</span>{/if}
 					<button type="button" class="mono level" title="Thinking level (Ctrl+Alt+T)" onclick={() => app.cycleThinking()}>
@@ -299,6 +309,13 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--accent);
+	}
+	/* Something is scheduled (#43): opposite the update dot, in the resting tint. Static. */
+	.dot.tasks {
+		top: auto;
+		right: auto;
+		bottom: 18%;
+		left: 22%;
 	}
 	/* Fixed at the open width, beside the eyes, so it is uncovered rather than squeezed. */
 	.body {

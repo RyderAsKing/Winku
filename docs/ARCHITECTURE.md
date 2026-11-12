@@ -48,7 +48,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `window_shape` | `{ width, height, shapes: { x, y, w, h }[] }` → `{ alignRight, above }` (the stage size and the shapes drawn on it, logical px from the stage's top-left) | 2 |
 | `window_drag` | `{}` → void (the main window follows the mouse until the button comes up, then snaps and saves; see "Windows" below) | 2 |
 | `window_layout` | `{}` → `{ alignRight, above } \| null` (which way things grow from the pill) | 2 |
-| `open_window` | `{ name: "settings" \| "history", section? }` → `()`; `section` ("schedules") opens Settings on that section (a new window loads `settings.html?section=schedules`; an open one gets `ui` `{ kind: "settings_section", section }`) | 2, 9 |
+| `open_window` | `{ name: "settings" \| "history", section? }` → `()`; `section` ("schedules") opens Settings on that section (a new window loads `settings.html#schedules`, the hash Settings already uses for its section; an open one gets `ui` `{ kind: "settings_section", section }`) | 2, 9 |
 | `context_menu` | `()` → `()` (native menu at the cursor) | 2 |
 | `open_external` | `{ url }` → `()`; http(s) only, opens the default browser | 2 |
 | `hotkeys_status` | `()` → `{ failed: { name, binding, error }[] }`: bindings that didn't register | 2 |

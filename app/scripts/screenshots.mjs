@@ -275,11 +275,14 @@ const cases = [
 		name: "settings-actions",
 		path: "/settings.html#actions",
 		size: SETTINGS,
-		ready: "text=Use the conversation as context",
+		ready: "role=textbox[name='Action 5 prompt']",
 		prepare: async (page) => {
 			await page.getByRole("textbox", { name: "Action 2 prompt" }).fill("Fix spelling and grammar. Keep British spelling.");
 		},
 	},
+	// A maximised window, and the narrow one: the list must not stretch or overflow.
+	{ name: "settings-actions-wide", path: "/settings.html#actions", size: { width: 1700, height: 990 }, ready: "role=textbox[name='Action 5 prompt']" },
+	{ name: "settings-actions-narrow", path: "/settings.html#actions", size: { width: 520, height: 600 }, ready: "role=textbox[name='Action 5 prompt']" },
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
 	{ name: "settings", path: "/settings.html", size: SETTINGS, ready: "role=combobox[name='Provider']" },
 	{ name: "settings-narrow", path: "/settings.html#speech", size: { width: 520, height: 600 }, ready: "role=heading[name='Speech']" },

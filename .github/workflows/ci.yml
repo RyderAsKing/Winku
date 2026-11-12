@@ -43,6 +43,14 @@ jobs:
           # Pull requests reuse main's cache without spending minutes uploading their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Cargo's registry index
+        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
+        # on Windows before it compiled anything.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+
       - name: Tauri system dependencies
         # Runner DNS has failed to resolve Ubuntu's mirrors, stalling apt for the whole job; add
         # public resolvers as a fallback, retry slow downloads, and fail fast instead of hanging.
@@ -116,6 +124,14 @@ jobs:
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cargo's registry index
+        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
+        # on Windows before it compiled anything.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
 
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.
@@ -219,6 +235,14 @@ jobs:
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cargo's registry index
+        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
+        # on Windows before it compiled anything.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
 
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.

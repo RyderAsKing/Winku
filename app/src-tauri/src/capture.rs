@@ -286,6 +286,23 @@ pub fn note_summon(app: &AppHandle) {
     });
 }
 
+/// The now line for a scheduled run, read when it fires: app, window title and the clipboard
+/// note, never the selection. Winku's own windows give no app or title.
+pub fn scheduled_now_line() -> NowLine {
+    let window = platform::foreground_window();
+    let mut line = if window == WindowHandle(0) || platform::is_own_window(window) {
+        NowLine::default()
+    } else {
+        NowLine::new(
+            platform::process_name(window),
+            platform::window_title(window),
+            None,
+        )
+    };
+    line.clipboard = crate::clipboard::note(platform::clipboard_summary());
+    line
+}
+
 /// The window a capture is about: the window before the bar while the bar is showing (or when
 /// Winku itself is in front), else the foreground window.
 fn target_window(app: &AppHandle, prefer_before_bar: bool) -> WindowHandle {

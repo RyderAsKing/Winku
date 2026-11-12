@@ -6,6 +6,8 @@
 //! - Results are matched to `engine_call`s by id.
 //! - `screen_capture` and `screen_target` Requests are answered by the shell (capture.rs) on a
 //!   worker thread, and so are `clipboard_read` and `clipboard_write` (clipboard.rs).
+//! - `task_*` Requests are answered by the scheduler (scheduler.rs), which also sees every
+//!   Event; `activity` follows what goes out and comes in, so it knows when Winku is idle.
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
 
 use std::collections::HashMap;
@@ -41,6 +43,8 @@ pub struct Engine {
     next_id: AtomicU64,
     shutting_down: AtomicBool,
     smoke: Smoke,
+    /// Whether a prompt, action or permission ask is open (scheduled runs wait for idle).
+    pub activity: crate::scheduler::Activity,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +72,7 @@ impl Engine {
             next_id: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
             smoke: Smoke::from_env(),
+            activity: crate::scheduler::Activity::default(),
         }
     }
 
@@ -91,11 +96,15 @@ impl Engine {
     }
 
     pub fn send(&self, message: &Value) -> Result<(), String> {
-        let mut running = self.running.lock().map_err(|_| "engine lock poisoned")?;
-        let running = running.as_mut().ok_or("the engine is not running")?;
-        writeln!(running.stdin, "{message}")
-            .and_then(|_| running.stdin.flush())
-            .map_err(|e| format!("engine write failed: {e}"))
+        {
+            let mut running = self.running.lock().map_err(|_| "engine lock poisoned")?;
+            let running = running.as_mut().ok_or("the engine is not running")?;
+            writeln!(running.stdin, "{message}")
+                .and_then(|_| running.stdin.flush())
+                .map_err(|e| format!("engine write failed: {e}"))?;
+        }
+        self.activity.outgoing(message);
+        Ok(())
     }
 
     /// Sends a Command with a fresh id and waits for its Result. Resolves to `data`, or the
@@ -250,6 +259,13 @@ enum Route {
     ClipboardRead { id: String, params: Value },
     /// Answer a `clipboard_write` Request ourselves.
     ClipboardWrite { id: String, params: Value },
+    /// A scheduled-task Request (`task_schedule`, `task_wakeup`, `task_list`, `task_cancel`),
+    /// answered by the scheduler.
+    Task {
+        id: String,
+        method: String,
+        params: Value,
+    },
     /// Answer this Request ourselves with an error Response.
     Refuse { id: String, error: String },
     /// Forward to the main window.
@@ -276,6 +292,13 @@ fn route(record: &Value) -> Route {
                     id,
                     params: record["params"].clone(),
                 },
+                Some(method @ ("task_schedule" | "task_wakeup" | "task_list" | "task_cancel")) => {
+                    Route::Task {
+                        id,
+                        method: method.to_string(),
+                        params: record["params"].clone(),
+                    }
+                }
                 other => Route::Refuse {
                     id,
                     error: format!("unknown request method {other:?}"),
@@ -312,8 +335,14 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
         if smoke.enabled {
             println!("{line}");
         }
+        engine.activity.incoming(&record);
         match route(&record) {
             Route::Result(id) => {
+                if record["ok"].as_bool() != Some(true) {
+                    // A refused prompt or action never sends reply_end.
+                    engine.activity.forget(&id);
+                    crate::scheduler::on_prompt_refused(&app, &id);
+                }
                 if let Some(tx) = engine.take_pending(&id) {
                     let _ = tx.send(record);
                 }
@@ -355,12 +384,17 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                         .send(&crate::capture::response_with(&id, outcome));
                 });
             }
+            Route::Task { id, method, params } => {
+                let outcome = crate::scheduler::request(&app, &method, &params);
+                let _ = engine.send(&crate::capture::response_with(&id, outcome));
+            }
             Route::Refuse { id, error } => {
                 let _ = engine
                     .send(&json!({ "type": "response", "id": id, "ok": false, "error": error }));
             }
             Route::Forward => {
                 crate::actions::on_engine_record(&app, &record);
+                crate::scheduler::on_engine_record(&app, &record);
                 let _ = app.emit_to("main", ENGINE_EVENT, &record);
                 if smoke.enabled && !smoke.stay {
                     match record["type"].as_str() {
@@ -387,6 +421,8 @@ fn on_exit(app: &AppHandle, started: Instant) {
         let _ = running.child.wait();
     }
     engine.fail_pending();
+    engine.activity.engine_stopped();
+    crate::scheduler::on_engine_stopped(app);
     if engine.shutting_down.load(Ordering::SeqCst) {
         return;
     }
@@ -507,6 +543,18 @@ mod tests {
                 params: json!({ "text": "hi" })
             }
         );
+        for method in ["task_schedule", "task_wakeup", "task_list", "task_cancel"] {
+            assert_eq!(
+                route(
+                    &json!({ "type": "request", "id": "r8", "method": method, "params": { "id": "3f9a2c1d" } })
+                ),
+                Route::Task {
+                    id: "r8".into(),
+                    method: method.into(),
+                    params: json!({ "id": "3f9a2c1d" })
+                }
+            );
+        }
         assert!(matches!(
             route(&json!({ "type": "request", "id": "r4", "method": "nope" })),
             Route::Refuse { id, .. } if id == "r4"

@@ -32,6 +32,15 @@ pub fn selection_via_uia() -> Option<String> {
     None
 }
 
+/// What the focused element has selected. None: unknown.
+#[allow(dead_code)] // the hotkey guide asks only on Windows
+pub fn selection_summary() -> super::SelectionAnswer {
+    super::SelectionAnswer {
+        selection: None,
+        how: "not asked: only Windows reads the selection".into(),
+    }
+}
+
 pub fn selection_via_copy() -> Option<String> {
     None
 }
@@ -94,3 +103,35 @@ pub fn animations_enabled() -> bool {
 
 /// Clips a window to the union of rects (left, top, right, bottom; window px). No-op here.
 pub fn set_window_region(_window: WindowHandle, _rects: &[RoundRect]) {}
+
+/// Places and shows the floating guide without activating it. Windows only.
+#[allow(dead_code)] // the floating guide exists only on Windows
+pub fn show_floating(_window: WindowHandle, _rect: (i32, i32, i32, i32), _radius: i32) {}
+
+/// Hides a window without waiting for its thread. Windows only.
+#[allow(dead_code)] // the floating guide exists only on Windows
+pub fn hide_window(_window: WindowHandle) {}
+
+/// The floating guide's frame and styles. Windows only.
+#[allow(dead_code)] // the floating guide exists only on Windows
+pub fn floating_frame(_window: WindowHandle) {}
+
+const NO_CLIPBOARD: &str = "The clipboard isn't available on this system.";
+
+/// What is on the clipboard (the clipboard_read tool). Windows only.
+pub fn clipboard_read() -> Result<crate::clipboard::Raw, String> {
+    Err(NO_CLIPBOARD.into())
+}
+
+/// Replaces the clipboard with text (the clipboard_write tool). Windows only.
+pub fn clipboard_write(_text: &str) -> Result<(), String> {
+    Err(NO_CLIPBOARD.into())
+}
+
+/// Starts the clipboard history listener. Windows only.
+pub fn watch_clipboard() {}
+
+/// Kind and size of what is on the clipboard, for the now line. Unknown here.
+pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
+    None
+}

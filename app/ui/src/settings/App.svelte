@@ -759,45 +759,50 @@
 					</div>
 				</div>
 			{:else if page === "actions"}
-				{#each settings.actions as action, i (i)}
-					{@const key = settings.hotkeys.actions[i] || "No key"}
-					<div class="group action">
-						<div class="action-head">
-							<span class="mono key" title="Action {i + 1}">{key}</span>
-							<input
-								aria-label="Action {i + 1} name"
-								value={action.name}
-								oninput={(e) => setAction(i, { name: e.currentTarget.value }, 400)}
-							/>
-							<select class="output" aria-label="Action {i + 1} result" value={action.output} onchange={(e) => setAction(i, { output: e.currentTarget.value as ActionSpec["output"] })}>
-								{#each OUTPUTS as o (o.value)}
-									<option value={o.value}>{o.label}</option>
-								{/each}
-							</select>
+				<div class="group actions">
+					{#each settings.actions as action, i (i)}
+						{@const key = settings.hotkeys.actions[i] || "No key"}
+						<div class="action">
+							<div class="action-main">
+								<span class="mono key" title="Action {i + 1}">{key}</span>
+								<input
+									class="name"
+									aria-label="Action {i + 1} name"
+									value={action.name}
+									oninput={(e) => setAction(i, { name: e.currentTarget.value }, 400)}
+								/>
+								<select class="output" aria-label="Action {i + 1} result" value={action.output} onchange={(e) => setAction(i, { output: e.currentTarget.value as ActionSpec["output"] })}>
+									{#each OUTPUTS as o (o.value)}
+										<option value={o.value}>{o.label}</option>
+									{/each}
+								</select>
+								<div class="action-toggles">
+									{#if action.output !== "agent"}
+										<span class="toggle" title="Use the conversation as context">
+											<Switch label="Action {i + 1}: use the conversation as context" checked={action.useThreadContext} onchange={(v) => setAction(i, { useThreadContext: v })} />
+											<span class="long">Use the conversation as context</span><span class="brief">Context</span>
+										</span>
+									{/if}
+									<span class="toggle" title="Write in your voice">
+										<Switch label="Action {i + 1}: write in your voice" checked={action.useVoice} onchange={(v) => setAction(i, { useVoice: v })} />
+										<span class="long">Write in your voice</span><span class="brief">My voice</span>
+									</span>
+								</div>
+							</div>
+							<div class="action-prompt">
+								<textarea
+									rows="1"
+									aria-label="Action {i + 1} prompt"
+									value={action.prompt}
+									oninput={(e) => setAction(i, { prompt: e.currentTarget.value }, 500)}
+								></textarea>
+								{#if DEFAULT_ACTIONS[i] && !isDefault(action, i)}
+									<button type="button" class="btn ghost" title="Reset to default" onclick={() => setAction(i, structuredClone(DEFAULT_ACTIONS[i] as ActionSpec))}>Reset</button>
+								{/if}
+							</div>
 						</div>
-						<textarea
-							rows="2"
-							aria-label="Action {i + 1} prompt"
-							value={action.prompt}
-							oninput={(e) => setAction(i, { prompt: e.currentTarget.value }, 500)}
-						></textarea>
-						<div class="action-foot">
-							{#if action.output !== "agent"}
-								<span class="toggle">
-									<Switch label="Action {i + 1}: use the conversation as context" checked={action.useThreadContext} onchange={(v) => setAction(i, { useThreadContext: v })} />
-									Use the conversation as context
-								</span>
-							{/if}
-							<span class="toggle">
-								<Switch label="Action {i + 1}: write in your voice" checked={action.useVoice} onchange={(v) => setAction(i, { useVoice: v })} />
-								Write in your voice
-							</span>
-							{#if DEFAULT_ACTIONS[i] && !isDefault(action, i)}
-								<button type="button" class="btn ghost" onclick={() => setAction(i, structuredClone(DEFAULT_ACTIONS[i] as ActionSpec))}>Reset to default</button>
-							{/if}
-						</div>
-					</div>
-				{/each}
+					{/each}
+				</div>
 			{:else if page === "keys"}
 				{#if altGrConflicts.length > 0}
 					<div class="notice">
@@ -831,6 +836,16 @@
 							{#if settings.leaderKey}<button type="button" class="btn ghost" onclick={() => save({ leaderKey: null })}>Clear</button>{/if}
 							<HotkeyField label="Leader key" value={settings.leaderKey ?? "None"} onchange={(v) => save({ leaderKey: v })} />
 						</div>
+					</div>
+				</div>
+				<h3>Guide</h3>
+				<div class="group">
+					<div class="row">
+						<div class="label">
+							<span class="title">Guide follows the selection</span>
+							<span class="desc">Beta. Holding the keys lists only what fits the selected text. Browsers and Electron apps may run slower until they restart.</span>
+						</div>
+						<Switch label="Guide follows the selection" checked={settings.guideFollowsSelection} onchange={(v) => save({ guideFollowsSelection: v })} />
 					</div>
 				</div>
 			{:else if page === "eyes"}
@@ -983,9 +998,6 @@
 		border: 1px solid var(--line);
 		border-radius: 12px;
 		background: rgb(255 255 255 / 0.02);
-	}
-	.group + .group {
-		margin-top: 12px;
 	}
 	.row {
 		display: flex;
@@ -1193,37 +1205,117 @@
 	}
 
 	/* ── actions ── */
+	/* One list. Each action is a line of controls and its prompt: stacked in a narrow window, side
+	   by side in a wide one, so nothing stretches across the page. */
+	.actions {
+		container-type: inline-size;
+	}
 	.action {
 		display: grid;
-		gap: 10px;
-		padding: 14px 16px;
+		gap: 6px;
+		padding: 9px 14px;
 	}
-	.action-head {
+	.action + .action {
+		border-top: 1px solid var(--line);
+	}
+	.action-main {
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		min-width: 0;
+	}
+	.action :is(input, select) {
+		height: 28px;
 	}
 	.key {
 		flex: none;
-		min-width: 84px;
+		min-width: 68px;
 		color: var(--muted);
 	}
+	.name {
+		flex: 0 1 200px;
+	}
 	.output {
-		flex: 0 0 148px;
+		flex: 0 0 128px;
 	}
-	.action-foot {
+	.action-toggles {
+		flex: none;
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px 20px;
-	}
-	.action-foot .btn {
+		gap: 14px;
+		/* Against the right edge and as wide as two switches, so every row's fields line up even
+		   when an action has only one. */
+		justify-content: flex-end;
+		min-width: 212px;
 		margin-left: auto;
+	}
+	.long {
+		display: none;
+	}
+	.action-prompt {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		min-width: 0;
+	}
+	.action-prompt textarea {
+		flex: 1 1 auto;
+		min-height: 28px;
+		padding: 4px 10px;
+		font-size: 12.5px;
+		line-height: 1.45;
+		resize: none;
+	}
+	.action-prompt .btn {
+		height: 28px;
+	}
+	/* Too narrow for one line: the switches drop under the name. */
+	@container (max-width: 540px) {
+		.action-main {
+			flex-wrap: wrap;
+		}
+		.name {
+			flex: 1 1 110px;
+		}
+		.action-toggles {
+			flex: 0 0 100%;
+			justify-content: flex-start;
+			min-width: 0;
+			margin-left: 76px;
+		}
+	}
+	@container (min-width: 880px) {
+		.action {
+			grid-template-columns: 420px minmax(0, 1fr);
+			gap: 16px;
+			align-items: start;
+		}
+		.action-main {
+			flex-wrap: wrap;
+		}
+		.name {
+			flex: 1 1 110px;
+		}
+		/* Under the name, clear of the key. */
+		.action-toggles {
+			flex: 0 0 100%;
+			justify-content: flex-start;
+			min-width: 0;
+			margin-left: 76px;
+			gap: 18px;
+		}
+		.long {
+			display: inline;
+		}
+		.brief {
+			display: none;
+		}
 	}
 	.toggle {
 		display: inline-flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
+		white-space: nowrap;
 		color: var(--muted);
 		font-size: 12px;
 	}

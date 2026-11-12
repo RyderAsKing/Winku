@@ -19,6 +19,9 @@ pub fn apply_settings(app: &AppHandle, old: &Settings, new: &Settings) {
     if settings::hotkeys_changed(old, new) {
         hotkeys::register_all(app, new);
     }
+    if old.guide_follows_selection != new.guide_follows_selection {
+        crate::hint::set_follow_selection(new.guide_follows_selection);
+    }
     if settings::engine_relevant_changed(old, new) {
         engine::configure(app);
     }
@@ -158,6 +161,19 @@ pub fn window_shape(
     shapes: Vec<window::Shape>,
 ) -> Result<window::Layout, String> {
     window::set_shape(&app, (width, height), &shapes)
+}
+
+/// The floating guide's page: what to show now, if a guide is floating (it asks once it has
+/// loaded).
+#[tauri::command]
+pub fn guide_current() -> Option<crate::guide::Showing> {
+    crate::guide::current()
+}
+
+/// The floating guide's page has drawn hold `id`'s guide at this size (logical px).
+#[tauri::command]
+pub fn guide_size(app: AppHandle, id: u64, width: f64, height: f64) -> Result<(), String> {
+    crate::guide::sized(&app, id, (width, height))
 }
 
 /// Drag the main window by the eyes until the mouse button comes up.

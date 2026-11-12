@@ -90,7 +90,7 @@ test("web_search is offered only with a search key; changing it keeps the thread
 	await engine.configure({ faux: { replies: [{ echoTools: true }, { echoTools: true }, { echoTools: true }] } });
 	const first = (await engine.prompt("tools?")).end.text;
 	const names = first.replace("tools: ", "").split(",");
-	for (const name of ["read", "ls", "find", "write", "edit", "open", "web_fetch", "look_at_screen", "memory_save", "memory_read", "voice_propose"])
+	for (const name of ["read", "ls", "find", "write", "edit", "open", "web_fetch", "look_at_screen", "clipboard_read", "clipboard_write", "clipboard_edit", "memory_save", "memory_read", "voice_propose"])
 		expect(names).toContain(name);
 	if (process.platform === "win32") expect(names).toContain("powershell");
 	else expect(names).toContain("bash");
@@ -269,5 +269,179 @@ test("compaction replaces screenshots in the kept messages with a note", async (
 	const images = transcript.filter((t) => t.kind === "user").map((t) => (t.kind === "user" ? t.images : 0));
 	expect(images[1]).toBe(1);
 	expect(images.at(-1)).toBe(1);
+	await engine.shutdown();
+}, T);
+
+// ───────────────────────────── clipboard ─────────────────────────────
+
+test("clipboard_read returns text, an image, file paths, or says it is empty or private", async () => {
+	const engine = start();
+	const answers: unknown[] = [
+		{ kind: "text", text: "copied words" },
+		{ kind: "image", image: { data: PNG, mimeType: "image/png" } },
+		{ kind: "files", paths: ["C:\\Users\\me\\a.txt", "C:\\Users\\me\\b.pdf"] },
+		{ kind: "empty" },
+		{ kind: "private" },
+	];
+	engine.onRequest = (request) => (request.method === "clipboard_read" ? { ok: true, data: answers.shift() } : undefined);
+	await engine.configure({
+		faux: { replies: [call("clipboard_read"), call("clipboard_read"), { echoImages: true }, call("clipboard_read"), call("clipboard_read"), call("clipboard_read"), { text: "ok" }] },
+	});
+	const { end, records } = await engine.prompt("what did I copy?");
+	expect(end.text).toBe("images:1 removed:0");
+	expect(engine.records.find((r) => r.type === "request")).toMatchObject({ method: "clipboard_read", params: { includeImage: true } });
+	expect(records.find((r) => r.type === "tool_start")).toMatchObject({ name: "clipboard_read", summary: "the clipboard" });
+	await engine.prompt("and the rest?");
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("copied words");
+	expect(rows[1]?.detail).toContain("image");
+	expect(rows[2]?.detail).toContain("C:\\Users\\me\\a.txt\nC:\\Users\\me\\b.pdf");
+	expect(rows[3]?.detail).toContain("The clipboard is empty.");
+	expect(rows[4]?.detail).toContain("marked private");
+	expect(rows[4]?.detail).not.toContain("copied");
+	await engine.shutdown();
+}, T);
+
+test("clipboard_read without image support asks for no image; a shell error (not Windows) fails the tool", async () => {
+	const engine = start();
+	let answer: { ok: boolean; data?: unknown; error?: string } = { ok: true, data: { kind: "image", image: { data: PNG, mimeType: "image/png" } } };
+	engine.onRequest = (request) => (request.method === "clipboard_read" ? answer : undefined);
+	await engine.configure({ faux: { supportsImages: false, replies: [call("clipboard_read"), { echoImages: true }, call("clipboard_read"), { text: "sorry" }] } });
+	const { end } = await engine.prompt("look");
+	expect(engine.records.find((r) => r.type === "request")).toMatchObject({ params: { includeImage: false } });
+	expect(end.text).toBe("images:0 removed:0");
+	expect((await toolRows(engine))[0]?.detail).toContain("can't see images");
+	answer = { ok: false, error: "The clipboard isn't available on this system." };
+	const second = await engine.prompt("again");
+	expect(second.records.find((r) => r.type === "tool_end")).toMatchObject({ ok: false });
+	expect((await toolRows(engine))[1]?.detail).toContain("isn't available");
+	await engine.shutdown();
+}, T);
+
+test("clipboard_read reads an earlier copy by index, and lists the history as index, age and preview", async () => {
+	const engine = start();
+	const history = ["the newest copy", "an earlier copy", "the oldest copy"];
+	engine.onRequest = (request) => {
+		if (request.method !== "clipboard_read") return undefined;
+		const { index, list } = request.params as { index?: number; list?: boolean };
+		if (list)
+			return {
+				ok: true,
+				data: {
+					entries: [
+						{ index: 0, ageSeconds: 5, chars: 15, preview: "the newest copy" },
+						{ index: 1, ageSeconds: 200, chars: 15, preview: "an earlier copy" },
+						{ index: 2, ageSeconds: 7300, chars: 15, preview: "the oldest copy" },
+					],
+				},
+			};
+		if (index !== undefined) {
+			const text = history[index];
+			return text ? { ok: true, data: { kind: "text", text } } : { ok: false, error: `There is no copy ${index}; the history holds 3.` };
+		}
+		return { ok: true, data: { kind: "text", text: history[0] } };
+	};
+	await engine.configure({
+		faux: { replies: [call("clipboard_read", { list: true }), call("clipboard_read", { index: 1 }), call("clipboard_read", { index: 9 }), { text: "found it" }] },
+	});
+	const { records } = await engine.prompt("what did I copy before this?");
+	const requests: unknown[] = engine.records.filter((r) => r.type === "request").map((r) => (r.type === "request" ? r.params : null));
+	expect(requests).toEqual([
+		{ includeImage: false, list: true },
+		{ includeImage: false, index: 1 },
+		{ includeImage: false, index: 9 },
+	]);
+	expect(records.filter((r) => r.type === "tool_start").map((r) => (r.type === "tool_start" ? r.summary : ""))).toEqual([
+		"the clipboard history",
+		"copy 1 from the clipboard history",
+		"copy 9 from the clipboard history",
+	]);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("0: 5 s ago, 15 characters: the newest copy");
+	expect(rows[0]?.detail).toContain("1: 3 min ago, 15 characters: an earlier copy");
+	expect(rows[0]?.detail).toContain("2: 2 h ago, 15 characters: the oldest copy");
+	expect(rows[1]?.detail).toContain("Copy 1 from the clipboard history:\nan earlier copy");
+	expect(rows[2]?.detail).toContain("There is no copy 9");
+	expect(records.filter((r) => r.type === "tool_end").map((r) => (r.type === "tool_end" ? r.ok : null))).toEqual([true, true, false]);
+	await engine.shutdown();
+}, T);
+
+test("an empty clipboard history says so", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "clipboard_read" ? { ok: true, data: { entries: [] } } : undefined);
+	await engine.configure({ faux: { replies: [call("clipboard_read", { list: true }), { text: "none" }] } });
+	await engine.prompt("list my copies");
+	expect((await toolRows(engine))[0]?.detail).toContain("The clipboard history is empty");
+	await engine.shutdown();
+}, T);
+
+/** A fake shell clipboard: answers clipboard_read and clipboard_write. */
+function fakeClipboard(engine: EngineProcess, initial: string, decision?: () => string) {
+	const state = { text: initial, writes: 0 };
+	engine.onRequest = (request) => {
+		if (request.method === "clipboard_read") return { ok: true, data: { kind: "text", text: state.text } };
+		if (request.method === "clipboard_write") {
+			state.text = request.params.text;
+			state.writes++;
+			return { ok: true };
+		}
+		if (request.method === "permission" && decision) return { ok: true, data: { decision: decision() } };
+		return undefined;
+	};
+	return state;
+}
+
+test("clipboard_write puts the text on the clipboard", async () => {
+	const engine = start();
+	const clip = fakeClipboard(engine, "old");
+	await engine.configure({ faux: { replies: [call("clipboard_write", { text: "fresh answer" }), { text: "copied" }] } });
+	const { records } = await engine.prompt("copy that");
+	expect(clip.text).toBe("fresh answer");
+	expect(records.find((r) => r.type === "tool_end")).toMatchObject({ ok: true });
+	await engine.shutdown();
+}, T);
+
+test("clipboard_edit changes only the named part; zero or several matches fail and change nothing", async () => {
+	const engine = start();
+	const clip = fakeClipboard(engine, "Dear Bob, see you at 12. Bye");
+	await engine.configure({
+		faux: {
+			replies: [
+				call("clipboard_edit", { oldText: "at 12", newText: "at 1" }),
+				call("clipboard_edit", { oldText: "Alice", newText: "Carol" }),
+				call("clipboard_edit", { oldText: "e", newText: "E" }),
+				{ text: "done" },
+			],
+		},
+	});
+	const { records } = await engine.prompt("fix the time");
+	expect(clip.text).toBe("Dear Bob, see you at 1. Bye");
+	expect(clip.writes).toBe(1);
+	const ends = records.filter((r) => r.type === "tool_end").map((r) => (r.type === "tool_end" ? r.ok : null));
+	expect(ends).toEqual([true, false, false]);
+	const rows = await toolRows(engine);
+	expect(rows[1]?.detail).toContain("not found");
+	expect(rows[2]?.detail).toContain("more than once");
+	await engine.shutdown();
+}, T);
+
+test("ask before running: clipboard write and edit ask first, read does not", async () => {
+	const engine = start();
+	const clip = fakeClipboard(engine, "abc", () => "deny");
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				call("clipboard_read"),
+				call("clipboard_write", { text: "xyz" }),
+				call("clipboard_edit", { oldText: "b", newText: "B" }),
+				{ text: "done" },
+			],
+		},
+	});
+	await engine.prompt("go");
+	expect(permissionRequests(engine.records).map((r) => r.params.tool)).toEqual(["clipboard_write", "clipboard_edit"]);
+	expect(clip.text).toBe("abc");
+	expect(clip.writes).toBe(0);
 	await engine.shutdown();
 }, T);

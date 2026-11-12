@@ -1,6 +1,6 @@
 //! Screen context for the agent (docs/ARCHITECTURE.md, "Agent tools"):
 //!
-//! - the **now line**: foreground app, window title and selection, noted when the bar is
+//! - the **now line**: foreground app, window title, selection and a clipboard note, noted when the bar is
 //!   summoned, and that window remembered as "the window before the bar";
 //! - **window capture**: a window's image, downscaled to a 1568 px long edge, as a PNG
 //!   `ImageAttachment` (screenshot command and hotkey, `screen_capture` Requests);
@@ -43,6 +43,9 @@ pub struct NowLine {
     pub window_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<String>,
+    /// Kind and size of what is on the clipboard (clipboard.rs `note`), never its contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clipboard: Option<String>,
 }
 
 impl NowLine {
@@ -51,6 +54,7 @@ impl NowLine {
             app: non_empty(app, usize::MAX),
             window_title: non_empty(title, 300),
             selection: non_empty(selection, SELECTION_CAP),
+            clipboard: None,
         }
     }
 }
@@ -260,6 +264,7 @@ pub fn note_summon(app: &AppHandle) {
             platform::window_title(window),
             None,
         );
+        snap.line.clipboard = crate::clipboard::note(platform::clipboard_summary());
         snap.reading = !skip_selection;
         snap.at = Some(Instant::now());
         snap.generation

@@ -300,8 +300,11 @@ export type Request =
 	/** clipboard_read and clipboard_edit: the current clipboard. Images downscaled like screenshots
 	 *  (only when includeImage). Content carrying the formats password managers use to exclude it
 	 *  from history comes back as { kind: "private" }. Response data: ClipboardContent; an error
-	 *  Response outside Windows. */
-	| { type: "request"; id: string; method: "clipboard_read"; params: { includeImage: boolean } }
+	 *  Response outside Windows.
+	 *  With index: that entry of the clipboard history (0 is the newest text copy), as
+	 *  { kind: "text" }; an error Response when there is no such entry.
+	 *  With list: the clipboard history, Response data: ClipboardHistory. */
+	| { type: "request"; id: string; method: "clipboard_read"; params: { includeImage: boolean; index?: number; list?: boolean } }
 	/** clipboard_write and clipboard_edit: replace the clipboard with text. Response data: none. */
 	| { type: "request"; id: string; method: "clipboard_write"; params: { text: string } }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
@@ -326,6 +329,20 @@ export type ClipboardContent =
 	/** image is absent when includeImage was false. */
 	| { kind: "image"; image?: ImageAttachment; width?: number; height?: number }
 	| { kind: "files"; paths: string[] };
+
+/** The shell's clipboard history: the last 20 text copies of this run, newest first. */
+export interface ClipboardHistory {
+	entries: ClipboardHistoryEntry[];
+}
+
+export interface ClipboardHistoryEntry {
+	index: number;
+	ageSeconds: number;
+	/** Characters in the whole entry. */
+	chars: number;
+	/** The text on one line, cut at 60 characters. */
+	preview: string;
+}
 
 export interface ScreenTarget {
 	/** `w-<HWND>`, the id agent-desktop uses for the window. */

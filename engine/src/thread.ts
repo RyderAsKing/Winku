@@ -290,6 +290,8 @@ export function toolSummary(name: string, args: unknown): string {
 		case "look_at_screen":
 			return "the active window";
 		case "clipboard_read":
+			if (a.list) return "the clipboard history";
+			if (typeof a.index === "number") return `copy ${a.index} from the clipboard history`;
 			return "the clipboard";
 		case "clipboard_write":
 			return clip(str("text")) || "the clipboard";

@@ -318,6 +318,63 @@ test("clipboard_read without image support asks for no image; a shell error (not
 	await engine.shutdown();
 }, T);
 
+test("clipboard_read reads an earlier copy by index, and lists the history as index, age and preview", async () => {
+	const engine = start();
+	const history = ["the newest copy", "an earlier copy", "the oldest copy"];
+	engine.onRequest = (request) => {
+		if (request.method !== "clipboard_read") return undefined;
+		const { index, list } = request.params as { index?: number; list?: boolean };
+		if (list)
+			return {
+				ok: true,
+				data: {
+					entries: [
+						{ index: 0, ageSeconds: 5, chars: 15, preview: "the newest copy" },
+						{ index: 1, ageSeconds: 200, chars: 15, preview: "an earlier copy" },
+						{ index: 2, ageSeconds: 7300, chars: 15, preview: "the oldest copy" },
+					],
+				},
+			};
+		if (index !== undefined) {
+			const text = history[index];
+			return text ? { ok: true, data: { kind: "text", text } } : { ok: false, error: `There is no copy ${index}; the history holds 3.` };
+		}
+		return { ok: true, data: { kind: "text", text: history[0] } };
+	};
+	await engine.configure({
+		faux: { replies: [call("clipboard_read", { list: true }), call("clipboard_read", { index: 1 }), call("clipboard_read", { index: 9 }), { text: "found it" }] },
+	});
+	const { records } = await engine.prompt("what did I copy before this?");
+	const requests: unknown[] = engine.records.filter((r) => r.type === "request").map((r) => (r.type === "request" ? r.params : null));
+	expect(requests).toEqual([
+		{ includeImage: false, list: true },
+		{ includeImage: false, index: 1 },
+		{ includeImage: false, index: 9 },
+	]);
+	expect(records.filter((r) => r.type === "tool_start").map((r) => (r.type === "tool_start" ? r.summary : ""))).toEqual([
+		"the clipboard history",
+		"copy 1 from the clipboard history",
+		"copy 9 from the clipboard history",
+	]);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("0: 5 s ago, 15 characters: the newest copy");
+	expect(rows[0]?.detail).toContain("1: 3 min ago, 15 characters: an earlier copy");
+	expect(rows[0]?.detail).toContain("2: 2 h ago, 15 characters: the oldest copy");
+	expect(rows[1]?.detail).toContain("Copy 1 from the clipboard history:\nan earlier copy");
+	expect(rows[2]?.detail).toContain("There is no copy 9");
+	expect(records.filter((r) => r.type === "tool_end").map((r) => (r.type === "tool_end" ? r.ok : null))).toEqual([true, true, false]);
+	await engine.shutdown();
+}, T);
+
+test("an empty clipboard history says so", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "clipboard_read" ? { ok: true, data: { entries: [] } } : undefined);
+	await engine.configure({ faux: { replies: [call("clipboard_read", { list: true }), { text: "none" }] } });
+	await engine.prompt("list my copies");
+	expect((await toolRows(engine))[0]?.detail).toContain("The clipboard history is empty");
+	await engine.shutdown();
+}, T);
+
 /** A fake shell clipboard: answers clipboard_read and clipboard_write. */
 function fakeClipboard(engine: EngineProcess, initial: string, decision?: () => string) {
 	const state = { text: initial, writes: 0 };

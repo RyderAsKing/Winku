@@ -63,6 +63,8 @@ export interface NowLine {
 	app?: string;
 	windowTitle?: string;
 	selection?: string;
+	/** What kind of thing is on the clipboard and how big, never its contents: "text, 120 words". */
+	clipboard?: string;
 }
 
 export interface ImageAttachment {
@@ -295,6 +297,16 @@ export type Request =
 	/** Computer use (desktop_* tools): the same window look_at_screen uses, never one of Winku's own.
 	 *  Response data: ScreenTarget; an error Response when there is no such window. */
 	| { type: "request"; id: string; method: "screen_target"; params: Record<string, never> }
+	/** clipboard_read and clipboard_edit: the current clipboard. Images downscaled like screenshots
+	 *  (only when includeImage). Content carrying the formats password managers use to exclude it
+	 *  from history comes back as { kind: "private" }. Response data: ClipboardContent; an error
+	 *  Response outside Windows.
+	 *  With index: that entry of the clipboard history (0 is the newest text copy), as
+	 *  { kind: "text" }; an error Response when there is no such entry.
+	 *  With list: the clipboard history, Response data: ClipboardHistory. */
+	| { type: "request"; id: string; method: "clipboard_read"; params: { includeImage: boolean; index?: number; list?: boolean } }
+	/** clipboard_write and clipboard_edit: replace the clipboard with text. Response data: none. */
+	| { type: "request"; id: string; method: "clipboard_write"; params: { text: string } }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
@@ -308,6 +320,28 @@ export interface ScreenCapture {
 	chromium?: boolean;
 	text?: string;
 	image?: ImageAttachment;
+}
+
+export type ClipboardContent =
+	| { kind: "empty" }
+	| { kind: "private" }
+	| { kind: "text"; text: string }
+	/** image is absent when includeImage was false. */
+	| { kind: "image"; image?: ImageAttachment; width?: number; height?: number }
+	| { kind: "files"; paths: string[] };
+
+/** The shell's clipboard history: the last 20 text copies of this run, newest first. */
+export interface ClipboardHistory {
+	entries: ClipboardHistoryEntry[];
+}
+
+export interface ClipboardHistoryEntry {
+	index: number;
+	ageSeconds: number;
+	/** Characters in the whole entry. */
+	chars: number;
+	/** The text on one line, cut at 60 characters. */
+	preview: string;
 }
 
 export interface ScreenTarget {

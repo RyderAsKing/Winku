@@ -1,5 +1,7 @@
 mod actions;
 mod capture;
+mod clipboard;
+mod clipboard_history;
 mod commands;
 mod engine;
 mod fullscreen;
@@ -55,6 +57,7 @@ pub fn run() {
             commands::apply_launch_at_login(handle, current.launch_at_login);
             fullscreen::start(handle);
             hint::start(handle);
+            platform::watch_clipboard();
             update::start(handle);
             Ok(())
         })

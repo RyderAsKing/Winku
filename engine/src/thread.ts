@@ -289,6 +289,14 @@ export function toolSummary(name: string, args: unknown): string {
 			return clip(str("query")) || name;
 		case "look_at_screen":
 			return "the active window";
+		case "clipboard_read":
+			if (a.list) return "the clipboard history";
+			if (typeof a.index === "number") return `copy ${a.index} from the clipboard history`;
+			return "the clipboard";
+		case "clipboard_write":
+			return clip(str("text")) || "the clipboard";
+		case "clipboard_edit":
+			return clip(str("oldText")) || "the clipboard";
 		case "desktop_observe":
 			return clip(str("root") || str("window") || str("surface")) || "the active window";
 		case "desktop_act":

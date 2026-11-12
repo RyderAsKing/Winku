@@ -136,10 +136,10 @@ jobs:
           "nothing changed: {0:n1} s" -f (Measure-Command $build).TotalSeconds
           (Get-Item src/main.rs).LastWriteTime = Get-Date
           "main.rs touched (link only): {0:n1} s" -f (Measure-Command $build).TotalSeconds
-          $env:CARGO_PROFILE_RELEASE_PACKAGE_WINKU_OPT_LEVEL = "1"
-          "winku at opt-level 1: {0:n1} s" -f (Measure-Command $build).TotalSeconds
-          $env:CARGO_PROFILE_RELEASE_PACKAGE_WINKU_OPT_LEVEL = "0"
-          "winku at opt-level 0: {0:n1} s" -f (Measure-Command $build).TotalSeconds
+          foreach ($level in 1, 0) {
+            $t = Measure-Command { cargo build --release --bins --features tauri/custom-protocol --config "profile.release.package.winku.opt-level=$level" 2>&1 | Select-Object -Last 2 | Write-Host }
+            "winku at opt-level ${level}: {0:n1} s" -f $t.TotalSeconds
+          }
           Get-Item target/release/winku.exe | Select-Object Length
 
       - name: Smoke test, idle memory and idle CPU

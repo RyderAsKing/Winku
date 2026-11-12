@@ -60,6 +60,69 @@ public static class Win {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
 }
 "@
+# Classic Notepad's text box is a Win32 Edit control, which on some systems offers no UI
+# Automation text pattern. Then its selection is read the way Winku's fallback reads it: with
+# edit control messages (client px, turned into screen px).
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class EditSel {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct GUITHREADINFO {
+    public int cbSize; public int flags;
+    public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+    public RECT rcCaret;
+  }
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, StringBuilder l);
+  [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+  [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  public static string Why = "";
+  // The window with the keyboard focus in the thread that owns top, and whether that thread is
+  // in menu mode (an Alt tap that reached it).
+  public static IntPtr Focused(IntPtr top, out bool inMenu) {
+    var info = new GUITHREADINFO(); info.cbSize = Marshal.SizeOf(info);
+    inMenu = false;
+    if (!GetGUIThreadInfo(GetWindowThreadProcessId(top, IntPtr.Zero), ref info)) return IntPtr.Zero;
+    inMenu = (info.flags & 0x4) != 0; // GUI_INMENUMODE
+    return info.hwndFocus;
+  }
+  public static string ClassOf(IntPtr h) { var s = new StringBuilder(128); GetClassName(h, s, 128); return s.ToString(); }
+  public static string Text(IntPtr h) {
+    int n = (int)SendMessage(h, 0x0E, IntPtr.Zero, IntPtr.Zero); // WM_GETTEXTLENGTH
+    var s = new StringBuilder(n + 1); SendMessage(h, 0x0D, (IntPtr)(n + 1), s); // WM_GETTEXT
+    return s.ToString();
+  }
+  static int[] Pos(IntPtr h, int i) {
+    if (i < 0) return null;
+    long r = SendMessage(h, 0xD6, (IntPtr)i, IntPtr.Zero).ToInt64(); // EM_POSFROMCHAR
+    if (r == -1) return null;
+    return new int[] { (short)(r & 0xFFFF), (short)((r >> 16) & 0xFFFF) };
+  }
+  // The first selected line on screen as x, y, w, h, or null with the reason in Why.
+  public static int[] FirstLine(IntPtr h) {
+    long sel = SendMessage(h, 0xB0, IntPtr.Zero, IntPtr.Zero).ToInt64(); // EM_GETSEL
+    int start = (int)(sel & 0xFFFF), end = (int)((sel >> 16) & 0xFFFF);
+    if (start == end) { Why = "empty selection at " + start; return null; }
+    int line = (int)SendMessage(h, 0xC9, (IntPtr)start, IntPtr.Zero); // EM_LINEFROMCHAR
+    int lineStart = (int)SendMessage(h, 0xBB, (IntPtr)line, IntPtr.Zero); // EM_LINEINDEX
+    int lineLength = (int)SendMessage(h, 0xC1, (IntPtr)start, IntPtr.Zero); // EM_LINELENGTH
+    int firstEnd = Math.Min(end, lineStart + lineLength);
+    var a = Pos(h, start); var b = Pos(h, firstEnd);
+    var n = Pos(h, (int)SendMessage(h, 0xBB, (IntPtr)(line + 1), IntPtr.Zero));
+    Why = string.Format("range {0}..{1}, line {2} from {3} length {4}, start {5}, first end {6}, next line {7}",
+      start, end, line, lineStart, lineLength, Fmt(a), Fmt(b), Fmt(n));
+    if (a == null || b == null || n == null || b[1] != a[1] || b[0] <= a[0] || n[1] <= a[1]) return null;
+    var o = new POINT(); ClientToScreen(h, ref o);
+    return new int[] { o.X + a[0], o.Y + a[1], b[0] - a[0], n[1] - a[1] };
+  }
+  static string Fmt(int[] p) { return p == null ? "none" : p[0] + "," + p[1]; }
+}
+"@
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 [Keys]::SetProcessDPIAware() | Out-Null
 # Windows Server turns animation effects off, which browsers report as "reduce motion", and then
@@ -98,8 +161,13 @@ function Burst([string]$Name, [int]$Count) {
   Write-Host "saved $Count $Name frames over $($clock.ElapsedMilliseconds) ms"
 }
 
-# The shell logs hotkey_hint events here when WINKU_DEBUG_HINT=1.
+# The shell logs hotkey_hint events here when WINKU_DEBUG_HINT=1, with each selection query's
+# answer and where it came from, and why each guide floated or showed beside Winku.
 $hintLog = Join-Path $OutDir "hint.log"
+function Show-HintLog([string]$Title) {
+  Write-Host "${Title}:"
+  @(Get-Content $hintLog -ErrorAction SilentlyContinue | Where-Object { $_ }) | ForEach-Object { Write-Host "  $_" }
+}
 Remove-Item $hintLog -ErrorAction SilentlyContinue
 $env:WINKU_DEBUG_HINT = "1"
 $env:WINKU_DEBUG_HINT_LOG = $hintLog
@@ -175,7 +243,9 @@ try {
   }
   # The taps above must not have sent a hint. Then Ctrl+Alt held on its own for about a second:
   # the shell must send hotkey_hint show, and hide on release.
-  if (Test-Path $hintLog) { throw "hotkey_hint fired before any hold:`n$(Get-Content $hintLog -Raw)" }
+  # (A tap still starts a selection query when Ctrl+Alt go down; its log line is fine.)
+  $early = @(Get-Content $hintLog -ErrorAction SilentlyContinue | Where-Object { $_ -and $_ -notlike "selection query *" })
+  if ($early) { Show-HintLog "hint log"; throw "the guide showed before any hold: $($early -join ' | ')" }
   [Keys]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
   [Keys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 1000
@@ -183,8 +253,8 @@ try {
   [Keys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
   [Keys]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 500
-  $lines = @(Get-Content $hintLog -ErrorAction SilentlyContinue)
-  Write-Host "hint log: $($lines -join ' | ')"
+  Show-HintLog "hint log after the first hold"
+  $lines = @(Get-Content $hintLog -ErrorAction SilentlyContinue | Where-Object { $_ -like "hotkey_hint *" })
   if (($lines -join "`n") -ne "hotkey_hint show`nhotkey_hint hide") {
     throw "expected one hotkey_hint show then one hide, got: $($lines -join ' | ')"
   }
@@ -198,17 +268,34 @@ try {
   }
   if ($pad -eq [IntPtr]::Zero) { throw "Notepad did not open within 10 s" }
   [Win]::MoveWindow($pad, 200, 420, 900, 400, $true) | Out-Null
-  # A tap of Alt first lets this process hand the foreground to Notepad.
-  [Keys]::Tap([byte[]]@(), 0x12)
-  [Win]::SetForegroundWindow($pad) | Out-Null
-  Start-Sleep -Milliseconds 800
+  # Notepad usually opens in front. If not, a tap of Alt first lets this process hand it the
+  # foreground. An Alt tap that reaches Notepad puts it in menu mode, where the first typed
+  # letter is taken as a menu key and lost; Esc leaves menu mode.
+  if ([Win]::GetForegroundWindow() -ne $pad) {
+    [Keys]::Tap([byte[]]@(), 0x12)
+    [Win]::SetForegroundWindow($pad) | Out-Null
+  }
+  for ($i = 0; $i -lt 40 -and [Win]::GetForegroundWindow() -ne $pad; $i++) { Start-Sleep -Milliseconds 100 }
   if ([Win]::GetForegroundWindow() -ne $pad) { throw "Notepad is not in front (foreground $([Win]::GetForegroundWindow()), Notepad $pad)" }
+  Start-Sleep -Milliseconds 300
+  $inMenu = $false
+  $edit = [EditSel]::Focused($pad, [ref]$inMenu)
+  if ($inMenu) { Write-Host "Notepad is in menu mode; Esc leaves it"; [Keys]::Tap([byte[]]@(), 0x1B); Start-Sleep -Milliseconds 200 }
+  $editClass = if ($edit -ne [IntPtr]::Zero) { [EditSel]::ClassOf($edit) } else { "none" }
+  Write-Host "Notepad's focused control: $editClass"
   [System.Windows.Forms.SendKeys]::SendWait("Winku floating guide check{ENTER}a second line")
+  Start-Sleep -Milliseconds 200
+  if ($edit -ne [IntPtr]::Zero) {
+    $typed = [EditSel]::Text($edit)
+    Write-Host "Notepad's text: $($typed -replace "`r`n", '\n')"
+    if (-not $typed.StartsWith("Winku floating guide check")) { Write-Host "::warning::the text typed into Notepad came out as '$typed'" }
+  }
   # Ctrl+Home, then Shift+End: the first line is selected.
   [Keys]::Tap([byte[]](0x11), 0x24)
   [Keys]::Tap([byte[]](0x10), 0x23)
   Start-Sleep -Milliseconds 300
-  # Where the selection is, asked the same way Winku asks (UI Automation, physical px).
+  # Where the selection is, asked the same way Winku asks (UI Automation, physical px), then as
+  # Winku's fallback asks a standard edit control (window messages).
   $line = $null
   try {
     $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
@@ -216,6 +303,11 @@ try {
     $rects = $text.GetSelection()[0].GetBoundingRectangles()
     if ($rects.Count -gt 0) { $line = $rects[0] }
   } catch { Write-Host "could not read Notepad's selection through UI Automation: $_" }
+  if (-not $line -and $editClass -match '^(Edit|RichEdit)') {
+    $r = [EditSel]::FirstLine($edit)
+    Write-Host "Notepad's selection through edit control messages: $([EditSel]::Why)"
+    if ($r) { $line = [pscustomobject]@{ X = $r[0]; Y = $r[1]; Width = $r[2]; Height = $r[3] } }
+  }
   $padRect = [Mouse]::Rect($pad)
   Write-Host "notepad: $($padRect.Left),$($padRect.Top)-$($padRect.Right),$($padRect.Bottom); selection's first line: $(if ($line) { "$($line.X),$($line.Y) $($line.Width)x$($line.Height)" } else { 'unknown' })"
   Shot "5-notepad-selection"
@@ -250,8 +342,8 @@ try {
   if ($guide -ne [IntPtr]::Zero) { $hidden = -not [Win]::IsWindowVisible($guide) }
   Shot "7-floating-guide-released"
   $lines = @(Get-Content $hintLog -ErrorAction SilentlyContinue | Where-Object { $_ })
-  Write-Host "hint log: $($lines -join ' | ')"
-  if (-not $shown) { throw "the guide did not float over the Notepad selection (log: $($lines -join ' | '))" }
+  Show-HintLog "hint log for the Notepad holds"
+  if (-not $shown) { throw "the guide did not float over the Notepad selection (the hint log above says why)" }
   $exStyle = [Win]::GetWindowLong($guide, -20)
   Write-Host ("guide window: {0},{1}-{2},{3}; extended style 0x{4:X8}; foreground after showing: {5} (Notepad {6})" -f $shown.Left, $shown.Top, $shown.Right, $shown.Bottom, $exStyle, $front, $pad)
   if ($front -ne $pad) { throw "the guide took the foreground from Notepad" }
@@ -269,7 +361,7 @@ try {
     throw "the guide (bottom $($shown.Bottom)) is not just above Notepad's first line (window top $($padRect.Top))"
   }
   if (-not $hidden) { throw "the guide window still shows after Ctrl+Alt was released" }
-  if ($lines -contains "hotkey_hint show") { Write-Host "note: one hold showed the guide beside the eyes (no selection answer in time)" }
+  if ($lines -contains "hotkey_hint show") { Write-Host "note: one hold showed the guide beside the eyes (the hint log above says why)" }
 
   # Idle memory with the guide's second web view alive (SPEC §4: 150 MB), counted like
   # measure-memory.ps1: private working set of the whole process tree.

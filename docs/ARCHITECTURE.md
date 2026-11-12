@@ -201,7 +201,7 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 
 ## Scheduled tasks
 
-SPEC §7a. The model can schedule its own wakeups: shaped after Claude Code's `/loop`, ScheduleWakeup and Monitor. The shell owns the jobs, their rules and `tasks.json`; the engine's tools are thin wrappers over `task_*` Requests (types in `protocol.ts`, "scheduled tasks").
+SPEC §7 (scheduled tasks). The model can schedule its own wakeups: shaped after Claude Code's `/loop`, ScheduleWakeup and Monitor. The shell owns the jobs, their rules and `tasks.json`; the engine's tools are thin wrappers over `task_*` Requests (types in `protocol.ts`, "scheduled tasks").
 
 **Kinds.** A **timer** runs its prompt once, at a time. A **loop** runs its prompt `every` interval, or is **self-paced**: each run calls `next_wakeup` with the next delay (1 to 60 minutes) or `stop`. A **watch** runs a command in the background, and the lines it prints wake Winku.
 

@@ -76,6 +76,8 @@ function rig(): Rig {
 		policy: () => policyFrom(r.askBeforeRunning, []),
 		requests: r.requests,
 		replyId: () => "p1",
+		scheduledRun: () => undefined,
+		spoken: () => false,
 		supportsImages: () => false,
 		searchKey: () => undefined,
 		desktop: { run: (a, o) => r.run(a, o), ownPids: [WINKU_PID] },
@@ -132,6 +134,8 @@ test("desktop tools are offered only with agent-desktop, and the acting ones are
 		policy: () => policyFrom(false, []),
 		requests: r.requests,
 		replyId: () => undefined,
+		scheduledRun: () => undefined,
+		spoken: () => false,
 		supportsImages: () => false,
 		searchKey: () => undefined,
 	});

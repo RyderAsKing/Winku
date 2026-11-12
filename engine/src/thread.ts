@@ -6,6 +6,7 @@ import { type SessionEntry, SessionManager } from "@earendil-works/pi-coding-age
 import { stripMood } from "./mood.ts";
 import { splitSay } from "./say.ts";
 import { parseNow } from "./nowline.ts";
+import { parseScheduled } from "./scheduled.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
 
@@ -14,6 +15,9 @@ interface UndoState {
 	archivedFile: string;
 	newManager: SessionManager;
 }
+
+/** customType of the scheduler notices recorded in the thread (the `notice` command). */
+export const NOTICE_TYPE = "winku-notice";
 
 export class Thread {
 	readonly engineDir: string;
@@ -315,6 +319,16 @@ export function toolSummary(name: string, args: unknown): string {
 			return clip(str("topic")) || name;
 		case "voice_propose":
 			return clip(str("profile")) || name;
+		case "schedule_task":
+			return clip(str("name")) || name;
+		case "watch":
+			return clip(str("description") || str("command")) || name;
+		case "next_wakeup":
+			return a.stop ? "stop" : clip(str("in")) || name;
+		case "list_tasks":
+			return "scheduled tasks";
+		case "cancel_task":
+			return clip(str("id")) || name;
 	}
 	const first = Object.values(a).find((v) => typeof v === "string") as string | undefined;
 	return first ? clip(first) : name;
@@ -332,14 +346,20 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 			items.push({ kind: "compaction", id: entry.id, summary: entry.summary, at });
 			continue;
 		}
+		if (entry.type === "custom_message") {
+			if (entry.customType === NOTICE_TYPE) items.push({ kind: "notice", id: entry.id, text: textOf(entry.content), at });
+			continue;
+		}
 		if (entry.type !== "message") continue;
 		const message = entry.message as { role: string; content?: unknown } & Record<string, unknown>;
 		if (message.role === "user") {
-			const { text, now, spoken } = parseNow(textOf(message.content));
+			const parsed = parseNow(textOf(message.content));
+			const { now, spoken } = parsed;
+			const { text, scheduled } = parseScheduled(parsed.text);
 			const images = Array.isArray(message.content)
 				? (message.content as Block[]).filter((b) => b.type === "image").length
 				: 0;
-			items.push({ kind: "user", id: entry.id, text, images, ...(now ? { now } : {}), ...(spoken ? { spoken } : {}), at });
+			items.push({ kind: "user", id: entry.id, text, images, ...(now ? { now } : {}), ...(spoken ? { spoken } : {}), ...(scheduled ? { scheduled } : {}), at });
 		} else if (message.role === "assistant") {
 			const blocks = (Array.isArray(message.content) ? message.content : []) as Block[];
 			// A spoken reply's <say> blocks aren't part of what was written; if nothing was, the

@@ -163,6 +163,19 @@ pub fn window_shape(
     window::set_shape(&app, (width, height), &shapes)
 }
 
+/// The floating guide's page: what to show now, if a guide is floating (it asks once it has
+/// loaded).
+#[tauri::command]
+pub fn guide_current() -> Option<crate::guide::Showing> {
+    crate::guide::current()
+}
+
+/// The floating guide's page has drawn hold `id`'s guide at this size (logical px).
+#[tauri::command]
+pub fn guide_size(app: AppHandle, id: u64, width: f64, height: f64) -> Result<(), String> {
+    crate::guide::sized(&app, id, (width, height))
+}
+
 /// Drag the main window by the eyes until the mouse button comes up.
 #[tauri::command]
 pub fn window_drag(app: AppHandle) -> Result<(), String> {

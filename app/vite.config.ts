@@ -18,6 +18,7 @@ export default defineConfig({
 				main: resolve(root, "index.html"),
 				settings: resolve(root, "settings.html"),
 				history: resolve(root, "history.html"),
+				guide: resolve(root, "guide.html"),
 			},
 		},
 	},

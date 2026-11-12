@@ -272,8 +272,8 @@ fn uia_selection_on_this_thread() -> Option<String> {
     })
 }
 
-/// What the focused element has selected, for the hotkey guide: whether any text is selected and
-/// whether it can be edited. Never reads the text. Unlike `selection_via_uia` it is asked of
+/// What the focused element has selected, for the hotkey guide: whether any text is selected,
+/// whether it can be edited and where its first line is on screen. Never reads the text. Unlike `selection_via_uia` it is asked of
 /// every app, Chromium-based ones included (SPEC §7). None when the element exposes no text, or
 /// UIA takes longer than 300 ms (the worker thread is then left to finish on its own).
 pub fn selection_summary() -> Option<super::Selection> {
@@ -341,11 +341,44 @@ fn uia_selection_summary_on_this_thread() -> Option<super::Selection> {
                 };
                 Ok(Selection::Text(SelectedText {
                     editable: !read_only,
+                    line: first_line_of(&range),
                 }))
             }
         })();
         summary.ok()
     })
+}
+
+/// Where `range` starts on screen: the first of its per-line bounding rectangles, physical px
+/// (this process is per-monitor DPI aware). None when the app gives none, for example when the
+/// selection is scrolled out of view.
+fn first_line_of(
+    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+) -> Option<super::ScreenRect> {
+    use windows::Win32::System::Ole::{
+        SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound,
+        SafeArrayUnaccessData,
+    };
+    // SAFETY: COM call on this thread. The array is ours to destroy; its data is read only while
+    // it is locked, and only within its bounds, as doubles (UIA returns VT_R8).
+    unsafe {
+        let array = range.GetBoundingRectangles().ok()?;
+        if array.is_null() {
+            return None;
+        }
+        let mut line = None;
+        if let (Ok(low), Ok(high)) = (SafeArrayGetLBound(array, 1), SafeArrayGetUBound(array, 1)) {
+            let count = (high - low + 1).max(0) as usize;
+            let mut data = std::ptr::null_mut();
+            if count > 0 && SafeArrayAccessData(array, &mut data).is_ok() {
+                let values = std::slice::from_raw_parts(data as *const f64, count);
+                line = super::first_line(values);
+                let _ = SafeArrayUnaccessData(array);
+            }
+        }
+        let _ = SafeArrayDestroy(array);
+        line
+    }
 }
 
 const WINDOW_TEXT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -1499,5 +1532,78 @@ pub fn set_window_region(window: WindowHandle, rects: &[RoundRect]) {
         if SetWindowRgn(window.0 as HWND, region, 1) == 0 {
             DeleteObject(region);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Floating guide (guide.rs)
+
+/// Styles for the floating guide, once after it is created, on the thread that owns it: the plain
+/// frame of the main window; never activated (WS_EX_NOACTIVATE); click-through (WS_EX_TRANSPARENT
+/// with WS_EX_LAYERED, as the windowing library's own "ignore cursor events" sets them); and a
+/// tool window, so it stays out of Alt+Tab as well as the taskbar. Set here in one go rather than
+/// through the windowing library, which rewrites the whole extended style when it changes one of
+/// its flags and would drop WS_EX_TOOLWINDOW.
+pub fn floating_frame(window: WindowHandle) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_LAYERED,
+        WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
+    };
+    plain_frame(window);
+    let hwnd = window.0 as HWND;
+    let add = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED;
+    // SAFETY: plain Win32 calls on our own window.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let style = (style | add as isize) & !(WS_EX_APPWINDOW as isize);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+    }
+}
+
+/// Moves and sizes the floating guide, clips it to the bubble's rounded corners and shows it on
+/// top without activating it. Moving onto a monitor with another scale makes the windowing
+/// library resize the window for the new DPI, so the rectangle is set again if it didn't stick.
+pub fn show_floating(window: WindowHandle, rect: (i32, i32, i32, i32), radius: i32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+        SWP_SHOWWINDOW,
+    };
+    let (x, y, w, h) = rect;
+    for _ in 0..2 {
+        set_window_rect(window, x, y, w, h);
+        if window_rect(window) == Some(rect) {
+            break;
+        }
+    }
+    set_window_region(
+        window,
+        &[RoundRect {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+            radius,
+        }],
+    );
+    // SAFETY: plain Win32 call on our own window.
+    unsafe {
+        SetWindowPos(
+            window.0 as HWND,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+        );
+    }
+}
+
+/// Hides `window` without waiting for the thread that owns it.
+pub fn hide_window(window: WindowHandle) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_HIDE};
+    // SAFETY: plain Win32 call; a stale HWND makes it fail.
+    unsafe {
+        ShowWindowAsync(window.0 as HWND, SW_HIDE);
     }
 }

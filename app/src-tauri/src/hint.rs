@@ -447,13 +447,33 @@ fn event(show: bool, selection: Option<Selection>) -> Value {
 
 fn emit(show: bool, selection: Option<Selection>) {
     let Some(app) = APP.get() else { return };
-    debug_log(show);
+    if show {
+        // With a usable selection rectangle the guide floats over the selection, and the main
+        // window shows none.
+        if let Some(Selection::Text(text)) = selection {
+            if crate::guide::show(app, text) {
+                return;
+            }
+        }
+    } else {
+        crate::guide::hide(app);
+    }
+    emit_beside(app, show, selection);
+}
+
+/// The `hotkey_hint` event to the main window, which shows the guide beside the eyes.
+pub(crate) fn emit_beside(app: &AppHandle, show: bool, selection: Option<Selection>) {
+    debug_log(&format!(
+        "hotkey_hint {}",
+        if show { "show" } else { "hide" }
+    ));
     let _ = app.emit_to(crate::window::MAIN, "ui", &event(show, selection));
 }
 
-/// With `WINKU_DEBUG_HINT=1`, appends `show`/`hide` lines to `WINKU_DEBUG_HINT_LOG` (default
-/// `winku-hint.log` in the temp dir). CI's screenshot script reads it.
-fn debug_log(show: bool) {
+/// With `WINKU_DEBUG_HINT=1`, appends a line per guide event to `WINKU_DEBUG_HINT_LOG` (default
+/// `winku-hint.log` in the temp dir): `hotkey_hint show`/`hide` for the main window, `guide show
+/// <x>,<y> <w>x<h>`/`guide hide` for the floating guide. CI's screenshot script reads it.
+pub(crate) fn debug_log(line: &str) {
     if !DEBUG.load(Ordering::Relaxed) {
         return;
     }
@@ -466,7 +486,7 @@ fn debug_log(show: bool) {
         .open(path)
     {
         use std::io::Write;
-        let _ = writeln!(file, "hotkey_hint {}", if show { "show" } else { "hide" });
+        let _ = writeln!(file, "{line}");
     }
 }
 
@@ -783,7 +803,10 @@ mod tests {
     }
 
     fn editable() -> Selection {
-        Selection::Text(SelectedText { editable: true })
+        Selection::Text(SelectedText {
+            editable: true,
+            line: None,
+        })
     }
 
     #[test]
@@ -881,7 +904,10 @@ mod tests {
         assert_eq!(
             event(
                 true,
-                Some(Selection::Text(SelectedText { editable: false }))
+                Some(Selection::Text(SelectedText {
+                    editable: false,
+                    line: None
+                }))
             ),
             json!({ "kind": "hotkey_hint", "show": true, "selection": { "editable": false } })
         );

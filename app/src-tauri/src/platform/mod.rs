@@ -27,11 +27,39 @@ pub enum Selection {
     Text(SelectedText),
 }
 
-/// A non-empty text selection. The floating guide will add the first line's rectangle here.
+/// A non-empty text selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectedText {
     /// False when the selected text can't be changed (a web page, a read-only field).
     pub editable: bool,
+    /// The first selected line on screen, physical px. None when the app gives no usable
+    /// rectangle; the guide then stays beside the eyes.
+    pub line: Option<ScreenRect>,
+}
+
+/// A rectangle on screen, physical px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScreenRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+/// The first line of a selection from UI Automation's bounding rectangles: a flat list of
+/// left, top, width, height per line, in reading order. Lines with no area (an empty line, or one
+/// scrolled out of view) are skipped.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn first_line(rects: &[f64]) -> Option<ScreenRect> {
+    rects.as_chunks::<4>().0.iter().find_map(|r| {
+        let [x, y, w, h] = r.map(f64::round);
+        (r.iter().all(|v| v.is_finite()) && w > 0.0 && h > 0.0).then_some(ScreenRect {
+            x: x as i32,
+            y: y as i32,
+            w: w as i32,
+            h: h as i32,
+        })
+    })
 }
 
 /// Captured pixels, RGBA, rows top to bottom.
@@ -121,6 +149,28 @@ mod crop_tests {
         assert_eq!(crop(image(4, 3), 3, 0, 2, 2).width, 4);
         assert_eq!(crop(image(4, 3), -1, 0, 2, 2).width, 4);
         assert_eq!(crop(image(4, 3), 0, 0, 0, 2).width, 4);
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::{first_line, ScreenRect};
+
+    #[test]
+    fn the_first_line_with_an_area_is_the_selections_first_line() {
+        let rect = |x, y, w, h| ScreenRect { x, y, w, h };
+        assert_eq!(
+            first_line(&[100.0, 200.0, 300.5, 18.4, 100.0, 220.0, 80.0, 18.0]),
+            Some(rect(100, 200, 301, 18))
+        );
+        assert_eq!(
+            first_line(&[0.0, 0.0, 0.0, 0.0, 40.0, 60.0, 120.0, 20.0]),
+            Some(rect(40, 60, 120, 20)),
+            "an empty first line is skipped"
+        );
+        assert_eq!(first_line(&[]), None);
+        assert_eq!(first_line(&[1.0, 2.0, 3.0]), None, "a partial entry");
+        assert_eq!(first_line(&[f64::NAN, 0.0, 10.0, 10.0]), None);
     }
 }
 

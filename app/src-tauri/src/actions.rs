@@ -125,7 +125,7 @@ fn start_capture(app: &AppHandle, want: Want) {
     let window = platform::foreground_window();
     let app = app.clone();
     std::thread::spawn(move || {
-        platform::wait_for_modifiers_released(MODIFIER_TIMEOUT);
+        platform::clear_keys_for_input(MODIFIER_TIMEOUT);
         let selection = capture_selection(window);
         app.state::<Actions>()
             .capturing

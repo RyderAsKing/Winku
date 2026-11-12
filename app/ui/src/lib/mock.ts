@@ -8,9 +8,6 @@
 //   ?long=1        transcript with long paths, unbroken text, code and a table
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
-//   ?selection=editable  what the hotkey hints are told is selected: none, read-only or editable
-//                  (absent: unknown, the full list). guide.html, the floating guide, shows
-//                  read-only or editable (the default).
 import type { Command, HistoryEntry, ModelInfo, ProviderInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
@@ -324,17 +321,15 @@ export function createMockShell(): ShellImpl {
 		if (params.has("download")) emit("download_progress", { what: "stt", model: "moonshine-base", fraction: 0.42 });
 		if (ms < 0) return;
 		for (let t = 100; t < ms; t += 100) timers.push(setTimeout(() => emit("ui", { kind: "talk_level", level: 0.3 + 0.4 * Math.abs(Math.sin(t)) }), t));
+		// The words so far, a few more each time, as the shell sends them while recording.
+		const words = text.split(" ");
+		for (let n = 2; n < words.length; n += 2) {
+			timers.push(setTimeout(() => emit("ui", { kind: "talk_partial", text: words.slice(0, n).join(" ") }), (ms * n) / words.length));
+		}
 		timers.push(setTimeout(() => emit("ui", { kind: "talk_end", text }), ms));
 	};
 
-	// The shell's hotkey hints, in the browser: Ctrl+Alt held on its own for 450 ms, with the
-	// selection the URL asks for.
-	const mockSelection = () => {
-		const pick = params.get("selection");
-		if (pick === "none") return { selection: null };
-		if (pick === "editable" || pick === "read-only") return { selection: { editable: pick === "editable" } };
-		return {};
-	};
+	// The shell's hotkey hints, in the browser: Ctrl+Alt held on its own for 450 ms.
 	let hintTimer: ReturnType<typeof setTimeout> | undefined;
 	let hintShown = false;
 	const endHint = () => {
@@ -349,7 +344,7 @@ export function createMockShell(): ShellImpl {
 		if (hintTimer === undefined && !hintShown) {
 			hintTimer = setTimeout(() => {
 				hintShown = true;
-				emit("ui", { kind: "hotkey_hint", show: true, ...mockSelection() });
+				emit("ui", { kind: "hotkey_hint", show: true });
 			}, 450);
 		}
 	});
@@ -451,8 +446,6 @@ export function createMockShell(): ShellImpl {
 					return undefined as T;
 				case "now_line":
 					return { app: "Code.exe", windowTitle: "main.rs - winku" } as T;
-				case "guide_current":
-					return { id: 1, editable: params.get("selection") !== "read-only" } as T;
 				case "window_layout":
 				case "window_shape":
 					return layout as T;

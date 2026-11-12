@@ -110,6 +110,17 @@ export class EyeController {
 		this.#handle?.noted();
 	}
 
+	/** Winku sets off toward the pointer: wide eyes for the trip. */
+	travelling() {
+		this.touch();
+		if (this.activity === "idle") this.#flash("surprised", 700);
+	}
+
+	/** It got there: a short pleased look. */
+	arrived() {
+		if (this.activity === "idle") this.#flash("happy", 1100);
+	}
+
 	yawn() {
 		this.#handle?.yawn();
 	}

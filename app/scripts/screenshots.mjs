@@ -110,9 +110,70 @@ const cases = [
 	{
 		name: "chips",
 		path: "/",
-		ready: "text=Selection, 9 words",
+		ready: "role=button[name='Remove selection']",
 		prepare: async (page) => {
 			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+		},
+	},
+	{
+		name: "chip-screenshot",
+		path: "/",
+		ready: "role=button[name='Remove screenshot']",
+		prepare: async (page) => {
+			// A stand-in capture: a window with a title bar and a few lines.
+			const data = await page.evaluate(() => {
+				const c = document.createElement("canvas");
+				c.width = 320;
+				c.height = 200;
+				const g = c.getContext("2d");
+				g.fillStyle = "#e9edf3";
+				g.fillRect(0, 0, 320, 200);
+				g.fillStyle = "#3b6ea8";
+				g.fillRect(0, 0, 320, 26);
+				g.fillStyle = "#9aa6b8";
+				for (let y = 48; y < 180; y += 22) g.fillRect(24, y, 120 + ((y * 7) % 150), 8);
+				return c.toDataURL("image/png").split(",")[1];
+			});
+			await ui(page, { kind: "attach_screenshot", image: { data, mimeType: "image/png" } });
+		},
+	},
+	{
+		name: "input-long",
+		path: "/",
+		ready: "role=textbox[name='Message']",
+		prepare: async (page) => {
+			await summon(page);
+			const box = page.getByRole("textbox", { name: "Message" });
+			await box.fill(
+				"Can you look at the report I have open and tell me which of the three regions grew fastest last quarter, then draft a short note to Sam about it? Keep the note friendly, mention the numbers, and say I can talk it through on Thursday if that is easier. Also check whether the totals in the last table add up, I think one of them is off by a little.",
+			);
+			await box.dispatchEvent("input");
+		},
+	},
+	{
+		// Hold-to-talk over the resting pill: the bar opens to show the words as they are heard.
+		name: "dictation",
+		path: "/?voice=1",
+		ready: "role=textbox[name='Message']",
+		prepare: async (page) => {
+			await talk(page, "", -1);
+			await ui(page, { kind: "talk_partial", text: "Which of the three regions grew fastest last" });
+		},
+	},
+	{
+		// Scrolled back over the reply bubble: the conversation before it, fading at the edge.
+		name: "reply-history",
+		path: "/",
+		ready: "text=Paste it into Paint",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400);
+			await page.getByText("Paste it into Paint").hover();
+			await page.mouse.wheel(0, -90);
+			await page.waitForTimeout(500);
 		},
 	},
 	{
@@ -178,43 +239,6 @@ const cases = [
 			await page.getByRole("button", { name: "Open Winku" }).waitFor();
 			await ui(page, { kind: "hotkey_hint", show: true });
 		},
-	},
-	{
-		name: "hotkey-hints-nothing-selected",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: null });
-		},
-	},
-	{
-		name: "hotkey-hints-read-only",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: false } });
-		},
-	},
-	{
-		name: "hotkey-hints-editable",
-		path: "/",
-		ready: "role=status[name='Ctrl+Alt keys']",
-		prepare: async (page) => {
-			await page.getByRole("button", { name: "Open Winku" }).waitFor();
-			await ui(page, { kind: "hotkey_hint", show: true, selection: { editable: true } });
-		},
-	},
-	{
-		name: "floating-guide",
-		path: "/guide.html?selection=editable",
-		ready: "role=status[name='Ctrl+Alt keys']",
-	},
-	{
-		name: "floating-guide-read-only",
-		path: "/guide.html?selection=read-only",
-		ready: "role=status[name='Ctrl+Alt keys']",
 	},
 	{
 		name: "hotkey-hints-transcript",
@@ -301,15 +325,6 @@ const cases = [
 		path: "/settings.html?altgr=1&taken=action2#keys",
 		size: SETTINGS,
 		ready: "text=Use Ctrl+Shift instead",
-	},
-	{
-		name: "settings-keys-guide",
-		path: "/settings.html#keys",
-		size: SETTINGS,
-		ready: "role=switch[name='Guide follows the selection']",
-		prepare: async (page) => {
-			await page.getByRole("switch", { name: "Guide follows the selection" }).scrollIntoViewIfNeeded();
-		},
 	},
 	{
 		name: "history",
@@ -449,7 +464,7 @@ cases.push(
 	{
 		name: "streaming",
 		path: "/",
-		ready: ".md",
+		ready: ".current .md",
 		prepare: async (page) => {
 			await summon(page);
 			await page.clock.install();
@@ -519,7 +534,7 @@ try {
 				const page = await context.newPage();
 				const response = await page.goto(new URL(item.path, baseURL).href, { waitUntil: "domcontentloaded" });
 				if (!response?.ok()) throw new Error(`${item.name}: HTTP ${response?.status() ?? "no response"}`);
-				await page.getByRole("button", { name: "Open Winku" }).or(page.locator("main")).or(page.locator(".floating")).first().waitFor();
+				await page.getByRole("button", { name: "Open Winku" }).or(page.locator("main")).first().waitFor();
 				if (item.prepare) await item.prepare(page);
 				await page.locator(item.ready).first().waitFor({ state: "visible" });
 				await page.evaluate(() => document.fonts.ready);
@@ -528,7 +543,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window, .floating")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

@@ -1,16 +1,15 @@
 <script lang="ts">
 	// The main window: a fixed stage with the pill in one corner (see stage.ts). The pill opens
 	// into the bar in place, and replies show in a bubble under it, or over it low on the screen.
-	import { cubicIn, cubicOut } from "svelte/easing";
+	import { cubicIn } from "svelte/easing";
 	import { fly } from "svelte/transition";
-	import { follow } from "../lib/follow.ts";
-	import { ms } from "../lib/motion.ts";
+	import { ms, pop } from "../lib/motion.ts";
 	import "../lib/theme.css";
 	import Connect from "./Connect.svelte";
 	import Head from "./Head.svelte";
 	import HotkeyHints from "./HotkeyHints.svelte";
-	import ReplyView from "./ReplyView.svelte";
-	import { GAP, stageSize } from "./stage.ts";
+	import ReplyBubble from "./ReplyBubble.svelte";
+	import { GAP, headHeight, stageSize } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
 
@@ -24,6 +23,11 @@
 	const stage = $derived(stageSize(d));
 	const open = $derived(app.mode !== "pill");
 	const transcript = $derived(app.mode === "transcript");
+	// While talking over the resting pill the bar is drawn open, though the window stays a pill.
+	const wide = $derived(open || app.peek);
+	// A long message makes the bar taller; the bubble gives up that much room.
+	const headH = $derived(wide ? Math.min(headHeight(d, app.inputH), stage.h - GAP - 120) : d.pillH);
+	const bubbleMax = $derived(d.bubbleMax - (headH - d.pillH));
 	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
 	const showHints = $derived(app.hotkeyHints && app.settings !== null);
 	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null);
@@ -31,7 +35,7 @@
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
 	$effect(() => {
-		app.eyes.setBarVisible(open || app.bubbleOpen || app.listening || app.busy || app.speaking);
+		app.eyes.setBarVisible(wide || app.bubbleOpen || app.listening || app.busy || app.speaking);
 	});
 
 	// Tell the shell what is drawn. Growth is reported at once so nothing is clipped; shrinking
@@ -43,24 +47,33 @@
 	let bubbleH = $state(0);
 	// The hints draw over the bubble, so the window only has to be as tall as the taller of the two.
 	let hintH = $state(0);
-	let sent: { headW: number; bubbleH: number; key: string } | null = null;
+	type Drawn = { headW: number; headH: number; bubbleH: number; key: string };
+	let sent: Drawn | null = null;
 	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
-		const next = {
-			headW: open ? d.barW : d.pillW,
+		const next: Drawn = {
+			headW: wide ? d.barW : d.pillW,
+			headH,
 			bubbleH: Math.max(showBubble ? roomy(bubbleH) : 0, showHints ? Math.ceil(hintH) : 0),
 			key: `${app.settings?.eyes.size}:${app.layout.alignRight}:${app.layout.above}`,
 		};
 		const dims = d;
 		clearTimeout(shrinkTimer);
-		const send = () => {
-			sent = next;
-			void app.reportShape(dims, next.headW, next.bubbleH);
+		const send = (drawn: Drawn, headRoom = drawn.headH) => {
+			sent = { ...drawn, headH: headRoom };
+			void app.reportShape(dims, drawn.headW, drawn.headH, drawn.bubbleH, headRoom);
 		};
-		if (sent && sent.headW === next.headW && sent.bubbleH === next.bubbleH && sent.key === next.key) return;
-		const shrinking = sent !== null && sent.key === next.key && (next.headW < sent.headW || next.bubbleH < sent.bubbleH);
-		if (shrinking) shrinkTimer = setTimeout(send, 240);
-		else send();
+		if (sent && sent.headW === next.headW && sent.headH === next.headH && sent.bubbleH === next.bubbleH && sent.key === next.key) return;
+		const same = sent !== null && sent.key === next.key;
+		const shrinking = same && sent !== null && (next.headW < sent.headW || next.bubbleH < sent.bubbleH);
+		const shorter = same && sent !== null && next.headH < sent.headH;
+		if (shrinking) shrinkTimer = setTimeout(() => send(next), 240);
+		else if (shorter && sent) {
+			// The bar is getting shorter and the bubble moves up with it at once: give the bubble
+			// its new place now, and keep the bar's old outline until it has finished shrinking.
+			send(next, sent.headH);
+			shrinkTimer = setTimeout(() => send(next), 240);
+		} else send(next);
 	});
 
 	function onkeydown(event: KeyboardEvent) {
@@ -90,10 +103,10 @@
 		class:above
 		style:width="{stage.w}px"
 		style:height="{stage.h}px"
-		style:--gap="{d.pillH + GAP}px"
-		style:--bubble-max="{d.bubbleMax}px"
+		style:--gap="{headH + GAP}px"
+		style:--bubble-max="{bubbleMax}px"
 	>
-		<Head {app} {open} />
+		<Head {app} open={wide} height={headH} />
 
 		{#if showBubble}
 			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -104,7 +117,7 @@
 				onclick={onBubbleClick}
 				onpointerenter={() => app.holdBubble(true)}
 				onpointerleave={() => app.holdBubble(false)}
-				in:fly={{ y: above ? 8 : -8, duration: ms(220), delay: ms(open ? 40 : 0), easing: cubicOut }}
+				in:pop={{ y: above ? 10 : -10, duration: 280, delay: open ? 40 : 0 }}
 				out:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicIn }}
 			>
 				{#if open && app.needsConnect}
@@ -112,10 +125,10 @@
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
-					<div class="bubble pad scroll" class:resting={!open} use:follow><ReplyView {app} reply={app.reply} /></div>
+					<div class="bubble reply-box" class:resting={!open}><ReplyBubble {app} reply={app.reply} max={bubbleMax - 2} /></div>
 				{/if}
 				{#if app.toast}
-					<div class="bubble toast" role="status">
+					<div class="bubble toast" role="status" in:pop={{ y: above ? 6 : -6, duration: 240 }}>
 						<span>{app.toast.text}</span>
 						{#if app.toast.action}
 							<button type="button" onclick={app.toast.action.run}>{app.toast.action.label}</button>
@@ -130,10 +143,10 @@
 			<div
 				class="bubble hint-bubble"
 				bind:offsetHeight={hintH}
-				in:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicOut }}
+				in:pop={{ y: above ? 6 : -6, duration: 200, from: 0.94 }}
 				out:fly={{ duration: ms(90), opacity: 0 }}
 			>
-				<HotkeyHints settings={app.settings} selection={app.hintSelection} />
+				<HotkeyHints settings={app.settings} />
 			</div>
 		{/if}
 	</div>
@@ -184,15 +197,22 @@
 		flex-direction: column;
 		gap: 6px;
 		max-height: var(--bubble-max);
+		/* Bubbles grow out of the corner the eyes are in. */
+		transform-origin: 0 0;
 	}
 	.right .bubbles {
 		left: auto;
 		right: 0;
+		transform-origin: 100% 0;
 	}
 	.above .bubbles {
 		top: auto;
 		bottom: var(--gap);
 		flex-direction: column-reverse;
+		transform-origin: 0 100%;
+	}
+	.right.above .bubbles {
+		transform-origin: 100% 100%;
 	}
 	/* Translucent and rounded, apart from the pill: the reply sits over whatever is behind. */
 	.bubble {
@@ -208,8 +228,10 @@
 	.scroll {
 		flex: 0 1 auto;
 		overflow-y: auto;
-		scrollbar-width: thin;
-		scrollbar-color: var(--line-strong) transparent;
+	}
+	.reply-box {
+		flex: none;
+		overflow: hidden;
 	}
 	.resting {
 		cursor: pointer;
@@ -232,14 +254,20 @@
 		overflow: hidden;
 		background: rgb(14 16 21);
 		border-color: var(--line-strong);
+		transform-origin: 0 0;
 	}
 	.right .hint-bubble {
 		left: auto;
 		right: 0;
+		transform-origin: 100% 0;
 	}
 	.above .hint-bubble {
 		top: auto;
 		bottom: var(--gap);
+		transform-origin: 0 100%;
+	}
+	.right.above .hint-bubble {
+		transform-origin: 100% 100%;
 	}
 	.toast {
 		flex: none;

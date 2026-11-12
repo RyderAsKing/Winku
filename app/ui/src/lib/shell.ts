@@ -31,6 +31,8 @@ export type UiEvent =
 	| { kind: "action_error"; id?: string; slot: number; name: string; message: string }
 	| { kind: "talk_start" }
 	| { kind: "talk_level"; level: number }
+	/** Everything heard so far in this recording, sent as it changes. */
+	| { kind: "talk_partial"; text: string }
 	/** "" when nothing was heard. */
 	| { kind: "talk_end"; text: string }
 	/** Text-to-speech started (true) or finished or was stopped (false). */
@@ -40,20 +42,13 @@ export type UiEvent =
 	| { kind: "menu"; item: MenuItem }
 	/** An update is downloaded (auto) or available (notify): the eyes show a small dot. */
 	| { kind: "update_ready"; version: string }
+	/** "Bring Winku here": the pill starts gliding to the pointer (how far, logical px), or has arrived. */
+	| { kind: "bring"; phase: "start"; dx: number; dy: number }
+	| { kind: "bring"; phase: "end" }
 	/** The pill moved across the screen: things now grow the other way. */
 	| ({ kind: "layout" } & Layout)
-	/** The hotkey prefix has been held alone (true), or that hold ended (false). `selection`: what
-	 *  the focused app said when the hold began; absent when unknown, null when nothing is selected. */
-	| { kind: "hotkey_hint"; show: boolean; selection?: { editable: boolean } | null };
-
-/** The floating guide: which hold it is for, and whether the selected text can be changed. */
-export interface GuideShowing {
-	id: number;
-	editable: boolean;
-}
-
-/** To the floating guide's window: show the guide for a hold, or hide it. */
-export type GuideEvent = ({ show: true } & GuideShowing) | { show: false };
+	/** The hotkey prefix has been held alone (true), or that hold ended (false). */
+	| { kind: "hotkey_hint"; show: boolean };
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {
@@ -100,7 +95,7 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 }
 
 export interface HotkeyFailure {
-	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking" or "leaderKey". */
+	/** Settings field: "summon", "action1"…"action5", "askSelection", "screenshot", "clear", "cycleThinking", "bring" or "leaderKey". */
 	name: string;
 	binding: string;
 	error: string;
@@ -167,11 +162,6 @@ export const shell = {
 	windowShape: (width: number, height: number, shapes: Shape[]) => invoke<Layout>("window_shape", { width, height, shapes }),
 	windowLayout: () => invoke<Layout | null>("window_layout"),
 	openWindow: (name: "settings" | "history") => invoke<void>("open_window", { name }),
-	/** The floating guide's page: what to show now, if a guide is floating. */
-	guideCurrent: () => invoke<GuideShowing | null>("guide_current"),
-	/** The floating guide's page has drawn hold `id` at this size (logical px): the shell places
-	 * the window over the selection and shows it. */
-	guideSize: (id: number, width: number, height: number) => invoke<void>("guide_size", { id, width, height }),
 	contextMenu: () => invoke<void>("context_menu"),
 	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),
 	hotkeysAltGr: () => invoke<AltGrReport>("hotkeys_altgr"),
@@ -215,7 +205,6 @@ export const shell = {
 
 export const onEngine = (handler: (message: EngineMessage) => void) => listen<EngineMessage>("engine", handler);
 export const onUi = (handler: (event: UiEvent) => void) => listen<UiEvent>("ui", handler);
-export const onGuide = (handler: (event: GuideEvent) => void) => listen<GuideEvent>("guide", handler);
 export const onSettingsChanged = (handler: (settings: Settings) => void) => listen<Settings>("settings_changed", handler);
 
 export const onDownloadProgress = (handler: (progress: DownloadProgress) => void) =>

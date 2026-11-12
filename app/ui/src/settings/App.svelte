@@ -213,6 +213,7 @@
 					{ label: "Attach a screenshot", get: (s: Settings) => s.hotkeys.screenshot, key: "screenshot" as const },
 					{ label: "Clear context", get: (s: Settings) => s.hotkeys.clear, key: "clear" as const },
 					{ label: "Cycle thinking level", get: (s: Settings) => s.hotkeys.cycleThinking, key: "cycleThinking" as const },
+					{ label: "Bring Winku here", get: (s: Settings) => s.hotkeys.bring, key: "bring" as const },
 				]
 			: [],
 	);
@@ -380,6 +381,7 @@
 				screenshot: swap(h.screenshot),
 				clear: swap(h.clear),
 				cycleThinking: swap(h.cycleThinking),
+				bring: swap(h.bring),
 			},
 		});
 	}
@@ -838,16 +840,6 @@
 						</div>
 					</div>
 				</div>
-				<h3>Guide</h3>
-				<div class="group">
-					<div class="row">
-						<div class="label">
-							<span class="title">Guide follows the selection</span>
-							<span class="desc">Beta. Holding the keys lists only what fits the selected text. Browsers and Electron apps may run slower until they restart.</span>
-						</div>
-						<Switch label="Guide follows the selection" checked={settings.guideFollowsSelection} onchange={(v) => save({ guideFollowsSelection: v })} />
-					</div>
-				</div>
 			{:else if page === "eyes"}
 				<div class="group">
 					<div class="row">
@@ -970,8 +962,6 @@
 		height: 100%;
 		overflow-y: auto;
 		padding: 26px 28px 40px;
-		scrollbar-width: thin;
-		scrollbar-color: var(--line-strong) transparent;
 	}
 	header {
 		margin-bottom: 18px;

@@ -41,14 +41,27 @@ export function stageSize(d: Dims): { w: number; h: number } {
 	return { w: d.barW, h: d.pillH + GAP + d.bubbleMax };
 }
 
-/** The head (pill or open bar) and, when showing, the bubble, in stage coordinates. */
-export function shapesFor(d: Dims, layout: Layout, headW: number, bubbleH: number): Shape[] {
+/** Lines of a message the bar grows to show before the message box scrolls. */
+export const INPUT_LINES = 4;
+
+/** Space above and below the message box in a bar that has grown past the pill's height. */
+export const INPUT_PAD = 12;
+
+/** The bar's height for message-box content `inputH` tall: the pill's, or more for a long message. */
+export function headHeight(d: Dims, inputH: number): number {
+	return Math.max(d.pillH, Math.ceil(inputH) + 2 * INPUT_PAD);
+}
+
+/** The head (pill or open bar) and, when showing, the bubble, in stage coordinates. A bar taller
+ * than the pill takes its extra height from the bubble's room. `headRoom`: the height to outline
+ * for the head, more than `headH` while a bar that is getting shorter is still drawn taller. */
+export function shapesFor(d: Dims, layout: Layout, headW: number, headH: number, bubbleH: number, headRoom = headH): Shape[] {
 	const stage = stageSize(d);
 	const x = (w: number) => (layout.alignRight ? stage.w - w : 0);
-	const head: Shape = { x: x(headW), y: layout.above ? stage.h - d.pillH : 0, w: headW, h: d.pillH, r: d.pillH / 2 };
+	const head: Shape = { x: x(headW), y: layout.above ? stage.h - headRoom : 0, w: headW, h: headRoom, r: d.pillH / 2 };
 	if (bubbleH <= 0) return [head];
-	const h = Math.min(Math.ceil(bubbleH), d.bubbleMax);
-	const y = layout.above ? stage.h - d.pillH - GAP - h : d.pillH + GAP;
+	const h = Math.min(Math.ceil(bubbleH), stage.h - headH - GAP);
+	const y = layout.above ? stage.h - headH - GAP - h : headH + GAP;
 	return [head, { x: x(d.barW), y, w: d.barW, h, r: BUBBLE_RADIUS }];
 }
 

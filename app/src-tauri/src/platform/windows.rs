@@ -201,9 +201,10 @@ fn send_ctrl(key: u8) -> Result<(), String> {
 
 const UIA_TIMEOUT: Duration = Duration::from_millis(300);
 
-/// The focused element's selected text through UI Automation's TextPattern. None when the
-/// element has no text pattern, nothing is selected, or UIA takes longer than 300 ms (the
-/// worker thread is then left to finish on its own).
+/// The focused element's selected text through UI Automation's TextPattern, asking its nearest
+/// ancestor with one when it has none. None when neither has a text pattern, nothing is
+/// selected, or UIA takes longer than 300 ms (the worker thread is then left to finish on its
+/// own).
 pub fn selection_via_uia() -> Option<String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -236,25 +237,51 @@ fn automation() -> windows::core::Result<windows::Win32::UI::Accessibility::IUIA
     unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
 }
 
-fn uia_selection_on_this_thread() -> Option<String> {
+/// Ancestors of the focused element asked for a text pattern when it has none.
+const TEXT_ANCESTORS: usize = 4;
+
+/// The text pattern of the focused element, or of its nearest ancestor that has one within
+/// four levels (in a document, focus can sit on a child such as a link), with that element.
+/// Call with COM initialised on this thread; the caller's time box bounds the walk.
+fn focused_text_pattern() -> windows::core::Result<(
+    windows::Win32::UI::Accessibility::IUIAutomationElement,
+    windows::Win32::UI::Accessibility::IUIAutomationTextPattern,
+)> {
     use windows::core::Interface;
     use windows::Win32::UI::Accessibility::{
         IUIAutomationTextPattern, IUIAutomationTextPattern2, UIA_TextPattern2Id, UIA_TextPatternId,
     };
 
+    // SAFETY: COM calls on this thread (with_com).
+    unsafe {
+        let automation = automation()?;
+        let walker = automation.ControlViewWalker()?;
+        let mut element = automation.GetFocusedElement()?;
+        for level in 0..=TEXT_ANCESTORS {
+            let pattern = element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .or_else(|_| {
+                    element
+                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
+                        .cast()
+                });
+            if let Ok(pattern) = pattern {
+                return Ok((element, pattern));
+            }
+            if level < TEXT_ANCESTORS {
+                element = walker.GetParentElement(&element)?;
+            }
+        }
+        Err(windows::Win32::Foundation::E_FAIL.into())
+    }
+}
+
+fn uia_selection_on_this_thread() -> Option<String> {
     with_com(|| {
         // SAFETY: COM calls on this thread.
         let text = (|| -> windows::core::Result<String> {
             unsafe {
-                let element = automation()?.GetFocusedElement()?;
-                let pattern: IUIAutomationTextPattern = match element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                {
-                    Ok(pattern) => pattern,
-                    Err(_) => element
-                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
-                        .cast()?,
-                };
+                let (_, pattern) = focused_text_pattern()?;
                 let ranges = pattern.GetSelection()?;
                 let mut text = String::new();
                 for i in 0..ranges.Length()? {
@@ -273,9 +300,11 @@ fn uia_selection_on_this_thread() -> Option<String> {
 }
 
 /// What the focused element has selected, for the hotkey guide: whether any text is selected,
-/// whether it can be edited and where its first line is on screen. Never reads the text. Unlike `selection_via_uia` it is asked of
-/// every app, Chromium-based ones included (SPEC §7). None when the element exposes no text, or
-/// UIA takes longer than 300 ms (the worker thread is then left to finish on its own).
+/// whether it can be edited and where its first line is on screen. Never reads the text. When
+/// the focused element has no text pattern, the nearest ancestor with one answers (a few levels
+/// up). Unlike `selection_via_uia` it is asked of every app, Chromium-based ones included
+/// (SPEC §7). None when no element answers, or UIA takes longer than 300 ms (the worker thread
+/// is then left to finish on its own).
 pub fn selection_summary() -> Option<super::Selection> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -286,26 +315,16 @@ pub fn selection_summary() -> Option<super::Selection> {
 
 fn uia_selection_summary_on_this_thread() -> Option<super::Selection> {
     use super::{SelectedText, Selection};
-    use windows::core::Interface;
     use windows::Win32::System::Variant::{VariantClear, VT_BOOL};
     use windows::Win32::UI::Accessibility::{
-        IUIAutomationTextPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
-        UIA_IsReadOnlyAttributeId, UIA_TextPattern2Id, UIA_TextPatternId, UIA_ValuePatternId,
+        IUIAutomationValuePattern, UIA_IsReadOnlyAttributeId, UIA_ValuePatternId,
     };
 
     with_com(|| {
         // SAFETY: COM calls on this thread.
         let summary = (|| -> windows::core::Result<Selection> {
             unsafe {
-                let element = automation()?.GetFocusedElement()?;
-                let pattern: IUIAutomationTextPattern = match element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                {
-                    Ok(pattern) => pattern,
-                    Err(_) => element
-                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
-                        .cast()?,
-                };
+                let (element, pattern) = focused_text_pattern()?;
                 let ranges = pattern.GetSelection()?;
                 let mut first = None;
                 for i in 0..ranges.Length()? {
@@ -921,9 +940,46 @@ impl Saved {
 
 /// Private, unless the mark is Winku's own: its paste-back text and the clipboard it restores
 /// carry the "exclude from history" formats, but content that wasn't private before stays
-/// readable (clipboard_history.rs, `own`).
+/// readable (clipboard_history.rs, `private`).
 fn private_now(open: &Open) -> bool {
-    open.is_private() && crate::clipboard_history::with(|h| h.own(sequence())) != Some(false)
+    let marked = open.is_private();
+    crate::clipboard_history::with(|h| h.private(sequence(), marked))
+}
+
+/// What kind of content is on the clipboard, in the order every reader checks it: private
+/// content is never looked at further, then files, an image, text.
+enum Kind {
+    Private,
+    Files,
+    Image,
+    Text,
+    Empty,
+}
+
+impl Open {
+    fn kind(&self) -> Kind {
+        let available = |format| {
+            // SAFETY: plain Win32 call; the clipboard is open.
+            unsafe { IsClipboardFormatAvailable(format) != 0 }
+        };
+        if private_now(self) {
+            Kind::Private
+        } else if available(CF_HDROP) {
+            Kind::Files
+        } else if available(CF_DIB) {
+            Kind::Image
+        } else if available(CF_UNICODETEXT) {
+            Kind::Text
+        } else {
+            Kind::Empty
+        }
+    }
+
+    fn files(&self) -> Vec<String> {
+        self.read(CF_HDROP)
+            .map(|data| crate::clipboard::decode_hdrop(&data))
+            .unwrap_or_default()
+    }
 }
 
 /// Marks Winku's own clipboard changes until dropped, so the history skips them.
@@ -954,18 +1010,15 @@ pub fn clipboard_read() -> Result<crate::clipboard::Raw, String> {
     use crate::clipboard::Raw;
     let owner = Owner::new()?;
     let open = Open::new(&owner)?;
-    if private_now(&open) {
-        return Ok(Raw::Private);
-    }
-    if let Some(data) = open.read(CF_HDROP) {
-        return Ok(Raw::Files(crate::clipboard::decode_hdrop(&data)));
-    }
-    if let Some(data) = open.read(CF_DIB) {
-        return Ok(Raw::Dib(data));
-    }
-    Ok(match open.unicode_text() {
-        Some(text) if !text.is_empty() => Raw::Text(text),
-        _ => Raw::Empty,
+    Ok(match open.kind() {
+        Kind::Private => Raw::Private,
+        Kind::Files => Raw::Files(open.files()),
+        Kind::Image => open.read(CF_DIB).map_or(Raw::Empty, Raw::Dib),
+        Kind::Text => match open.unicode_text() {
+            Some(text) if !text.is_empty() => Raw::Text(text),
+            _ => Raw::Empty,
+        },
+        Kind::Empty => Raw::Empty,
     })
 }
 
@@ -993,18 +1046,19 @@ pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
     use crate::clipboard::Summary;
     let owner = Owner::new().ok()?;
     let open = Open::new(&owner).ok()?;
-    if private_now(&open) {
-        return Some(Summary::Private);
+    match open.kind() {
+        Kind::Private => Some(Summary::Private),
+        Kind::Files => Some(Summary::Files(open.files().len())),
+        Kind::Image => {
+            let (w, h) = crate::clipboard::dib_size(&open.read_head(CF_DIB, 16)?)?;
+            Some(Summary::Image(w, h))
+        }
+        Kind::Text => {
+            let chars = (open.size(CF_UNICODETEXT)? / 2).saturating_sub(1);
+            (chars > 0).then_some(Summary::Text(chars))
+        }
+        Kind::Empty => None,
     }
-    if let Some(data) = open.read(CF_HDROP) {
-        return Some(Summary::Files(crate::clipboard::decode_hdrop(&data).len()));
-    }
-    if let Some(header) = open.read_head(CF_DIB, 16) {
-        let (w, h) = crate::clipboard::dib_size(&header)?;
-        return Some(Summary::Image(w, h));
-    }
-    let chars = (open.size(CF_UNICODETEXT)? / 2).saturating_sub(1);
-    (chars > 0).then_some(Summary::Text(chars))
 }
 
 /// Selected text by simulating `Ctrl+C`, saving the clipboard first and restoring it after.
@@ -1014,7 +1068,7 @@ pub fn selection_via_copy() -> Option<String> {
     let mut own = OwnChanges::begin();
     let saved = {
         let open = Open::new(&owner).ok()?;
-        own.private = open.is_private();
+        own.private = private_now(&open);
         open.save()
     };
     let before = sequence();
@@ -1040,7 +1094,7 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     let own = OwnChanges::begin();
     let (saved, was_private) = {
         let open = Open::new(&owner)?;
-        let saved = (open.save(), open.is_private());
+        let saved = (open.save(), private_now(&open));
         open.empty();
         let data: Vec<u8> = text
             .encode_utf16()
@@ -1082,6 +1136,8 @@ pub fn watch_clipboard() {
         WNDCLASSW,
     };
 
+    // SAFETY: called by the system on the listener thread with a valid window and message;
+    // it only reads the clipboard and passes the rest to DefWindowProcW.
     unsafe extern "system" fn proc(
         hwnd: HWND,
         msg: u32,
@@ -1135,22 +1191,23 @@ pub fn watch_clipboard() {
 }
 
 /// Reads what a clipboard change left: private, text, or something else (only its formats
-/// unless it is text). The sequence number is read with the clipboard open, so it matches.
+/// unless it is text).
+///
+/// The sequence number is read when the message is handled, with the clipboard open, so it
+/// belongs to the content read, not necessarily to the change the message announced: if more
+/// changes followed, only the newest is seen. Winku's own content is still recognised, since
+/// its spans cover every number up to what Winku left, and the history also remembers the last
+/// state Winku left after its span has been dropped. A copy the user makes just before Winku
+/// opens a span can be missed when its message is handled after the span has begun.
 fn on_clipboard_change() {
     use crate::clipboard_history::Change;
     let Ok(owner) = Owner::new() else { return };
     let Ok(open) = Open::new(&owner) else { return };
     let seq = sequence();
-    let available = |format| {
-        // SAFETY: plain Win32 call; the clipboard is open.
-        unsafe { IsClipboardFormatAvailable(format) != 0 }
-    };
-    let change = if open.is_private() {
-        Change::Private
-    } else if available(CF_HDROP) || available(CF_DIB) {
-        Change::Other
-    } else {
-        open.unicode_text().map_or(Change::Other, Change::Text)
+    let change = match open.kind() {
+        Kind::Private => Change::Private,
+        Kind::Text => open.unicode_text().map_or(Change::Other, Change::Text),
+        Kind::Files | Kind::Image | Kind::Empty => Change::Other,
     };
     drop(open);
     crate::clipboard_history::with(|h| h.observe(seq, change, Instant::now()));

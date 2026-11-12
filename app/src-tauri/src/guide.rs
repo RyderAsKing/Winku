@@ -5,10 +5,14 @@
 //! or clicks and stays out of the taskbar and Alt+Tab. It is created hidden the first time a guide
 //! floats and then reused. A hold goes: `show` stores the selection and sends the page a `guide`
 //! event; the page renders the guide and reports its size with `guide_size`; the shell places the
-//! window with `guide_rect` and shows it without activating it. `hide` hides it at once. Placement
-//! is pure and unit-tested; the rest is glue.
+//! window with `guide_rect` and shows it without activating it. `hide` hides it at once. If the
+//! size hasn't arrived within `SIZE_DEADLINE` (a slow first window build or page load), the guide
+//! shows beside the eyes for that hold and a late size is ignored. Placement and the hold's
+//! stages (`Holds`) are pure and unit-tested; the rest is glue.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::json;
@@ -46,6 +50,93 @@ pub fn guide_rect(line: Rect, monitors: &[MonitorInfo], guide: (f64, f64)) -> Op
     Some(Rect { x, y, w, h })
 }
 
+// ───────────────────────────── holds ─────────────────────────────
+
+/// How long a hold waits for the page to report the guide's size before the guide shows beside
+/// the eyes instead (a slow first window build or page load).
+pub const SIZE_DEADLINE: Duration = Duration::from_millis(500);
+
+/// Where a hold's guide is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    /// Waiting for the page's size.
+    Waiting,
+    /// Placed over the selection.
+    Floating,
+    /// Beside the eyes: the size came too late or the window couldn't be made.
+    Beside,
+}
+
+/// The holds that float the guide, one at a time. Pure: the runtime below does the window work
+/// for what these transitions return.
+#[derive(Debug)]
+struct Holds {
+    current: Option<(Showing, Stage)>,
+    count: u64,
+}
+
+impl Holds {
+    const fn new() -> Self {
+        Self {
+            current: None,
+            count: 0,
+        }
+    }
+
+    /// A new hold starts waiting for the page's size.
+    fn start(&mut self, editable: bool, line: ScreenRect) -> Showing {
+        self.count += 1;
+        let showing = Showing {
+            id: self.count,
+            editable,
+            line,
+        };
+        self.current = Some((showing, Stage::Waiting));
+        showing
+    }
+
+    /// The hold is over. True when one was going.
+    fn end(&mut self) -> bool {
+        self.current.take().is_some()
+    }
+
+    /// The page reported the size for hold `id`: the guide to place, unless that hold is over or
+    /// has already fallen back beside the eyes.
+    fn sized(&mut self, id: u64) -> Option<Showing> {
+        self.advance(id, Stage::Floating)
+    }
+
+    /// Hold `id`'s guide shows beside the eyes instead: its size didn't arrive in time or the
+    /// window couldn't be made. The guide to show there, unless that hold is over or already
+    /// floats.
+    fn fall_back(&mut self, id: u64) -> Option<Showing> {
+        self.advance(id, Stage::Beside)
+    }
+
+    fn advance(&mut self, id: u64, to: Stage) -> Option<Showing> {
+        match &mut self.current {
+            Some((showing, stage)) if showing.id == id && *stage == Stage::Waiting => {
+                *stage = to;
+                Some(*showing)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether hold `id` still floats: checked after placing the window, which happens without
+    /// the lock, so a hide in between is caught.
+    fn floating(&self, id: u64) -> bool {
+        matches!(self.current, Some((s, Stage::Floating)) if s.id == id)
+    }
+
+    /// The hold the page should draw: its guide's guide unless it shows beside the eyes.
+    fn current(&self) -> Option<Showing> {
+        self.current
+            .filter(|(_, stage)| *stage != Stage::Beside)
+            .map(|(showing, _)| showing)
+    }
+}
+
 // ───────────────────────────── runtime ─────────────────────────────
 
 /// The guide the page should show: which hold it is for, and whether the selection is editable.
@@ -58,25 +149,20 @@ pub struct Showing {
     line: ScreenRect,
 }
 
-struct State {
-    showing: Option<Showing>,
-    holds: u64,
-    /// The window is being created.
-    creating: bool,
-}
+static HOLDS: Mutex<Holds> = Mutex::new(Holds::new());
+/// The window is being created.
+static CREATING: AtomicBool = AtomicBool::new(false);
+/// Serialises placements. `sized` holds it across the window call, which `HOLDS` is never held
+/// across, so a hide from the key thread doesn't wait behind another thread's window.
+static PLACING: Mutex<()> = Mutex::new(());
 
-static STATE: Mutex<State> = Mutex::new(State {
-    showing: None,
-    holds: 0,
-    creating: false,
-});
-
-fn state() -> std::sync::MutexGuard<'static, State> {
-    STATE.lock().unwrap_or_else(|e| e.into_inner())
+fn holds() -> MutexGuard<'static, Holds> {
+    HOLDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Starts floating the guide over `text`. False when it can't float (no usable rectangle, or not
-/// on Windows): the caller shows the guide beside the eyes instead.
+/// on Windows): the caller shows the guide beside the eyes instead. If the page hasn't reported
+/// the guide's size within `SIZE_DEADLINE`, the guide shows beside the eyes for this hold.
 pub fn show(app: &AppHandle, text: SelectedText) -> bool {
     if !cfg!(windows) {
         return false;
@@ -86,17 +172,7 @@ pub fn show(app: &AppHandle, text: SelectedText) -> bool {
     if guide_rect(to_rect(line), &crate::window::all_monitors(app), (1.0, 1.0)).is_none() {
         return false;
     }
-    let showing = {
-        let mut state = state();
-        state.holds += 1;
-        let showing = Showing {
-            id: state.holds,
-            editable: text.editable,
-            line,
-        };
-        state.showing = Some(showing);
-        showing
-    };
+    let showing = holds().start(text.editable, line);
     if app.get_webview_window(LABEL).is_some() {
         let _ = app.emit_to(
             LABEL,
@@ -106,12 +182,35 @@ pub fn show(app: &AppHandle, text: SelectedText) -> bool {
     } else {
         create(app);
     }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SIZE_DEADLINE);
+        fall_back(&app, showing.id);
+    });
     true
+}
+
+/// Shows hold `id`'s guide beside the eyes, if it is still waiting for its size. The lock is
+/// held while the event is sent (an event, not a window call), so a hide can't send its own
+/// hide first and leave this guide showing.
+fn fall_back(app: &AppHandle, id: u64) {
+    let mut holds = holds();
+    let Some(showing) = holds.fall_back(id) else {
+        return;
+    };
+    crate::hint::emit_beside(
+        app,
+        true,
+        Some(crate::platform::Selection::Text(SelectedText {
+            editable: showing.editable,
+            line: None,
+        })),
+    );
 }
 
 /// Hides the floating guide, if it shows or is about to.
 pub fn hide(app: &AppHandle) {
-    if state().showing.take().is_none() {
+    if !holds().end() {
         return;
     }
     crate::hint::debug_log("guide hide");
@@ -126,17 +225,17 @@ pub fn hide(app: &AppHandle) {
 /// What the page should show now. It asks once it has loaded, since the event that created the
 /// window was sent before it could listen.
 pub fn current() -> Option<Showing> {
-    state().showing
+    holds().current()
 }
 
 /// The page has drawn the guide for hold `id` at `size` (logical px): place the window over the
-/// selection and show it, unless that hold is over.
+/// selection and show it, unless that hold is over or its guide already shows beside the eyes.
 pub fn sized(app: &AppHandle, id: u64, size: (f64, f64)) -> Result<(), String> {
-    // Held while placing, so a hide can't slip in between and leave the window showing.
-    let state = state();
-    let Some(showing) = state.showing.filter(|s| s.id == id) else {
+    let _placing = PLACING.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(showing) = holds().current().filter(|s| s.id == id) else {
         return Ok(());
     };
+    // On failure the hold keeps waiting and the deadline shows the guide beside the eyes.
     let window = app
         .get_webview_window(LABEL)
         .ok_or("the guide window is missing")?;
@@ -151,11 +250,19 @@ pub fn sized(app: &AppHandle, id: u64, size: (f64, f64)) -> Result<(), String> {
         rect.w.round() as i32,
         rect.h.round() as i32,
     );
+    if holds().sized(id).is_none() {
+        return Ok(());
+    }
     crate::platform::show_floating(
         hwnd,
         (x, y, w, h),
         (crate::window::BUBBLE_RADIUS * scale).round() as i32,
     );
+    // A hide that came while the window was being placed may have run before it showed.
+    if !holds().floating(id) {
+        crate::platform::hide_window(hwnd);
+        return Ok(());
+    }
     crate::hint::debug_log(&format!("guide show {x},{y} {w}x{h}"));
     Ok(())
 }
@@ -172,12 +279,8 @@ fn to_rect(line: ScreenRect) -> Rect {
 /// Creates the hidden guide window, off the calling thread (the raw input thread must not wait
 /// for a web view). If it can't be made, the guide shows beside the eyes for this hold.
 fn create(app: &AppHandle) {
-    {
-        let mut state = state();
-        if state.creating {
-            return;
-        }
-        state.creating = true;
+    if CREATING.swap(true, Ordering::AcqRel) {
+        return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
@@ -196,7 +299,7 @@ fn create(app: &AppHandle) {
                 .focusable(false)
                 .visible(false)
                 .build();
-        state().creating = false;
+        CREATING.store(false, Ordering::Release);
         match built {
             Ok(window) => {
                 // On the window's own thread: the frame's subclass can't be set from another.
@@ -206,15 +309,9 @@ fn create(app: &AppHandle) {
             }
             Err(e) => {
                 eprintln!("winku: could not create the guide window: {e}");
-                if let Some(showing) = state().showing.take() {
-                    crate::hint::emit_beside(
-                        &app,
-                        true,
-                        Some(crate::platform::Selection::Text(SelectedText {
-                            editable: showing.editable,
-                            line: None,
-                        })),
-                    );
+                let id = holds().current().map(|s| s.id);
+                if let Some(id) = id {
+                    fall_back(&app, id);
                 }
             }
         }
@@ -239,6 +336,57 @@ mod tests {
 
     fn line(x: f64, y: f64, w: f64, h: f64) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    const LINE: ScreenRect = ScreenRect {
+        x: 700,
+        y: 500,
+        w: 200,
+        h: 20,
+    };
+
+    #[test]
+    fn a_size_in_time_floats_the_guide() {
+        let mut holds = Holds::new();
+        let hold = holds.start(true, LINE);
+        assert_eq!(holds.sized(hold.id).map(|s| s.id), Some(hold.id));
+        assert!(holds.floating(hold.id));
+        assert!(
+            holds.fall_back(hold.id).is_none(),
+            "the deadline changes nothing"
+        );
+        assert!(holds.floating(hold.id));
+    }
+
+    #[test]
+    fn no_size_in_time_shows_the_guide_beside_and_ignores_a_late_size() {
+        let mut holds = Holds::new();
+        let hold = holds.start(false, LINE);
+        let beside = holds.fall_back(hold.id).unwrap();
+        assert!(!beside.editable);
+        assert!(holds.sized(hold.id).is_none(), "late size ignored");
+        assert!(!holds.floating(hold.id));
+        assert!(holds.current().is_none(), "the page draws nothing");
+        assert!(holds.end(), "the hold still ends");
+    }
+
+    #[test]
+    fn events_for_an_ended_hold_change_nothing() {
+        let mut holds = Holds::new();
+        let old = holds.start(true, LINE);
+        assert!(holds.sized(old.id).is_some());
+        assert!(holds.end());
+        assert!(
+            !holds.floating(old.id),
+            "a placement that raced a hide is undone"
+        );
+        let new = holds.start(true, LINE);
+        assert!(holds.sized(old.id).is_none());
+        assert!(holds.fall_back(old.id).is_none());
+        assert!(!holds.floating(old.id));
+        assert_eq!(holds.current().map(|s| s.id), Some(new.id));
+        assert!(holds.end());
+        assert!(!holds.end());
     }
 
     #[test]

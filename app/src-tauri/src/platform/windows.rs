@@ -155,6 +155,67 @@ pub fn wait_for_modifiers_released(timeout: Duration) {
     }
 }
 
+/// Left and right Alt, Shift, Win and Ctrl, in the order they are let go: Alt goes while Ctrl
+/// still counts as down, so the app doesn't take a lone Alt as "open the menu bar".
+const SIDED_MODIFIERS: [u16; 8] = [0xA4, 0xA5, 0xA0, 0xA1, 0x5B, 0x5C, 0xA2, 0xA3];
+
+/// Whether a key that isn't a modifier is held (mouse buttons don't count).
+fn other_key_down() -> bool {
+    (0x08u16..=0xFE)
+        .filter(|vk| !SIDED_MODIFIERS.contains(vk) && ![VK_CONTROL, VK_MENU, VK_SHIFT].contains(vk))
+        .any(key_down)
+}
+
+/// Tells Windows the modifiers still held are up, so the next simulated keystroke isn't read
+/// as Ctrl+Alt+C. The user's real release later is a second key-up, which apps ignore.
+fn release_modifiers() {
+    let inputs: Vec<INPUT> = SIDED_MODIFIERS
+        .into_iter()
+        .filter(|&vk| key_down(vk))
+        .map(|vk| key_input(vk, true))
+        .collect();
+    if inputs.is_empty() {
+        return;
+    }
+    // SAFETY: the pointer and count describe `inputs`.
+    unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+    }
+}
+
+/// Gets the hotkey's keys out of the way before a simulated keystroke (the copy that captures
+/// a selection). Returns at once when nothing is held. Otherwise it waits for the hotkey's own
+/// key (the `1` of `Ctrl+Alt+1`) to come up, then lets go of any modifiers still held instead
+/// of waiting for the user to: people often keep `Ctrl+Alt` down a moment longer, and a copy
+/// sent meanwhile would arrive as `Ctrl+Alt+C` and copy nothing. The modifiers are not let go
+/// while that other key is down, because its auto-repeat would then type into the app. If it
+/// is still down after `timeout`, the keystroke is sent anyway, as before.
+pub fn clear_keys_for_input(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let modifiers = [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
+            .into_iter()
+            .any(key_down);
+        if !modifiers {
+            return;
+        }
+        if !other_key_down() {
+            release_modifiers();
+            // Let the key-ups reach the app before the keystroke that follows.
+            std::thread::sleep(Duration::from_millis(15));
+            return;
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn key_input(vk: u16, up: bool) -> INPUT {
     // SAFETY: plain Win32 call.
     let scan = unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC) } as u16;
@@ -201,9 +262,10 @@ fn send_ctrl(key: u8) -> Result<(), String> {
 
 const UIA_TIMEOUT: Duration = Duration::from_millis(300);
 
-/// The focused element's selected text through UI Automation's TextPattern. None when the
-/// element has no text pattern, nothing is selected, or UIA takes longer than 300 ms (the
-/// worker thread is then left to finish on its own).
+/// The selected text through UI Automation's TextPattern, asked of the focused element and, when
+/// that has no text pattern, of its nearest ancestors (`TEXT_ANCESTORS`). None when none of them
+/// has one, nothing is selected, or UIA takes longer than 300 ms (the worker thread is then
+/// left to finish on its own).
 pub fn selection_via_uia() -> Option<String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -236,25 +298,55 @@ fn automation() -> windows::core::Result<windows::Win32::UI::Accessibility::IUIA
     unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
 }
 
-fn uia_selection_on_this_thread() -> Option<String> {
+/// Ancestors of the focused element asked for a text pattern when it has none.
+const TEXT_ANCESTORS: usize = 4;
+
+/// The text pattern of the focused element, or of its nearest ancestor that has one within
+/// four levels: in a document, focus can sit on a child such as a link, which knows nothing of
+/// the selection around it. Call with COM initialised on this thread; the caller's time box
+/// bounds the walk.
+fn focused_text_pattern(
+) -> windows::core::Result<windows::Win32::UI::Accessibility::IUIAutomationTextPattern> {
     use windows::core::Interface;
     use windows::Win32::UI::Accessibility::{
         IUIAutomationTextPattern, IUIAutomationTextPattern2, UIA_TextPattern2Id, UIA_TextPatternId,
     };
 
+    // SAFETY: COM calls on this thread (with_com).
+    unsafe {
+        let automation = automation()?;
+        let walker = automation.ControlViewWalker()?;
+        let mut element = automation.GetFocusedElement()?;
+        for level in 0..=TEXT_ANCESTORS {
+            let pattern = element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .or_else(|_| {
+                    element
+                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
+                        .cast()
+                });
+            if let Ok(pattern) = pattern {
+                return Ok(pattern);
+            }
+            if level < TEXT_ANCESTORS {
+                element = walker.GetParentElement(&element)?;
+            }
+        }
+        Err(windows::core::Error::new(
+            windows::Win32::Foundation::E_FAIL,
+            format!(
+                "no text pattern on the focused element or its {TEXT_ANCESTORS} nearest ancestors"
+            ),
+        ))
+    }
+}
+
+fn uia_selection_on_this_thread() -> Option<String> {
     with_com(|| {
         // SAFETY: COM calls on this thread.
         let text = (|| -> windows::core::Result<String> {
             unsafe {
-                let element = automation()?.GetFocusedElement()?;
-                let pattern: IUIAutomationTextPattern = match element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                {
-                    Ok(pattern) => pattern,
-                    Err(_) => element
-                        .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)?
-                        .cast()?,
-                };
+                let pattern = focused_text_pattern()?;
                 let ranges = pattern.GetSelection()?;
                 let mut text = String::new();
                 for i in 0..ranges.Length()? {
@@ -578,7 +670,7 @@ const CF_DSPBITMAP: u32 = 0x82;
 const CF_DSPMETAFILEPICT: u32 = 0x83;
 const CF_DSPENHMETAFILE: u32 = 0x8E;
 
-const COPY_TIMEOUT: Duration = Duration::from_millis(400);
+const COPY_TIMEOUT: Duration = Duration::from_millis(700);
 const PASTE_RESTORE_DELAY: Duration = Duration::from_millis(500);
 
 /// Formats whose data is not an HGLOBAL (GDI handles, owner display, private handles) or holds

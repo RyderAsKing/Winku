@@ -95,7 +95,7 @@ An action is a config entry with a name, a prompt, a key slot, an output mode an
 - Replace and show actions are one-off calls on the Quick actions model. They are not added to the thread, but they are recorded in History.
 - Defaults: 1 Rewrite (replace), 2 Fix grammar (replace), 3 Shorter (replace), 4 Explain (show), 5 Do it (agent).
 - Rewriting actions apply your voice profile.
-- Selection capture tries UI Automation first and falls back to a simulated copy that saves and restores the clipboard.
+- Selection capture tries UI Automation first, asking the focused control and then its nearest parents, and falls back to a simulated copy that saves and restores the clipboard. It doesn't wait for you to let go of `Ctrl+Alt`: once the action's own key is up, Winku treats the modifiers as released so the copy isn't misread. The copy gets 700 ms to answer before Winku says nothing is selected.
 
 ## 7. Agent, tools and screen
 

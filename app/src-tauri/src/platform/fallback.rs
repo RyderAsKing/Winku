@@ -28,6 +28,8 @@ pub fn focus_window(_window: WindowHandle) -> bool {
 
 pub fn wait_for_modifiers_released(_timeout: Duration) {}
 
+pub fn clear_keys_for_input(_timeout: Duration) {}
+
 pub fn selection_via_uia() -> Option<String> {
     None
 }

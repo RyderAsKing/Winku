@@ -43,14 +43,6 @@ jobs:
           # Pull requests reuse main's cache without spending minutes uploading their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Cargo's registry index
-        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
-        # on Windows before it compiled anything.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry/index
-          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-
       - name: Tauri system dependencies
         # Runner DNS has failed to resolve Ubuntu's mirrors, stalling apt for the whole job; add
         # public resolvers as a fallback, retry slow downloads, and fail fast instead of hanging.
@@ -125,14 +117,6 @@ jobs:
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Cargo's registry index
-        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
-        # on Windows before it compiled anything.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry/index
-          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.
         uses: actions/cache@v4
@@ -149,9 +133,11 @@ jobs:
           bun install --frozen-lockfile
           bun run engine
           Get-Item ../engine/dist/winku-engine.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
-          # Optimising the shell crate itself is 35 of the build's 115 seconds (measured: 47 s at
-          # the release level, 13 s without), so pull requests skip it. The dependencies stay
-          # optimised either way, and main builds the crate as a release does.
+          # Optimising the shell crate itself took 35 s of this step (measured: 47 s at the
+          # release level, 13 s without), so pull requests skip it. The dependencies stay
+          # optimised either way, and main builds the crate as a release does. About 20 s more
+          # pass before cargo compiles anything; keeping its registry index between runs didn't
+          # shorten that.
           $cargo = @()
           if ($env:GITHUB_EVENT_NAME -eq "pull_request") { $cargo = "--", "--config", "profile.release.package.winku.opt-level=0" }
           bunx tauri build --no-bundle @cargo
@@ -235,14 +221,6 @@ jobs:
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
           prefix-key: v1-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Cargo's registry index
-        # rust-cache leaves the index out, so cargo fetched it again on every run: about 17 s
-        # on Windows before it compiled anything.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry/index
-          key: cargo-index-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
 
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.

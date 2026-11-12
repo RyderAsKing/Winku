@@ -136,8 +136,11 @@ jobs:
           "nothing changed: {0:n1} s" -f (Measure-Command $build).TotalSeconds
           (Get-Item src/main.rs).LastWriteTime = Get-Date
           "main.rs touched (link only): {0:n1} s" -f (Measure-Command $build).TotalSeconds
-          (Get-Item src/lib.rs).LastWriteTime = Get-Date
-          "lib.rs touched (compile and link): {0:n1} s" -f (Measure-Command $build).TotalSeconds
+          $env:CARGO_PROFILE_RELEASE_PACKAGE_WINKU_OPT_LEVEL = "1"
+          "winku at opt-level 1: {0:n1} s" -f (Measure-Command $build).TotalSeconds
+          $env:CARGO_PROFILE_RELEASE_PACKAGE_WINKU_OPT_LEVEL = "0"
+          "winku at opt-level 0: {0:n1} s" -f (Measure-Command $build).TotalSeconds
+          Get-Item target/release/winku.exe | Select-Object Length
 
       - name: Smoke test, idle memory and idle CPU
         working-directory: app

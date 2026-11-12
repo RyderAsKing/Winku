@@ -5,7 +5,7 @@ import { RequestAborted } from "../requests.ts";
 import { resolveFromHome } from "./paths.ts";
 
 export const DECLINED = "The user declined to run this.";
-export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open", "desktop_act", "desktop_press", "desktop_window"]);
+export const GATED_TOOLS = new Set(["write", "edit", "powershell", "bash", "open", "desktop_act", "desktop_press", "desktop_window", "clipboard_write", "clipboard_edit"]);
 
 export type Decision = "allow_once" | "always" | "deny";
 
@@ -73,6 +73,10 @@ export function describeCall(tool: string, args: Record<string, unknown>, home: 
 			const target = str("target").trim();
 			return { summary: `Open ${oneLine(target)}`, allowKey: `open:${target}`, coverable: true };
 		}
+		case "clipboard_write":
+			return { summary: `Put on the clipboard: ${oneLine(str("text"))}`, allowKey: tool, coverable: true };
+		case "clipboard_edit":
+			return { summary: `Edit the clipboard: ${oneLine(str("oldText"), 70)} → ${oneLine(str("newText"), 70)}`, allowKey: tool, coverable: true };
 		default:
 			return { summary: tool, allowKey: tool, coverable: true };
 	}

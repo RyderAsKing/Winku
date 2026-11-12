@@ -7,7 +7,7 @@ const unescape = (s: string) =>
 	s.replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 
 /**
- * `\n\n<now app="…" window="…" spoken="yes" speak="enough">selection</now>`, or "" when there is
+ * `\n\n<now app="…" window="…" clipboard="text, 120 words" spoken="yes" speak="enough">selection</now>`, or "" when there is
  * nothing to say. `speak` asks for a <say> block of that length (prompt.ts).
  */
 export function formatNow(now: NowLine | undefined, spoken = false, speak?: SpeechLength): string {
@@ -15,6 +15,7 @@ export function formatNow(now: NowLine | undefined, spoken = false, speak?: Spee
 	const attrs = [
 		now?.app ? ` app="${escape(now.app)}"` : "",
 		now?.windowTitle ? ` window="${escape(now.windowTitle)}"` : "",
+		now?.clipboard ? ` clipboard="${escape(now.clipboard)}"` : "",
 		spoken ? ` spoken="yes"` : "",
 		speak ? ` speak="${speak}"` : "",
 	].join("");
@@ -34,6 +35,7 @@ export function parseNow(text: string): { text: string; now?: NowLine; spoken?: 
 	for (const [, key, value] of (match[1] ?? "").matchAll(/ ([a-z]+)="([^"]*)"/g)) {
 		if (key === "app") now.app = unescape(value ?? "");
 		if (key === "window") now.windowTitle = unescape(value ?? "");
+		if (key === "clipboard") now.clipboard = unescape(value ?? "");
 		if (key === "spoken") spoken = value === "yes";
 	}
 	if (match[2]) now.selection = unescape(match[2]);

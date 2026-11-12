@@ -63,6 +63,8 @@ export interface NowLine {
 	app?: string;
 	windowTitle?: string;
 	selection?: string;
+	/** What kind of thing is on the clipboard and how big, never its contents: "text, 120 words". */
+	clipboard?: string;
 }
 
 export interface ImageAttachment {
@@ -295,6 +297,13 @@ export type Request =
 	/** Computer use (desktop_* tools): the same window look_at_screen uses, never one of Winku's own.
 	 *  Response data: ScreenTarget; an error Response when there is no such window. */
 	| { type: "request"; id: string; method: "screen_target"; params: Record<string, never> }
+	/** clipboard_read and clipboard_edit: the current clipboard. Images downscaled like screenshots
+	 *  (only when includeImage). Content carrying the formats password managers use to exclude it
+	 *  from history comes back as { kind: "private" }. Response data: ClipboardContent; an error
+	 *  Response outside Windows. */
+	| { type: "request"; id: string; method: "clipboard_read"; params: { includeImage: boolean } }
+	/** clipboard_write and clipboard_edit: replace the clipboard with text. Response data: none. */
+	| { type: "request"; id: string; method: "clipboard_write"; params: { text: string } }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
@@ -309,6 +318,14 @@ export interface ScreenCapture {
 	text?: string;
 	image?: ImageAttachment;
 }
+
+export type ClipboardContent =
+	| { kind: "empty" }
+	| { kind: "private" }
+	| { kind: "text"; text: string }
+	/** image is absent when includeImage was false. */
+	| { kind: "image"; image?: ImageAttachment; width?: number; height?: number }
+	| { kind: "files"; paths: string[] };
 
 export interface ScreenTarget {
 	/** `w-<HWND>`, the id agent-desktop uses for the window. */

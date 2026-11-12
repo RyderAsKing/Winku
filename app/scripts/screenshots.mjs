@@ -180,6 +180,30 @@ const cases = [
 		},
 	},
 	{
+		name: "hotkey-hints-transcript",
+		path: "/",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Control+j");
+			await page.getByText("Earlier conversation summarized").waitFor();
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
+		name: "hotkey-hints-reply",
+		path: "/?left&low",
+		ready: "role=status[name='Ctrl+Alt keys']",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("How do I take a screenshot of part of the screen?");
+			await page.keyboard.press("Enter");
+			await page.getByText("Paste it into Paint").waitFor();
+			await page.waitForTimeout(400);
+			await ui(page, { kind: "hotkey_hint", show: true });
+		},
+	},
+	{
 		name: "permission",
 		path: "/?ask=1",
 		ready: "text=Always allow this command",
@@ -455,7 +479,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles, .window")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

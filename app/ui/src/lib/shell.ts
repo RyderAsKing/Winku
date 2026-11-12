@@ -7,6 +7,8 @@ import type {
 	NowLine,
 	Request as EngineRequest,
 	Response as EngineResponse,
+	TaskInfo,
+	TaskKind,
 } from "../../../../engine/src/protocol.ts";
 import type { Settings } from "./settings.ts";
 
@@ -48,7 +50,14 @@ export type UiEvent =
 	/** The pill moved across the screen: things now grow the other way. */
 	| ({ kind: "layout" } & Layout)
 	/** The hotkey prefix has been held alone (true), or that hold ended (false). */
-	| { kind: "hotkey_hint"; show: boolean };
+	| { kind: "hotkey_hint"; show: boolean }
+	/** The shell sent a scheduled task's run as a prompt with this id (#43). */
+	| { kind: "scheduled_started"; id: string; name: string; taskKind: TaskKind; speak?: "brief" | "enough" | "full" }
+	/** Settings window: show this section (open_window with a section, while already open). */
+	| { kind: "settings_section"; section: SettingsSection };
+
+/** Settings sections that can be opened directly. */
+export type SettingsSection = "schedules";
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {
@@ -161,7 +170,13 @@ export const shell = {
 	 * the pill, clipped to the shapes on Windows. Returns which way things grow. */
 	windowShape: (width: number, height: number, shapes: Shape[]) => invoke<Layout>("window_shape", { width, height, shapes }),
 	windowLayout: () => invoke<Layout | null>("window_layout"),
-	openWindow: (name: "settings" | "history") => invoke<void>("open_window", { name }),
+	openWindow: (name: "settings" | "history", section?: SettingsSection) =>
+		invoke<void>("open_window", section ? { name, section } : { name }),
+	/** Scheduled tasks, soonest first (#43). */
+	tasksList: () => invoke<TaskInfo[]>("tasks_list"),
+	taskCancel: (id: string) => invoke<void>("task_cancel", { id }),
+	/** The message box has text: due tasks wait until it is sent or cleared. */
+	draftState: (draft: boolean) => invoke<void>("draft_state", { draft }),
 	contextMenu: () => invoke<void>("context_menu"),
 	hotkeysStatus: () => invoke<HotkeysStatus>("hotkeys_status"),
 	hotkeysAltGr: () => invoke<AltGrReport>("hotkeys_altgr"),
@@ -211,6 +226,8 @@ export const onDownloadProgress = (handler: (progress: DownloadProgress) => void
 	listen<DownloadProgress>("download_progress", handler);
 
 export const onUpdateStatus = (handler: (status: UpdateStatus) => void) => listen<UpdateStatus>("update_status", handler);
+
+export const onTasksChanged = (handler: (tasks: TaskInfo[]) => void) => listen<TaskInfo[]>("tasks_changed", handler);
 
 export const onHotkeysStatus = (handler: (status: HotkeysStatus) => void) => listen<HotkeysStatus>("hotkeys_status", handler);
 

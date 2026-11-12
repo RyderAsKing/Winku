@@ -3,6 +3,7 @@
 import type {
 	ErrorKind,
 	ImageAttachment,
+	TaskInfo,
 	ThinkingLevel,
 	TranscriptItem,
 } from "../../../../engine/src/protocol.ts";
@@ -16,6 +17,7 @@ import {
 	onDownloadProgress,
 	onEngine,
 	onSettingsChanged,
+	onTasksChanged,
 	onUi,
 	shell,
 	type UiEvent,
@@ -35,8 +37,10 @@ export interface LiveTool {
 export interface Reply {
 	id: string;
 	kind: "prompt" | "action";
-	/** The action's name, for action replies. */
+	/** The action's name, for action replies; the task's name, for scheduled runs. */
 	title?: string;
+	/** A scheduled task's run (#43), started by the shell. */
+	scheduled?: boolean;
 	text: string;
 	done: boolean;
 	aborted: boolean;
@@ -135,6 +139,8 @@ export class MainState {
 	/** The reply bubble under the resting pill (spoken prompts, actions, errors). The open bar
 	 * always shows its reply. */
 	bubbleOpen = $state(false);
+	/** Scheduled tasks (#43): the pill shows a dot and the bar a count while there are any. */
+	tasks: TaskInfo[] = $state([]);
 
 	readonly needsConnect: boolean = $derived(
 		this.settings !== null &&
@@ -166,6 +172,8 @@ export class MainState {
 	#bubbleTimer: ReturnType<typeof setTimeout> | undefined;
 	#bubbleHeld = false;
 	#dictationTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Last draft state told to the shell: due tasks wait while the message box has text. */
+	#draft = false;
 
 	async init() {
 		await Promise.all([
@@ -173,7 +181,16 @@ export class MainState {
 			onUi((e) => this.#onUi(e)),
 			onSettingsChanged((s) => this.#onSettings(s)),
 			onDownloadProgress((p) => this.#onDownload(p)),
+			onTasksChanged((tasks) => {
+				this.tasks = tasks;
+			}),
 		]);
+		void shell
+			.tasksList()
+			.then((tasks) => {
+				this.tasks = tasks;
+			})
+			.catch(() => {});
 		const [settings, hasKey] = await Promise.all([shell.settingsGet(), shell.secretPresent()]);
 		void shell
 			.updateStatus()
@@ -282,6 +299,7 @@ export class MainState {
 		const images = this.imageChip ? [this.imageChip] : undefined;
 		this.selectionChip = null;
 		this.imageChip = null;
+		this.setDraft(false);
 		this.reply = {
 			id,
 			kind: "prompt",
@@ -367,6 +385,17 @@ export class MainState {
 		await shell.openWindow("settings");
 	}
 
+	async openSchedules() {
+		await shell.openWindow("settings", "schedules");
+	}
+
+	/** The message box has text (true) or is empty (false). Only changes are sent. */
+	setDraft(draft: boolean) {
+		if (draft === this.#draft) return;
+		this.#draft = draft;
+		void shell.draftState(draft).catch(() => {});
+	}
+
 	// ── connect ──
 
 	async connected(settings: Settings) {
@@ -430,6 +459,29 @@ export class MainState {
 					this.#surface();
 					void this.loadTranscript();
 				}
+				break;
+			case "scheduled_started":
+				// A scheduled task's run: like an agent action, it opens the bubble under the pill
+				// without taking focus, and its reply is spoken when the shell asked for that.
+				this.eyes.touch();
+				this.eyes.setActivity("thinking");
+				if (event.speak) this.#spokenReplies.set(event.id, { said: false });
+				this.reply = {
+					id: event.id,
+					kind: "prompt",
+					title: event.name,
+					scheduled: true,
+					text: "",
+					done: false,
+					aborted: false,
+					tools: [],
+					startedAt: Date.now(),
+				};
+				this.busy = true;
+				this.#surface();
+				void this.loadTranscript();
+				break;
+			case "settings_section":
 				break;
 			case "action_error": {
 				// Nothing selected, or the paste failed: then show the result here instead.
@@ -598,6 +650,7 @@ export class MainState {
 			case "tool_start":
 				// A memory save shows as its own "Saved to memory" row instead.
 				if (message.name === "memory_save") break;
+				if (reply && reply.id !== message.id) break;
 				reply?.tools.push({ toolCallId: message.toolCallId, name: message.name, summary: message.summary, ok: null });
 				this.eyes.setActivity("thinking");
 				break;
@@ -610,6 +663,11 @@ export class MainState {
 				break;
 			}
 			case "reply_end":
+				// A reply the user steered past (#44) ends while the new one carries on.
+				if (reply && reply.id !== message.id && !reply.done && !message.aborted) {
+					this.#spokenReplies.delete(message.id);
+					break;
+				}
 				if (reply?.id === message.id) {
 					reply.text = message.text;
 					reply.done = true;
@@ -658,6 +716,9 @@ export class MainState {
 				break;
 			case "compaction_end":
 				if (!this.busy) this.eyes.setActivity("idle");
+				void this.loadTranscript();
+				break;
+			case "notice":
 				void this.loadTranscript();
 				break;
 			case "thread_changed":

@@ -4,8 +4,9 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { MoodStripper, stripMood } from "./mood.ts";
 import { formatNow } from "./nowline.ts";
-import type { Command, ErrorKind, Event, Mood } from "./protocol.ts";
+import type { Command, ErrorKind, Event, Mood, ScheduledRun } from "./protocol.ts";
 import { classifyError, errorOf } from "./runtime.ts";
+import { formatScheduled } from "./scheduled.ts";
 import { SayStripper } from "./say.ts";
 import { toolSummary } from "./thread.ts";
 
@@ -27,10 +28,15 @@ interface ActiveReply {
 	/** Last model error; cleared when a later attempt succeeds (retries). */
 	error: { message: string; kind: ErrorKind } | undefined;
 	tools: Map<string, string>;
+	/** The prompt was a scheduled run (prompt `scheduled`). */
+	scheduled: ScheduledRun | undefined;
+	/** The prompt was dictated (prompt `spoken`). */
+	promptSpoken: boolean;
 }
 
-export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken" | "speak">): string {
-	return `${command.text}${formatNow(command.now, command.spoken === true, command.speak)}`;
+export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken" | "speak" | "scheduled">): string {
+	const text = command.scheduled ? formatScheduled(command.scheduled, command.text) : command.text;
+	return `${text}${formatNow(command.now, command.spoken === true, command.speak)}`;
 }
 
 export class Replies {
@@ -41,6 +47,8 @@ export class Replies {
 	private readonly ended = new Set<string>();
 	/** Prompt ids (queued or active) whose reply will be read aloud. */
 	private readonly spoken = new Set<string>();
+	/** Scheduled runs and dictated prompts by id, until their reply ends: what the task tools need. */
+	private readonly promptInfo = new Map<string, { scheduled: ScheduledRun | undefined; promptSpoken: boolean }>();
 
 	constructor(
 		private readonly emit: (event: Event) => void,
@@ -53,6 +61,16 @@ export class Replies {
 		return this.active?.id;
 	}
 
+	/** The active reply is a scheduled run: its job. */
+	get activeScheduled(): ScheduledRun | undefined {
+		return this.active?.scheduled;
+	}
+
+	/** The active reply's prompt was dictated. */
+	get activePromptSpoken(): boolean {
+		return this.active?.promptSpoken === true;
+	}
+
 	get busy(): boolean {
 		return !!this.active || this.queue.length > 0 || !!this.session?.isStreaming;
 	}
@@ -62,7 +80,11 @@ export class Replies {
 		return session.subscribe((event) => this.handle(event));
 	}
 
-	/** Start a reply, or queue it as a follow-up if one is streaming. Returns whether it was queued. */
+	/**
+	 * Start a reply, or steer the one running: pi delivers the message once the current step ends
+	 * (tool calls returned, or the streamed text finished), before the next model call. The running
+	 * reply then ends and this prompt's id carries the rest of the run. Returns whether it steered.
+	 */
 	prompt(command: PromptCommand): boolean {
 		const session = this.session;
 		if (!session) throw new Error("Engine is not configured");
@@ -71,21 +93,22 @@ export class Replies {
 			data: image.data,
 			mimeType: image.mimeType,
 		}));
-		const queued = this.busy;
+		const steered = this.busy;
 		this.queue.push(command.id);
 		if (command.speak) this.spoken.add(command.id);
-		if (!queued) this.emit({ type: "thinking", id: command.id });
+		this.promptInfo.set(command.id, { scheduled: command.scheduled, promptSpoken: command.spoken === true });
+		if (!steered) this.emit({ type: "thinking", id: command.id });
 		session
 			.prompt(userMessageText(command), {
 				images,
 				expandPromptTemplates: false,
-				...(queued ? { streamingBehavior: "followUp" as const } : {}),
+				...(steered ? { streamingBehavior: "steer" as const } : {}),
 			})
 			.catch((error) => this.fail(command.id, error));
-		return queued;
+		return steered;
 	}
 
-	/** Stop the run and drop queued follow-ups. Every pending reply gets reply_end aborted:true. */
+	/** Stop the run and drop undelivered steering messages. Every pending reply gets reply_end aborted:true. */
 	async abort(): Promise<void> {
 		const session = this.session;
 		if (!session) return;
@@ -107,6 +130,7 @@ export class Replies {
 		} else {
 			this.ended.add(id);
 			this.spoken.delete(id);
+			this.promptInfo.delete(id);
 			this.emit({ type: "reply_end", id, text: "", aborted: false });
 		}
 	}
@@ -115,6 +139,7 @@ export class Replies {
 		if (this.ended.has(reply.id)) return;
 		this.ended.add(reply.id);
 		this.spoken.delete(reply.id);
+		this.promptInfo.delete(reply.id);
 		// Nothing written after the <say> block: the said text is the reply.
 		if (!aborted && !reply.error && !reply.text.trim() && reply.lastSaid) {
 			reply.text = reply.lastSaid;
@@ -137,6 +162,7 @@ export class Replies {
 			if (this.ended.has(id)) continue;
 			this.ended.add(id);
 			this.spoken.delete(id);
+			this.promptInfo.delete(id);
 			this.emit({ type: "reply_end", id, text: "", aborted: true });
 		}
 		this.queue = [];
@@ -183,6 +209,8 @@ export class Replies {
 								shown: false,
 								error: undefined,
 								tools: new Map(),
+								scheduled: this.promptInfo.get(id)?.scheduled,
+								promptSpoken: this.promptInfo.get(id)?.promptSpoken === true,
 							}
 						: undefined;
 				} else if (event.message.role === "assistant" && this.active) {

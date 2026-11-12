@@ -79,12 +79,105 @@ export type ErrorKind = "auth" | "network" | "model" | "config" | "engine";
 
 /** One row in the transcript. The UI renders these; the engine builds them from the session. */
 export type TranscriptItem =
-	| { kind: "user"; id: string; text: string; images: number; now?: NowLine; spoken?: boolean; at: number }
+	| {
+			kind: "user";
+			id: string;
+			text: string;
+			images: number;
+			now?: NowLine;
+			spoken?: boolean;
+			/** A scheduled run (#43): text is the job's prompt, without the [scheduled: …] marker. */
+			scheduled?: { name: string; kind: TaskKind };
+			at: number;
+	  }
 	| { kind: "assistant"; id: string; text: string; mood?: Mood; aborted?: boolean; at: number }
 	| { kind: "tool"; id: string; name: string; summary: string; ok: boolean | null; detail?: string; at: number }
 	| { kind: "compaction"; id: string; summary: string; at: number }
 	| { kind: "memory_saved"; id: string; saveId: string; title: string; undone: boolean; at: number }
-	| { kind: "error"; id: string; errorKind: ErrorKind; message: string; at: number };
+	| { kind: "error"; id: string; errorKind: ErrorKind; message: string; at: number }
+	/** A scheduled-task notice (missed wakeup, watch ended, job stopped): one line, also seen by the model. */
+	| { kind: "notice"; id: string; text: string; at: number };
+
+// ───────────────────────────── scheduled tasks (#43) ─────────────────────────────
+//
+// The shell owns the jobs, their rules and tasks.json; the engine's tools (schedule_task,
+// next_wakeup, watch, list_tasks, cancel_task) are thin wrappers over the task_* Requests.
+// The engine turns durations and times into milliseconds; the shell validates everything else.
+
+/** timer: one run at a time. loop: every interval, or self-paced. watch: a background command's lines. */
+export type TaskKind = "timer" | "loop" | "watch";
+
+/**
+ * scheduled: waiting for its time. due: its time came, waiting for Winku to be idle.
+ * running: its run is the current reply. waiting: its run waits for the user's approval.
+ * watching: a watch whose command is running.
+ */
+export type TaskStatus = "scheduled" | "due" | "running" | "waiting" | "watching";
+
+export interface TaskInfo {
+	/** 8 lower-case hex characters. */
+	id: string;
+	name: string;
+	kind: TaskKind;
+	/** A loop whose runs pick the next delay (next_wakeup). */
+	selfPaced: boolean;
+	/** A loop's interval. */
+	everyMs?: number;
+	/** A watch's description. */
+	description?: string;
+	/** Epoch ms of the next run, jitter included. Absent for watches. */
+	nextRunAt?: number;
+	/** Epoch ms. Loops and watches expire 7 days after creation; timers have none. */
+	expiresAt?: number;
+	runs: number;
+	status: TaskStatus;
+}
+
+/** The shell a watch command runs in: the one the powershell/bash tools use. */
+export interface WatchShell {
+	kind: "powershell" | "bash";
+	/** bash: its path. powershell: absent (powershell.exe). */
+	path?: string;
+}
+
+export interface TaskScheduleParams {
+	name: string;
+	/** What the run does, as a message that stands on its own. */
+	prompt: string;
+	kind: TaskKind;
+	/** timer: epoch ms of the run. */
+	at?: number;
+	/** loop with an interval. */
+	everyMs?: number;
+	/** loop: self-paced; inMs is the first delay. */
+	selfPaced?: boolean;
+	inMs?: number;
+	/** watch */
+	command?: string;
+	description?: string;
+	shell?: WatchShell;
+	/** The request that set it up was spoken: runs are spoken too (settings.voice.reply "mirror"). */
+	spoken: boolean;
+	/** Set when the call comes from a scheduled run: that run's job id. */
+	from?: string;
+}
+
+/** Sent with a prompt the shell starts for a job. */
+export interface ScheduledRun {
+	jobId: string;
+	name: string;
+	kind: TaskKind;
+	selfPaced?: boolean;
+	/** The run after the 7-day expiry: the job ends after it and can't reschedule. */
+	final?: boolean;
+	/** Fires that were missed (asleep, busy, closed) and collapsed into this run. */
+	missed?: number;
+	/** watch: its description, and the lines printed since the last run, oldest first (at most 50). */
+	description?: string;
+	lines?: string[];
+	/** watch: older lines dropped beyond the 50. */
+	dropped?: number;
+}
 
 export interface HistoryEntry {
 	/** Session id, or action-log id for one-off actions. */
@@ -173,7 +266,18 @@ export type Command =
 			speak?: SpeechLength;
 			/** Voice profile name (file stem in voice\) for the active app, picked by the shell. */
 			voiceProfile?: string;
+			/**
+			 * A scheduled run (#43), started by the shell with an id "task-<n>". `text` is the job's
+			 * prompt; the engine sends "[scheduled: <name>] <text>" (watches: "[watch: <description>]",
+			 * the lines, then the text) to the model, and limits the run's task tools to its own job.
+			 */
+			scheduled?: ScheduledRun;
 	  }
+	/**
+	 * A one-line notice from the scheduler ("Missed while Winku was closed: …"). Recorded in the
+	 * thread as a notice row the model sees with the next message; the engine emits `notice`.
+	 */
+	| { type: "notice"; id?: string; text: string }
 	| { type: "abort"; id?: string }
 	| { type: "set_thinking"; id?: string; role: ModelRole; level: ThinkingLevel }
 	/** Archive the current thread and start a new one. Result data: { undoToken: string }. */
@@ -190,7 +294,7 @@ export type Command =
 	| { type: "history_restore"; id?: string; entryId: string }
 	/**
 	 * Run an action on a selection (SPEC §6). The shell sends this from an action hotkey, with
-	 * an id of its own ("action-…"). Result data: { queued: boolean }, as soon as it starts.
+	 * an id of its own ("action-…"). Result data: { steered: boolean }, as soon as it starts.
 	 *  - replace/show: a one-off call on the Quick model (Main if no Quick). Not added to the
 	 *    thread. Streams action_delta, then action_end; a failure sends error (with this id)
 	 *    then action_end with aborted: true. Recorded in engine\actions.jsonl for History.
@@ -287,7 +391,9 @@ export type Event =
 	| { type: "memory_undone"; saveId: string }
 	/** The model proposed a change to a voice profile (voice_propose tool). `current` is the file as it is now ("" if new). */
 	| { type: "voice_proposal"; id?: string; proposalId: string; profile: string; content: string; current: string; reason: string }
-	| { type: "error"; id?: string; errorKind: ErrorKind; message: string };
+	| { type: "error"; id?: string; errorKind: ErrorKind; message: string }
+	/** A notice row was added to the thread (the `notice` command). */
+	| { type: "notice"; text: string; at: number };
 
 export type Request =
 	/** look_at_screen: the window that was active before the bar (or the foreground window if the
@@ -307,6 +413,16 @@ export type Request =
 	| { type: "request"; id: string; method: "clipboard_read"; params: { includeImage: boolean; index?: number; list?: boolean } }
 	/** clipboard_write and clipboard_edit: replace the clipboard with text. Response data: none. */
 	| { type: "request"; id: string; method: "clipboard_write"; params: { text: string } }
+	/** schedule_task and watch. Response data: TaskInfo; an error Response with a one-line reason
+	 *  ("Too many watches: 5 are running."). */
+	| { type: "request"; id: string; method: "task_schedule"; params: TaskScheduleParams }
+	/** next_wakeup, from a self-paced run: the next delay, or stop. Response data: { task?: TaskInfo }
+	 *  (absent after stop). */
+	| { type: "request"; id: string; method: "task_wakeup"; params: { from: string; delayMs?: number; stop?: boolean; reason?: string } }
+	/** list_tasks. Response data: { tasks: TaskInfo[] }, soonest first. */
+	| { type: "request"; id: string; method: "task_list"; params: Record<string, never> }
+	/** cancel_task. Response data: TaskInfo of the cancelled job. */
+	| { type: "request"; id: string; method: "task_cancel"; params: { id: string; from?: string } }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };

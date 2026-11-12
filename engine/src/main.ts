@@ -24,7 +24,7 @@ function replyError(id: string | undefined, error: unknown): void {
 const LATER: Partial<Record<Command["type"], number>> = {};
 
 /** Commands that change engine state run one at a time, in order. Reads and abort don't wait. */
-const SERIAL = new Set<Command["type"]>(["configure", "prompt", "set_thinking", "clear", "undo_clear", "history_restore"]);
+const SERIAL = new Set<Command["type"]>(["configure", "prompt", "set_thinking", "notice", "clear", "undo_clear", "history_restore"]);
 
 async function handle(message: Command): Promise<unknown> {
 	switch (message.type) {
@@ -33,17 +33,20 @@ async function handle(message: Command): Promise<unknown> {
 			return undefined;
 		case "prompt": {
 			if (!engine.configured) throw new Error("Engine is not configured");
-			return { queued: engine.replies.prompt(message) };
+			return { steered: engine.replies.prompt(message) };
 		}
+		case "notice":
+			await engine.notice(message.text);
+			return undefined;
 		case "run_action": {
 			if (!engine.configured) throw new Error("Engine is not configured");
 			const { action } = message;
 			if (action.output === "agent") {
 				const text = `${action.prompt}\n\nSelected text:\n"""\n${message.selection}\n"""`;
-				return { queued: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
+				return { steered: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
 			}
 			engine.runOneOff({ ...message, action: { ...action, output: action.output } });
-			return { queued: false };
+			return { steered: false };
 		}
 		case "abort":
 			await engine.abort();

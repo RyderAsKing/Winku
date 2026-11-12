@@ -21,7 +21,7 @@ import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel, Vo
 import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
 import { clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
-import { Thread } from "./thread.ts";
+import { NOTICE_TYPE, Thread } from "./thread.ts";
 import { cliRunner, findAgentDesktop } from "./tools/desktop/cli.ts";
 import { installImageDrop } from "./tools/images.ts";
 import { activeToolNames, type AnyTool, agentTools } from "./tools/index.ts";
@@ -224,6 +224,8 @@ export class Engine {
 					...(keepRecentTokens !== undefined ? { keepRecentTokens } : {}),
 				},
 				retry: { enabled: !faux, maxRetries: 2 },
+				// A message sent mid-reply steers it; every waiting one goes in at the next step (#44).
+				steeringMode: "all",
 			}),
 			sessionManager: this.thread.manager,
 			customTools: this.tools(),
@@ -265,6 +267,8 @@ export class Engine {
 			policy: () => this.policy,
 			requests: this.requests,
 			replyId: () => this.replies.activeId,
+			scheduledRun: () => this.replies.activeScheduled,
+			spoken: () => this.replies.activePromptSpoken,
 			supportsImages: () => modelInfo(this.model).supportsImages,
 			searchKey: () => this.searchApiKey,
 			...this.desktop(),
@@ -285,6 +289,17 @@ export class Engine {
 			},
 		);
 		return [...this.agentToolList, ...memory, ...voice];
+	}
+
+	/**
+	 * A scheduler notice: recorded in the thread (a custom message, so it persists and the model
+	 * reads it with its next call) without starting a turn. While a reply runs, pi appends it once
+	 * the current step's tool results are in.
+	 */
+	async notice(text: string): Promise<void> {
+		const session = this.requireSession();
+		await session.sendCustomMessage({ customType: NOTICE_TYPE, content: text, display: true }, { triggerTurn: false });
+		this.emit({ type: "notice", text, at: Date.now() });
 	}
 
 	undoMemory(saveId: string): void {

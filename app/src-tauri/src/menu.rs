@@ -15,6 +15,7 @@ const TRAY_ID: &str = "winku";
 pub fn show_context_menu(app: &AppHandle) -> Result<(), String> {
     let s = app.state::<settings::Store>().get();
     let update_label = crate::update::menu_label(&app.state::<crate::update::Updates>().status());
+    let scheduled = app.state::<crate::scheduler::Scheduler>().count();
     let build = || -> tauri::Result<Menu<tauri::Wry>> {
         let menu = Menu::with_items(
             app,
@@ -43,6 +44,11 @@ pub fn show_context_menu(app: &AppHandle) -> Result<(), String> {
                 &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
             ],
         )?;
+        if scheduled > 0 {
+            let label = format!("Scheduled ({scheduled})");
+            let item = MenuItem::with_id(app, "scheduled", label, true, None::<&str>)?;
+            menu.insert(&item, 2)?;
+        }
         if let Some(label) = &update_label {
             let item = MenuItem::with_id(app, "update_restart", label, true, None::<&str>)?;
             menu.insert(&item, menu.items()?.len() - 1)?;
@@ -66,11 +72,15 @@ pub fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         };
     match item.as_str() {
         "settings" => {
-            let _ = window::open_page(app, Page::Settings);
+            let _ = window::open_page(app, Page::Settings, None);
+            return;
+        }
+        "scheduled" => {
+            let _ = window::open_page(app, Page::Settings, Some("schedules"));
             return;
         }
         "history" => {
-            let _ = window::open_page(app, Page::History);
+            let _ = window::open_page(app, Page::History, None);
             return;
         }
         "ask_before_running" => toggle(|s| s.ask_before_running = !s.ask_before_running),

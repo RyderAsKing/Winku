@@ -276,6 +276,43 @@ const cases = [
 		},
 	},
 	{
+		name: "pill-tasks",
+		path: "/?tasks=1",
+		ready: "role=button[name='Open Winku']",
+	},
+	{ name: "bar-tasks", path: "/?tasks=1", ready: "text=3 waiting", prepare: summon },
+	{
+		name: "scheduled-run",
+		path: "/?tasks=1",
+		ready: "role=button[name='Open Winku']",
+		prepare: async (page) => {
+			await page.evaluate(() => window.__winkuMock.scheduled("Reply to Eg0"));
+			await page.waitForTimeout(3500);
+		},
+	},
+	{
+		name: "transcript-tasks",
+		path: "/?tasks=1",
+		ready: "text=Earlier conversation summarized",
+		prepare: async (page) => {
+			await summon(page);
+			await page.keyboard.press("Control+j");
+			await page.getByText("Missed while Winku was closed").waitFor();
+		},
+	},
+	{
+		name: "settings-schedules",
+		path: "/settings.html?tasks=1#schedules",
+		size: SETTINGS,
+		ready: "text=Reply to Eg0",
+	},
+	{
+		name: "settings-schedules-empty",
+		path: "/settings.html#schedules",
+		size: SETTINGS,
+		ready: "text=Nothing scheduled",
+	},
+	{
 		name: "settings-tools",
 		path: "/settings.html?ask=1#tools",
 		size: SETTINGS,

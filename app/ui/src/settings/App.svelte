@@ -2,7 +2,7 @@
 	// Settings: a list of sections on the left, one section's grouped rows on the right (SPEC §3).
 	// The Model section applies with an explicit Save after a connection test; everything else
 	// saves as you change it. The URL hash names the open section (settings.html#speech).
-	import type { ActionSpec, ModelInfo, ProviderInfo, ThinkingLevel, VoiceProfileInfo } from "../../../../engine/src/protocol.ts";
+	import type { ActionSpec, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, VoiceProfileInfo } from "../../../../engine/src/protocol.ts";
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
@@ -27,6 +27,8 @@
 		type UpdateStatus,
 		onHotkeysStatus,
 		onSettingsChanged,
+		onTasksChanged,
+		onUi,
 		type OsVoice,
 		shell,
 		type VoiceModel,
@@ -65,6 +67,7 @@
 	let confirmForget = $state(false);
 	let forgetResult: string | null = $state(null);
 	let altGr = $state<AltGrReport | null>(null);
+	let tasks: TaskInfo[] = $state([]);
 
 	// Model group draft
 	let providerId = $state("");
@@ -121,6 +124,11 @@
 		void shell.updateStatus().then((s) => (update = s)).catch(() => {});
 		void shell.appVersion().then((v) => (version = v)).catch(() => {});
 		const unlistenUpdates = onUpdateStatus((s) => (update = s));
+		void shell.tasksList().then((t) => (tasks = t)).catch(() => {});
+		const unlistenTasks = onTasksChanged((t) => (tasks = t));
+		const unlistenUi = onUi((e) => {
+			if (e.kind === "settings_section") go(e.section);
+		});
 		const unlistenDownloads = onDownloadProgress((p) => {
 			if (p.fraction >= 1 || p.fraction < 0) {
 				delete downloads[p.model];
@@ -133,6 +141,8 @@
 			void unlistenHotkeys.then((u) => u());
 			void unlistenDownloads.then((u) => u());
 			void unlistenUpdates.then((u) => u());
+			void unlistenTasks.then((u) => u());
+			void unlistenUi.then((u) => u());
 		};
 	});
 
@@ -403,15 +413,51 @@
 		{ id: "actions", name: "Actions", desc: "Select text in any app, then press the action's key.", alert: false },
 		{ id: "keys", name: "Keys", desc: "Click a key, then press the new combination. Esc cancels.", alert: keysAlert },
 		{ id: "eyes", name: "Eyes", desc: "How Winku sits on your screen.", alert: false },
+		{
+			id: "schedules",
+			name: "Schedules",
+			desc: "Reminders, loops and watches Winku set up when you asked. They run while Winku is open.",
+			alert: false,
+		},
 		{ id: "app", name: "App", desc: "Startup and updates.", alert: false },
 	]);
-	const pageIds = ["model", "conversation", "tools", "speech", "memory", "actions", "keys", "eyes", "app"];
+	const pageIds = ["model", "conversation", "tools", "speech", "memory", "actions", "keys", "eyes", "schedules", "app"];
 	const fromHash = () => {
-		const id = location.hash.slice(1);
+		// open_window with a section opens settings.html?section=… (window.rs); the hash wins after that.
+		const id = location.hash.slice(1) || (new URLSearchParams(location.search).get("section") ?? "");
 		return pageIds.includes(id) ? id : "model";
 	};
 	let page = $state(fromHash());
 	let content: HTMLElement | undefined = $state();
+
+	/** "Every 2 minutes · next at 14:22 · 3 runs", or "Watching: build fails". */
+	function taskLine(task: TaskInfo): string {
+		const parts: string[] = [];
+		if (task.kind === "watch") parts.push(task.description ? `Watching: ${task.description}` : "Watching");
+		else if (task.kind === "timer") parts.push("Once");
+		else if (task.selfPaced) parts.push("Self-paced");
+		else if (task.everyMs) parts.push(`Every ${duration(task.everyMs)}`);
+		if (task.status === "running") parts.push("running now");
+		else if (task.status === "waiting") parts.push("waiting for your answer");
+		else if (task.status === "due") parts.push("due, waiting for Winku to be free");
+		else if (task.nextRunAt) parts.push(`next at ${clock(task.nextRunAt)}`);
+		if (task.runs > 0) parts.push(task.runs === 1 ? "1 run" : `${task.runs} runs`);
+		return parts.join(" · ");
+	}
+
+	function duration(ms: number): string {
+		const s = Math.round(ms / 1000);
+		if (s % 86400 === 0) return s === 86400 ? "day" : `${s / 86400} days`;
+		if (s % 3600 === 0) return s === 3600 ? "hour" : `${s / 3600} hours`;
+		if (s % 60 === 0) return s === 60 ? "minute" : `${s / 60} minutes`;
+		return `${s} seconds`;
+	}
+
+	function clock(at: number): string {
+		const date = new Date(at);
+		const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+		return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString([], { weekday: "short" })} ${time}`;
+	}
 
 	function go(id: string) {
 		page = id;
@@ -855,6 +901,22 @@
 						<Switch label="Hide the eyes" checked={settings.eyes.hidden} onchange={(v) => save({ eyes: { ...settings!.eyes, hidden: v } })} />
 					</div>
 				</div>
+			{:else if page === "schedules"}
+				{#if tasks.length === 0}
+					<p class="empty">Nothing scheduled. Ask Winku to remind you, check something every few minutes, or tell you when something happens.</p>
+				{:else}
+					<div class="group">
+						{#each tasks as task (task.id)}
+							<div class="row">
+								<div class="label">
+									<span class="title">{task.name}</span>
+									<span class="desc">{taskLine(task)}</span>
+								</div>
+								<button type="button" class="btn" onclick={() => shell.taskCancel(task.id)}>Cancel</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			{:else if page === "app"}
 				<div class="group">
 					<div class="row">
@@ -1035,6 +1097,13 @@
 		color: var(--muted);
 		font-size: 12px;
 		line-height: 1.45;
+		text-wrap: pretty;
+	}
+	.empty {
+		color: var(--muted);
+		font-size: 13px;
+		line-height: 1.5;
+		max-width: 52ch;
 		text-wrap: pretty;
 	}
 	.foot {

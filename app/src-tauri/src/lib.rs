@@ -9,8 +9,10 @@ mod hint;
 mod hotkeys;
 mod menu;
 mod platform;
+mod scheduler;
 mod secrets;
 mod settings;
+mod tasks;
 mod update;
 mod voice;
 mod window;
@@ -32,6 +34,8 @@ pub fn run() {
         )
         .setup(|app| {
             let data_dir = app.path().data_dir()?.join("winku");
+            // Jobs load before the engine is ready; their notices wait for its `ready`.
+            app.manage(scheduler::Scheduler::open(data_dir.clone()));
             app.manage(settings::Store::open(data_dir));
             app.manage(window::WindowState::default());
             app.manage(hotkeys::HotkeyState::default());
@@ -53,6 +57,7 @@ pub fn run() {
             window::place_pill(handle)?;
             window::set_mode(handle, window::Mode::Pill)?;
             engine::Engine::start(handle)?;
+            scheduler::start(handle);
             commands::apply_launch_at_login(handle, current.launch_at_login);
             fullscreen::start(handle);
             hint::start(handle);
@@ -98,11 +103,15 @@ pub fn run() {
             commands::update_status,
             commands::update_check,
             commands::update_restart,
+            commands::tasks_list,
+            commands::task_cancel,
+            commands::draft_state,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Winku")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                scheduler::shutdown(app);
                 if let Some(engine) = app.try_state::<engine::Engine>() {
                     engine.shutdown();
                 }

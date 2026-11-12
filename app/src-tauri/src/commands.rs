@@ -171,10 +171,33 @@ pub fn window_layout(app: AppHandle) -> Option<window::Layout> {
     window::layout(&app)
 }
 
-/// Async: creating a window from a synchronous command deadlocks on Windows.
+/// Async: creating a window from a synchronous command deadlocks on Windows. `section`
+/// ("schedules") opens Settings on that section.
 #[tauri::command]
-pub async fn open_window(app: AppHandle, name: Page) -> Result<(), String> {
-    window::open_page(&app, name)
+pub async fn open_window(
+    app: AppHandle,
+    name: Page,
+    section: Option<String>,
+) -> Result<(), String> {
+    window::open_page(&app, name, section.as_deref())
+}
+
+/// Every scheduled job, soonest first (Settings > Schedules).
+#[tauri::command]
+pub fn tasks_list(app: AppHandle) -> Vec<crate::tasks::TaskInfo> {
+    crate::scheduler::list(&app)
+}
+
+/// Cancels a job (Settings > Schedules), like `cancel_task`.
+#[tauri::command]
+pub fn task_cancel(app: AppHandle, id: String) -> Result<(), String> {
+    crate::scheduler::cancel(&app, &id)
+}
+
+/// The bar's message box has text: due jobs wait.
+#[tauri::command]
+pub fn draft_state(engine: State<'_, Engine>, draft: bool) {
+    engine.activity.set_draft(draft);
 }
 
 #[tauri::command]

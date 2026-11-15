@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { alphaFor, BURST_MS, burstField, type DotBurst, dotBurstFor, dotLoopFor, type Field, loopField, noise, PITCH, quiet, UNDER_TEXT } from "../src/lib/eyes/dots.ts";
+import { alphaFor, BURST_MS, burstField, type DotBurst, dotBurstFor, dotLoopFor, EDGE, type Field, loopField, noise, PITCH, quiet, quietFor, UNDER_TEXT } from "../src/lib/eyes/dots.ts";
 
 const bar: Field = { length: 434, half: 28, level: 0.6, strength: 1 };
 const pill: Field = { length: 46, half: 28, level: 0.6, strength: 0.5 };
@@ -40,6 +40,34 @@ describe("dot field", () => {
 			else if (ax > (bar.length * 2) / 3) far += b;
 		}
 		expect(near).toBeGreaterThan(far);
+	});
+
+	test("drawing plots bars along the bar that rise from the bottom, then go dark", () => {
+		const f = { ...bar, eyes: 46 };
+		const lit = (t: number) => grid(f).filter(([ax, ay]) => loopField("drawing", ax, ay, t, f) > 0.2);
+		for (const t of [0.3, 1, 2, 2.9]) for (const [ax, ay] of grid(f)) {
+			const b = loopField("drawing", ax, ay, t, f);
+			expect(b).toBeGreaterThanOrEqual(0);
+			expect(b).toBeLessThanOrEqual(1);
+			// Nothing over the eyes.
+			if (ax < 46) expect(b).toBe(0);
+		}
+		// It starts from nothing and plots further along the bar as it goes.
+		expect(lit(0).length).toBe(0);
+		const reach = (t: number) => Math.max(0, ...lit(t).map(([ax]) => ax));
+		expect(reach(1.2)).toBeGreaterThan(reach(0.3));
+		// Bars stand on the bottom edge.
+		expect(lit(1.2).some(([, ay]) => ay > f.half - 10)).toBe(true);
+		// Dark again at the end of each pass.
+		expect(lit(2.999).length).toBe(0);
+	});
+
+	test("only Drawing may shine in full along the top and bottom edges, clear of the message", () => {
+		expect(quietFor("drawing", 200, EDGE + 2, 46)).toBe(1);
+		expect(quietFor("drawing", 200, -(EDGE + 2), 46)).toBe(1);
+		expect(quietFor("drawing", 200, 0, 46)).toBe(quiet(200, 46));
+		expect(quietFor("thinking", 200, EDGE + 2, 46)).toBe(quiet(200, 46));
+		expect(dotLoopFor("drawing")).toBe("drawing");
 	});
 
 	test("listening grows with the voice", () => {

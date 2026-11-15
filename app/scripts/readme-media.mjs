@@ -22,7 +22,7 @@ mkdirSync(media, { recursive: true });
  * Turns the browser preview's backdrop into a stand-in desktop: a wallpaper and a document
  * window, with the eyes near the top-right corner of the screen.
  */
-async function dress(page, { doc = true } = {}) {
+async function dress(page, { withDoc = true } = {}) {
 	await page.getByRole("button", { name: "Open Winku" }).waitFor();
 	await page.addStyleTag({
 		content: `
@@ -35,7 +35,7 @@ async function dress(page, { doc = true } = {}) {
 			.doc .line { height: 9px; margin: 16px 22px 0; border-radius: 4px; background: #cfd5df; }
 			.doc .gap { height: 12px; }`,
 	});
-	if (!doc) return;
+	if (!withDoc) return;
 	await page.evaluate(() => {
 		const doc = document.createElement("div");
 		doc.className = "doc";
@@ -122,7 +122,7 @@ async function stills(browser) {
 	// The whole conversation (Ctrl+J).
 	await page.setViewportSize({ width: 640, height: 470 });
 	await page.goto(`${baseURL}/`);
-	await dress(page, { doc: false });
+	await dress(page, { withDoc: false });
 	await summon(page);
 	await page.keyboard.press("Control+j");
 	await page.getByText("Earlier conversation summarized").waitFor();

@@ -20,7 +20,8 @@ export type WindowMode = "pill" | "bar" | "transcript";
 export type MenuItem = "settings" | "history" | "ask_before_running" | "hide_eyes" | "pause_listening" | "quit";
 
 export type UiEvent =
-	| { kind: "summon" }
+	/** From the summon key: what was selected in the app, read before the bar took focus. */
+	| { kind: "summon"; selection?: string | null }
 	| { kind: "hide" }
 	| { kind: "toggle_transcript" }
 	| { kind: "ask_selection"; text: string }

@@ -38,6 +38,10 @@ pub fn selection_via_copy() -> Option<String> {
     None
 }
 
+pub fn selection_via_copy_within(_wait: Duration) -> Option<String> {
+    None
+}
+
 pub fn paste_text(_text: &str) -> Result<(), String> {
     Err("pasting is only supported on Windows".into())
 }

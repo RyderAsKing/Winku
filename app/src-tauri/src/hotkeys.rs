@@ -476,17 +476,35 @@ fn summon(app: &AppHandle, pressed: bool) {
     let talking = state.talking.swap(false, Ordering::SeqCst);
     match summon_release(released, talking, listening_paused(app)) {
         SummonRelease::Toggle => {
-            let showing = app.state::<WindowState>().mode() != Mode::Pill;
-            if !showing {
-                // Before the bar takes focus.
-                crate::capture::note_summon(app);
+            if app.state::<WindowState>().mode() != Mode::Pill {
+                emit_ui(app, json!({ "kind": "hide" }));
+                return;
             }
-            emit_ui(
-                app,
-                json!({ "kind": if showing { "hide" } else { "summon" } }),
-            );
+            let window = crate::platform::foreground_window();
+            let Some(note) = crate::capture::begin_hotkey_note(app, window) else {
+                emit_ui(app, json!({ "kind": "summon" }));
+                return;
+            };
+            // The selection is read before the bar takes focus, and comes with it as a pill.
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let selection = crate::capture::read_selection(&app, note, false);
+                emit_ui(&app, json!({ "kind": "summon", "selection": selection }));
+            });
         }
-        SummonRelease::EndTalk => crate::voice::hold_end(app),
+        SummonRelease::EndTalk => {
+            // Over the resting pill the app keeps focus: its selection goes on the now line
+            // the spoken message carries. With the bar open, it is Winku's (nothing noted).
+            let window = crate::platform::foreground_window();
+            let note = crate::capture::begin_hotkey_note(app, window);
+            crate::voice::hold_end(app);
+            if let Some(note) = note {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    crate::capture::read_selection(&app, note, true);
+                });
+            }
+        }
         SummonRelease::EmptyTalk => {
             emit_ui(app, json!({ "kind": "talk_start" }));
             emit_ui(app, json!({ "kind": "talk_end", "text": "" }));

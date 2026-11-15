@@ -26,8 +26,12 @@ pub const MAX_EDGE: u32 = 1568;
 pub const SELECTION_CAP: usize = 2000;
 /// UI Automation text kept in a screen capture.
 pub const TEXT_CAP: usize = 8000;
-/// How long `now_line` waits for a selection still being read.
-const SELECTION_WAIT: Duration = Duration::from_millis(400);
+/// How long `now_line` waits for a selection still being read (a hotkey's capture can wait up
+/// to 600 ms for the keys, then up to 250 ms for a copy).
+const SELECTION_WAIT: Duration = Duration::from_millis(1000);
+/// How long a summon's simulated copy waits for the app to answer. Most answer within 50 ms;
+/// with nothing selected there is no answer, and the bar waits this long.
+const SUMMON_COPY_WAIT: Duration = Duration::from_millis(250);
 /// A second summon of the same window within this reuses the snapshot (the hotkey notes it,
 /// then the UI's `window_mode bar` would note it again).
 const DEDUPE: Duration = Duration::from_millis(1500);
@@ -244,46 +248,99 @@ impl NowState {
 /// Notes the foreground window as the bar is about to be shown. Winku's own windows are
 /// ignored (the previous snapshot stays). App and title are read now; the selection (UI
 /// Automation only, never a simulated copy) on a worker thread so the bar isn't delayed, and
-/// not at all in Chromium windows (`platform::uia_is_safe`).
+/// not at all in Chromium windows (`platform::uia_is_safe`). The summon hotkey notes the window
+/// with `begin_hotkey_note` instead, so this one finds it noted and leaves it.
 pub fn note_summon(app: &AppHandle) {
     let window = platform::foreground_window();
-    if platform::is_own_window(window) || window == WindowHandle(0) {
-        return;
-    }
     let skip_selection = !platform::uia_is_safe(window);
-    let state = app.state::<NowState>();
-    let generation = {
-        let mut snap = state.lock();
-        if snap.window == Some(window) && snap.at.is_some_and(|at| at.elapsed() < DEDUPE) {
-            return;
-        }
-        snap.generation += 1;
-        snap.window = Some(window);
-        snap.line = NowLine::new(
-            platform::process_name(window),
-            platform::window_title(window),
-            None,
-        );
-        snap.line.clipboard = crate::clipboard::note(platform::clipboard_summary());
-        snap.reading = !skip_selection;
-        snap.at = Some(Instant::now());
-        snap.generation
+    let Some(generation) = begin_note(app, window, !skip_selection, true) else {
+        return;
     };
     if skip_selection {
-        state.ready.notify_all();
         return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
         let selection = platform::selection_via_uia();
-        let state = app.state::<NowState>();
-        let mut snap = state.lock();
-        if snap.generation == generation {
-            snap.line.selection = non_empty(selection, SELECTION_CAP);
-            snap.reading = false;
-            state.ready.notify_all();
-        }
+        end_note(&app, generation, selection);
     });
+}
+
+/// Starts a new snapshot of `window`: app, title and clipboard note, the selection to follow
+/// when `reading`. None (and the previous snapshot stays) for Winku's own windows, and when
+/// `dedupe` and the same window was noted a moment ago.
+fn begin_note(app: &AppHandle, window: WindowHandle, reading: bool, dedupe: bool) -> Option<u64> {
+    if platform::is_own_window(window) || window == WindowHandle(0) {
+        return None;
+    }
+    let state = app.state::<NowState>();
+    let mut snap = state.lock();
+    if dedupe && snap.window == Some(window) && snap.at.is_some_and(|at| at.elapsed() < DEDUPE) {
+        return None;
+    }
+    snap.generation += 1;
+    snap.window = Some(window);
+    snap.line = NowLine::new(
+        platform::process_name(window),
+        platform::window_title(window),
+        None,
+    );
+    snap.line.clipboard = crate::clipboard::note(platform::clipboard_summary());
+    snap.reading = reading;
+    snap.at = Some(Instant::now());
+    if !reading {
+        state.ready.notify_all();
+    }
+    Some(snap.generation)
+}
+
+/// Finishes the snapshot `generation` with its selection (unless a newer one replaced it).
+fn end_note(app: &AppHandle, generation: u64, selection: Option<String>) {
+    let state = app.state::<NowState>();
+    let mut snap = state.lock();
+    if snap.generation == generation {
+        snap.line.selection = non_empty(selection, SELECTION_CAP);
+        snap.reading = false;
+        state.ready.notify_all();
+    }
+}
+
+/// A window noted by the summon key, its selection still to be read with `read_selection`.
+pub struct HotkeyNote {
+    window: WindowHandle,
+    generation: u64,
+}
+
+/// The summon key opens the bar or ends a talk over `window`: note it now, in the key handler,
+/// so a prompt sent meanwhile waits for the selection. None for Winku's own windows.
+pub fn begin_hotkey_note(app: &AppHandle, window: WindowHandle) -> Option<HotkeyNote> {
+    begin_note(app, window, true, false).map(|generation| HotkeyNote { window, generation })
+}
+
+/// Reads the selection of a window noted by `begin_hotkey_note` the way the action hotkeys do
+/// (SPEC section 6): once the keys are up, UI Automation where it is safe, then a simulated copy
+/// (`platform::summon_copy_is_safe`, with a shorter wait). Blocks; call it before the bar takes
+/// focus. With `in_now_line` the selection goes on the now line; otherwise (it becomes the
+/// bar's selection pill) the now line has none. Whitespace-only counts as nothing.
+pub fn read_selection(app: &AppHandle, note: HotkeyNote, in_now_line: bool) -> Option<String> {
+    platform::clear_keys_for_input(MODIFIER_TIMEOUT);
+    let window = note.window;
+    let selection = platform::uia_is_safe(window)
+        .then(platform::selection_via_uia)
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            platform::summon_copy_is_safe(window)
+                .then(|| platform::selection_via_copy_within(SUMMON_COPY_WAIT))
+                .flatten()
+        })
+        .filter(|s| !s.trim().is_empty());
+    end_note(
+        app,
+        note.generation,
+        selection.clone().filter(|_| in_now_line),
+    );
+    selection
 }
 
 /// The now line for a scheduled run, read when it fires: app, window title and the clipboard

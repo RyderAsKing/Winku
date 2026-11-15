@@ -1029,8 +1029,16 @@ pub fn clipboard_summary() -> Option<crate::clipboard::Summary> {
 }
 
 /// Selected text by simulating `Ctrl+C`, saving the clipboard first and restoring it after.
-/// None when the copy didn't change the clipboard within 400 ms (nothing selected).
+/// None when the copy didn't change the clipboard within 700 ms (nothing selected).
 pub fn selection_via_copy() -> Option<String> {
+    selection_via_copy_within(COPY_TIMEOUT)
+}
+
+/// `selection_via_copy`, waiting only `wait` for the app to answer. Nothing selected usually
+/// means no answer at all, so a summon waits less than an action. A copy that lands after `wait`
+/// (but within the usual 700 ms) is still undone on a background thread, so a slow app never
+/// leaves the selection on the user's clipboard.
+pub fn selection_via_copy_within(wait: Duration) -> Option<String> {
     let owner = Owner::new().ok()?;
     let mut own = OwnChanges::begin();
     let saved = {
@@ -1040,9 +1048,12 @@ pub fn selection_via_copy() -> Option<String> {
     };
     let before = sequence();
     send_ctrl(b'C').ok()?;
-    let deadline = Instant::now() + COPY_TIMEOUT;
+    let started = Instant::now();
     while sequence() == before {
-        if Instant::now() >= deadline {
+        if started.elapsed() >= wait.min(COPY_TIMEOUT) {
+            if wait < COPY_TIMEOUT {
+                std::thread::spawn(move || restore_late_copy(own, saved, before, started));
+            }
             return None;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -1052,6 +1063,22 @@ pub fn selection_via_copy() -> Option<String> {
     let text = Open::new(&owner).ok().and_then(|open| open.unicode_text());
     let _ = saved.restore(&owner);
     text
+}
+
+/// Keeps watching for a copy that answered late and puts the saved clipboard back if one comes.
+/// `own` stays open meanwhile, so clipboard history skips the late copy.
+fn restore_late_copy(own: OwnChanges, saved: Saved, before: u32, started: Instant) {
+    while sequence() == before {
+        if started.elapsed() >= COPY_TIMEOUT {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(30));
+    if let Ok(owner) = Owner::new() {
+        let _ = saved.restore(&owner);
+    }
+    drop(own);
 }
 
 /// Pastes `text` with `Ctrl+V` into the foreground window, then restores the previous

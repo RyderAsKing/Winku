@@ -34,6 +34,8 @@ While it draws, the eyes turn lime and the bubble shows a shimmering "Drawing" l
 
 Select text in any app and press `Ctrl+Alt+1`. The defaults are Rewrite, Fix grammar, Shorter (each replaces the selection, and `Ctrl+Z` in that app undoes it), Explain (shows in the bar) and Do it (runs it as a task with tools). You can edit all five in Settings > Actions.
 
+You don't need an action key to work on a selection. Select text, open Winku with `Ctrl+Alt+Space` (or hold it and talk), and say what you want: "google this and check the facts". The selection shows in the bar as a pill; click its × to leave it out. In terminals, and in editors that have a built-in terminal (VS Code, JetBrains IDEs), use `Ctrl+Alt+Q` instead, because Winku won't press `Ctrl+C` there for you.
+
 ## Tools
 
 Winku can read and write files in your home folder, run PowerShell, open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.

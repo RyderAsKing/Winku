@@ -1,7 +1,7 @@
 // The agent tools through the real engine process: cwd is the fake home, Requests are answered
 // by the harness (the shell's part). No network: web tools are covered in tools.test.ts.
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FauxStep } from "../src/faux.ts";
 import type { OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
@@ -490,6 +490,35 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	expect(rows[0]?.detail).toContain("312 px");
 	expect(rows[0]?.detail).toContain("No script errors");
 	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
+	await engine.shutdown();
+}, T);
+
+test("show writes local images into the saved page and refuses a renamed text file", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : { ok: true, data: {} });
+	mkdirSync(engine.dataDir, { recursive: true });
+	const png = join(engine.dataDir, "dot.png");
+	const fake = join(engine.dataDir, "fake.png");
+	const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+	writeFileSync(png, PNG);
+	writeFileSync(fake, "plain text");
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Fake", html: `<img src="${fake}">` }),
+				call("show", { title: "Dot", html: `<img src="${png}"><img src="https://example.com/x.png">` }),
+				{ text: "done" },
+			],
+		},
+	});
+	await engine.prompt("show my picture");
+	const shown = showRequests(engine.records);
+	expect(shown.map((r) => r.params.title)).toEqual(["Dot"]);
+	const saved = readFileSync(join(engine.dataDir, "visuals", `${shown[0]?.params.visualId}.html`), "utf8");
+	expect(saved).toBe(`<img src="data:image/png;base64,${PNG.toString("base64")}"><img src="https://example.com/x.png">`);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("not an image");
 	await engine.shutdown();
 }, T);
 

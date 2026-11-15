@@ -66,6 +66,71 @@ pub fn uia_is_safe(window: WindowHandle) -> bool {
     !uia_switches_on_accessibility(&input_window_classes(window))
 }
 
+/// Whether a summon may simulate `Ctrl+C` in this window to read its selection. Not in
+/// terminals, where `Ctrl+C` with nothing selected interrupts the running program, nor in
+/// editors with a built-in terminal (VS Code and its forks, JetBrains IDEs), which could have
+/// one focused. The action hotkeys still copy there: the user asked for the selection then.
+/// `process` is the lowercase executable name; `classes` a window and its focused child.
+pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
+    const CONSOLE_CLASSES: [&str; 3] = [
+        "ConsoleWindowClass",
+        "CASCADIA_HOSTING_WINDOW_CLASS",
+        "PseudoConsoleWindow",
+    ];
+    const TERMINALS: [&str; 18] = [
+        "windowsterminal.exe",
+        "wt.exe",
+        "conhost.exe",
+        "openconsole.exe",
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "wezterm-gui.exe",
+        "alacritty.exe",
+        "mintty.exe",
+        "putty.exe",
+        "kitty.exe",
+        "hyper.exe",
+        "tabby.exe",
+        "warp.exe",
+        "code.exe",
+        "code - insiders.exe",
+        "cursor.exe",
+    ];
+    const IDE_PREFIXES: [&str; 12] = [
+        "windsurf",
+        "idea",
+        "pycharm",
+        "webstorm",
+        "phpstorm",
+        "rider",
+        "clion",
+        "goland",
+        "rubymine",
+        "datagrip",
+        "rustrover",
+        "studio",
+    ];
+    if classes
+        .iter()
+        .any(|c| CONSOLE_CLASSES.contains(&c.as_str()))
+    {
+        return false;
+    }
+    let Some(process) = process else {
+        return true;
+    };
+    !(TERMINALS.contains(&process) || IDE_PREFIXES.iter().any(|p| process.starts_with(p)))
+}
+
+/// `summon_copy_allowed` for a live window.
+pub fn summon_copy_is_safe(window: WindowHandle) -> bool {
+    summon_copy_allowed(
+        process_name(window).as_deref(),
+        &input_window_classes(window),
+    )
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -75,6 +140,50 @@ pub use self::windows::*;
 mod fallback;
 #[cfg(not(windows))]
 pub use self::fallback::*;
+
+#[cfg(test)]
+mod summon_copy_tests {
+    use super::summon_copy_allowed;
+
+    fn classes(list: &[&str]) -> Vec<String> {
+        list.iter().map(|c| c.to_string()).collect()
+    }
+
+    #[test]
+    fn browsers_and_ordinary_apps_copy() {
+        let chrome = classes(&["Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND"]);
+        assert!(summon_copy_allowed(Some("chrome.exe"), &chrome));
+        assert!(summon_copy_allowed(Some("msedge.exe"), &chrome));
+        assert!(summon_copy_allowed(Some("slack.exe"), &chrome));
+        assert!(summon_copy_allowed(
+            Some("winword.exe"),
+            &classes(&["OpusApp"])
+        ));
+        assert!(summon_copy_allowed(None, &[]));
+    }
+
+    #[test]
+    fn terminals_never_copy() {
+        assert!(!summon_copy_allowed(Some("windowsterminal.exe"), &[]));
+        assert!(!summon_copy_allowed(Some("pwsh.exe"), &[]));
+        assert!(!summon_copy_allowed(
+            None,
+            &classes(&["ConsoleWindowClass"])
+        ));
+        assert!(!summon_copy_allowed(
+            Some("anything.exe"),
+            &classes(&["CASCADIA_HOSTING_WINDOW_CLASS"])
+        ));
+    }
+
+    #[test]
+    fn editors_with_a_terminal_never_copy() {
+        assert!(!summon_copy_allowed(Some("code.exe"), &[]));
+        assert!(!summon_copy_allowed(Some("cursor.exe"), &[]));
+        assert!(!summon_copy_allowed(Some("idea64.exe"), &[]));
+        assert!(!summon_copy_allowed(Some("rustrover64.exe"), &[]));
+    }
+}
 
 #[cfg(test)]
 mod crop_tests {

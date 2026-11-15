@@ -486,6 +486,7 @@ export class MainState {
 	#onUi(event: UiEvent) {
 		switch (event.kind) {
 			case "summon":
+				if (event.selection) this.selectionChip = event.selection;
 				void this.summon();
 				break;
 			case "hide":

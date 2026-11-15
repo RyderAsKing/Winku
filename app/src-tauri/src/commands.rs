@@ -287,7 +287,9 @@ pub async fn voice_model_remove(app: AppHandle, id: String) -> Result<(), String
 /// "Open in browser" on a visual: opens its saved `.html` file with the default handler.
 #[tauri::command]
 pub fn open_visual(app: AppHandle, store: State<'_, Store>, id: String) -> Result<(), String> {
-    let file = crate::visuals::saved_file(&store.data_dir, &id).ok_or("no such visual")?;
+    // A copy carrying the visual policy, never the saved file: a browser has no sandbox or header.
+    let out = std::env::temp_dir().join("winku-visuals");
+    let file = crate::visuals::browser_copy(&store.data_dir, &id, &out).ok_or("no such visual")?;
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_path(file.to_string_lossy(), None::<&str>)

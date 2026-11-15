@@ -1,0 +1,26 @@
+name: Feature idea
+description: Something Winku could do, or do differently.
+labels: [needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [docs/SPEC.md](https://github.com/RyderAsKing/Winku/blob/main/docs/SPEC.md) decides what Winku does, so ideas get discussed here before anyone writes code. If you'd like to build it yourself, say so below and wait until we agree on the approach.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The situation, not the solution. "I keep retyping the same reply in Outlook" is more useful than "add templates".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What Winku could do
+  - type: dropdown
+    id: build
+    attributes:
+      label: Would you like to build it?
+      options:
+        - "No"
+        - "Yes, once we agree on the approach"

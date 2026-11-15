@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 203.2 976 427.1" width="976" height="427">
+  <title>Winku</title>
+  <defs>
+    <radialGradient id="face" cx="50%" cy="28%" r="72%"><stop offset="0" stop-color="#181B22"/><stop offset="1" stop-color="#07080C"/></radialGradient>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.22" stop-color="#E8FFFC"/><stop offset="0.55" stop-color="#5EF6F0"/><stop offset="1" stop-color="#5EF6F0"/></linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <filter id="bloom" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="15.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="edge"><rect x="0" y="0" width="1024" height="630.3"/></clipPath>
+  </defs>
+  <g clip-path="url(#edge)">
+    <rect x="64" y="243.2" width="896" height="537.6" rx="268.8" fill="url(#face)"/>
+    <rect x="297.6" y="391.0" width="192" height="192" rx="59.3" fill="#5EF6F0" filter="url(#bloom)" opacity="0.9"/>
+    <rect x="297.6" y="391.0" width="192" height="192" rx="59.3" fill="url(#fill)"/>
+    <rect x="314.5" y="405.2" width="158.1" height="88.3" rx="39.5" fill="url(#sheen)" opacity="0.65"/>
+    <ellipse cx="359.7" cy="441.9" rx="39.5" ry="28.2" fill="#fff" opacity="0.82"/>
+    <circle cx="427.5" cy="458.8" r="9.0" fill="#fff" opacity="0.95"/>
+    <rect x="553.6" y="391.0" width="192" height="192" rx="59.3" fill="#5EF6F0" filter="url(#bloom)" opacity="0.9"/>
+    <rect x="553.6" y="391.0" width="192" height="192" rx="59.3" fill="url(#fill)"/>
+    <rect x="570.5" y="405.2" width="158.1" height="88.3" rx="39.5" fill="url(#sheen)" opacity="0.65"/>
+    <ellipse cx="615.7" cy="441.9" rx="39.5" ry="28.2" fill="#fff" opacity="0.82"/>
+    <circle cx="683.5" cy="458.8" r="9.0" fill="#fff" opacity="0.95"/>
+  </g>
+</svg>

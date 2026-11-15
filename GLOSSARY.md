@@ -2,6 +2,24 @@
 
 A desktop assistant that lives as a pair of eyes at the edge of the screen. These are the words its docs and code use for things specific to it.
 
+## Surfaces
+
+**Eyes**:
+Winku at rest: the small dark shape with two eyes that sits at the edge of the screen and shows what Winku is doing.
+_Avoid_: Pill (in user-facing text; it is only the name of the shape), widget, mascot, avatar
+
+**Bar**:
+The eyes opened up into a text box for typing a message.
+_Avoid_: Input, prompt box, chat box
+
+**Bubble**:
+The translucent box under or over the bar where a reply appears.
+_Avoid_: Popup, panel, card
+
+**Transcript**:
+The whole thread shown at once, opened with `Ctrl+J`.
+_Avoid_: History (History is where cleared threads and past actions are kept), log
+
 ## Conversation
 
 **Thread**:

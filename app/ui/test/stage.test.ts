@@ -80,3 +80,13 @@ test("a bubble holding a visual doesn't time out", () => {
 	expect(bubbleLinger("Here is the chart.", { visual: true })).toBeNull();
 	expect(bubbleLinger("Here is the chart.", { visual: false })).toBe(8480);
 });
+
+test("a visual's wide bubble opens under the resting pill, growing from the eyes' side, and stays until dismissed", () => {
+	const d = dimsFor("small", 1920);
+	// The pill stays pill-sized (a scheduled run doesn't open the bar); only the bubble is Wide.
+	const reasons = wideReasons({ browsing: false, visual: true });
+	const [pill, bubble] = shapesFor(d, rightBelow, { headW: d.pillW, headH: d.pillH, bubbleH: 200, bubbleW: barWidth(d, reasons) });
+	expect(pill).toEqual({ x: 640 - 92, y: STRIP, w: 92, h: 56, r: 28 });
+	expect(bubble).toEqual({ x: 0, y: STRIP + 56 + GAP, w: 640, h: 200, r: BUBBLE_RADIUS });
+	expect(bubbleLinger("Your build finished.", { visual: true })).toBeNull();
+});

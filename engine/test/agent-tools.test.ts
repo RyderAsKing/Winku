@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { FauxStep } from "../src/faux.ts";
 import type { OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
 import { DECLINED } from "../src/tools/permission.ts";
+import { refusePage } from "../src/tools/show.ts";
 import { EngineProcess, removeTempDirs } from "./harness.ts";
 
 const running: EngineProcess[] = [];
@@ -493,6 +494,37 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	await engine.shutdown();
 }, T);
 
+test("show refuses pages sized by the viewport, with an error that says what to change", async () => {
+	const engine = start();
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Tall", html: "<div style=\"height: 100vh\">x</div>" }),
+				call("show", { title: "Mixed", html: "<style>.a{min-height:50DVH}</style>" }),
+				call("show", { title: "Fine", html: "<p>viewport width of 100%, 5 vhs</p>" }),
+				{ text: "done" },
+			],
+		},
+	});
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 20, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.prompt("draw");
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toMatch(/vh.*pixel|pixel.*vh/i);
+	expect(rows[1]?.detail).toMatch(/dvh/i);
+	expect(rows[2]?.detail).toContain("20 px");
+	// Only the page that passed was saved and shown.
+	expect(showRequests(engine.records).map((r) => r.params.title)).toEqual(["Fine"]);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	await engine.shutdown();
+}, T);
+
+test("pages over 512 KB are refused with advice to shrink them", () => {
+	expect(refusePage("x".repeat(512 * 1024))).toBeUndefined();
+	expect(refusePage("x".repeat(512 * 1024 + 1))).toMatch(/over 512 KB.*smaller/);
+	// Counted in bytes, not characters.
+	expect(refusePage("é".repeat(256 * 1024 + 1))).toMatch(/512 KB/);
+});
+
 test("show writes local images into the saved page and refuses a renamed text file", async () => {
 	const engine = start();
 	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : { ok: true, data: {} });
@@ -545,6 +577,39 @@ test("while show is being written, drawing events carry its title before the too
 	expect(firstDrawing).toBeLessThan(toolStart);
 	const start_ = records[toolStart];
 	expect(drawing[0]).toMatchObject({ toolCallId: start_?.type === "tool_start" ? start_.toolCallId : "?" });
+	await engine.shutdown();
+}, T);
+
+test("a scheduled, spoken run can show a visual: no permission ask, say blocks hold the speech, the visual is never read", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 220, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				{
+					text: "<say>Your build times are on screen.</say>",
+					toolCalls: [{ name: "show", arguments: { title: "Build times", html: "<p>secret-chart-words</p>" } }],
+				},
+				{ text: "<say>That's the chart.</say>" },
+			],
+		},
+	});
+	const { end, records } = await engine.prompt("show the build times", { scheduled: { name: "Build report", kind: "timer" }, speak: "enough" });
+	expect(end).toMatchObject({ aborted: false });
+
+	// The visual belongs to the scheduled run's reply, and never asks, even in a scheduled run.
+	expect(permissionRequests(engine.records)).toHaveLength(0);
+	const shown = showRequests(engine.records);
+	expect(shown).toHaveLength(1);
+	expect(shown[0]?.params).toMatchObject({ replyId: end.id, title: "Build times" });
+	expect(records.some((r) => r.type === "drawing" || r.type === "tool_start")).toBe(true);
+
+	// What is said is only the <say> blocks; the page's words appear in no say event or reply text.
+	const said = records.filter((r) => r.type === "say").map((r) => (r.type === "say" ? r.text : ""));
+	expect(said).toEqual(["Your build times are on screen.", "That's the chart."]);
+	expect(said.join(" ")).not.toContain("secret-chart-words");
+	expect(end.text).not.toContain("secret-chart-words");
 	await engine.shutdown();
 }, T);
 

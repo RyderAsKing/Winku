@@ -18,3 +18,9 @@ test("code blocks and tables are mentioned once, not read", () => {
 	const reply = "Run this:\n\n```ps1\nGet-ChildItem\n```\n\nand this:\n\n```\nls\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nDone.";
 	expect(speakable(reply)).toBe("Run this:\nThe code is in the bar.\nand this:\nThe table is in the bar.\nDone.");
 });
+
+test("a reply with a visual reads only its written words: the visual never reaches speech", () => {
+	// The visual is held beside the text (ReplyVisual), not inside it, so only the words are read.
+	expect(speakable("Here is the chart of your build times.")).toBe("Here is the chart of your build times.");
+	expect(speakable("Chart below.\n\n<iframe src=\"winku-visual://localhost/ab12.html\"></iframe>")).toBe("Chart below.");
+});

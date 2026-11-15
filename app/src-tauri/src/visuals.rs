@@ -35,14 +35,20 @@ pub const BRIDGE: &str = concat!("<script>", include_str!("bridge.js"), "</scrip
 /// The visual id in a request path, `/<16 hex>.html`; anything else is not a visual.
 pub fn visual_id(path: &str) -> Option<&str> {
     let id = path.strip_prefix('/')?.strip_suffix(".html")?;
-    (id.len() == 16 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-        .then_some(id)
+    (id.len() == 16
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then_some(id)
 }
 
 /// The page with the bridge as the first thing in it: just inside `<head>`, else just inside
 /// `<html>`, else after the doctype, else at the very start. The file itself stays as written.
 pub fn with_bridge(page: &str) -> String {
-    insert_first(page, &format!("<style id=\"winku-style\">{STYLE}</style>{BRIDGE}"))
+    insert_first(
+        page,
+        &format!("<style id=\"winku-style\">{STYLE}</style>{BRIDGE}"),
+    )
 }
 
 /// The page for "Open in browser": the visual policy as a `<meta>` (no response header there),
@@ -150,11 +156,16 @@ mod tests {
         assert_eq!(copy, out.join("00000000000000ee.html"));
         let text = std::fs::read_to_string(&copy).unwrap();
         let meta = format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">");
-        assert!(text.starts_with(&format!("<!doctype html><html><head>{meta}<style id=\"winku-style\">{STYLE}</style><title>")));
+        assert!(text.starts_with(&format!(
+            "<!doctype html><html><head>{meta}<style id=\"winku-style\">{STYLE}</style><title>"
+        )));
         assert!(!text.contains("winku: \"visual\"") && !text.contains(include_str!("bridge.js")));
         assert!(text.ends_with("<script>x()</script></body></html>"));
         // The saved file stays as written.
-        assert_eq!(std::fs::read_to_string(dir.join("visuals").join("00000000000000ee.html")).unwrap(), page);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("visuals").join("00000000000000ee.html")).unwrap(),
+            page
+        );
         assert_eq!(browser_copy(&dir, "../settings", &out), None);
         assert_eq!(browser_copy(&dir, "00000000000000dd", &out), None);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -164,7 +175,11 @@ mod tests {
     fn open_in_browser_finds_only_saved_visuals() {
         let dir = std::env::temp_dir().join(format!("winku-visual-file-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("visuals")).unwrap();
-        std::fs::write(dir.join("visuals").join("00000000000000cc.html"), "<p>x</p>").unwrap();
+        std::fs::write(
+            dir.join("visuals").join("00000000000000cc.html"),
+            "<p>x</p>",
+        )
+        .unwrap();
         assert_eq!(
             saved_file(&dir, "00000000000000cc"),
             Some(dir.join("visuals").join("00000000000000cc.html"))
@@ -197,7 +212,8 @@ mod tests {
     #[test]
     fn the_bridge_runs_before_the_page() {
         let ins = inserted();
-        let page = "<!doctype html><html lang=en><head><title>x</title></head><body>hi</body></html>";
+        let page =
+            "<!doctype html><html lang=en><head><title>x</title></head><body>hi</body></html>";
         assert_eq!(
             with_bridge(page),
             format!("<!doctype html><html lang=en><head>{ins}<title>x</title></head><body>hi</body></html>")
@@ -222,7 +238,11 @@ mod tests {
     fn serves_the_saved_page_with_its_own_policy() {
         let dir = std::env::temp_dir().join(format!("winku-visuals-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("visuals")).unwrap();
-        std::fs::write(dir.join("visuals").join("00000000000000aa.html"), "<p>chart</p>").unwrap();
+        std::fs::write(
+            dir.join("visuals").join("00000000000000aa.html"),
+            "<p>chart</p>",
+        )
+        .unwrap();
         let ins = inserted();
         let get = |uri: &str| serve(&dir, &Request::get(uri).body(Vec::new()).unwrap());
 
@@ -251,7 +271,14 @@ mod style_tests {
 
     #[test]
     fn pages_start_with_winkus_palette_and_a_bare_base() {
-        for var in ["--text:", "--muted:", "--accent:#5ef6f0", "--hot:", "--font:", "--mono:"] {
+        for var in [
+            "--text:",
+            "--muted:",
+            "--accent:#5ef6f0",
+            "--hot:",
+            "--font:",
+            "--mono:",
+        ] {
             assert!(STYLE.contains(var), "{var}");
         }
         assert!(STYLE.contains("html,body{background:transparent}"));
@@ -265,10 +292,13 @@ mod style_tests {
 
     #[test]
     fn the_house_style_has_dot_bars_with_no_unlit_dots_and_no_motion_when_reduced() {
-        assert!(STYLE.contains(".w-bars") && STYLE.contains(".w-dots") && STYLE.contains(".w-bar.hot"));
+        assert!(
+            STYLE.contains(".w-bars") && STYLE.contains(".w-dots") && STYLE.contains(".w-bar.hot")
+        );
         // Lit dots only: the dot background is on the bar's own height, never a full-height grid.
         assert!(STYLE.contains("height:calc(var(--rows)*8px)"));
-        assert!(STYLE.contains("@media (prefers-reduced-motion:reduce){.w-dots,.w-rise{animation:none}}"));
+        assert!(STYLE
+            .contains("@media (prefers-reduced-motion:reduce){.w-dots,.w-rise{animation:none}}"));
         // The dots rise once.
         assert!(!STYLE.contains("infinite"));
     }

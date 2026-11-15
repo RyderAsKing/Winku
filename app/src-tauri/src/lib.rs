@@ -14,8 +14,8 @@ mod secrets;
 mod settings;
 mod tasks;
 mod update;
-mod voice;
 mod visuals;
+mod voice;
 mod window;
 
 use tauri::{Manager, RunEvent, WindowEvent};

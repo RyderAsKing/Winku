@@ -77,11 +77,11 @@ bun run brand
 
 It renders [mark.png](mark.png) (1024 px), the social card [social-card.png](social-card.png) (1280×640, from [social-card.html](social-card.html)) and the app icons in `app/src-tauri/icons/`.
 
-The README's demo GIF and pictures in `docs/media/` come from the UI running on the mock shell:
+The pictures in `docs/media/`, used by the README's docs pages, come from the UI running on the mock shell:
 
 ```sh
 bun run ui:dev          # in one terminal
-bun run readme-media    # in another; needs ffmpeg
+bun run readme-media    # in another
 ```
 
 After changing the social card, upload `social-card.png` in the repository's Settings > General > Social preview. GitHub has no API for it.

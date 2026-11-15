@@ -68,6 +68,8 @@ jobs:
         working-directory: app
         run: |
           bun install --frozen-lockfile
+          # The bridge test runs a visual's bridge script in headless Chromium.
+          bunx playwright install --with-deps --only-shell chromium
           bun run check
           bun run test
           bun run ui:build
@@ -75,9 +77,7 @@ jobs:
 
       - name: Eyes motion budget (Playwright, mock shell)
         working-directory: app
-        run: |
-          bunx playwright install --with-deps --only-shell chromium
-          bun run motion-check
+        run: bun run motion-check
 
       - name: Shell fmt, clippy, tests
         working-directory: app/src-tauri

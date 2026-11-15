@@ -262,11 +262,13 @@ export class Engine {
 	private tools() {
 		this.agentToolList = agentTools({
 			home: homedir(),
+			dataDir: () => this.config.dataDir,
 			shells: localShells(),
 			ripgrep: hasRipgrep(),
 			policy: () => this.policy,
 			requests: this.requests,
 			replyId: () => this.replies.activeId,
+			threadVisuals: () => this.thread.visualIds(),
 			scheduledRun: () => this.replies.activeScheduled,
 			spoken: () => this.replies.activePromptSpoken,
 			supportsImages: () => modelInfo(this.model).supportsImages,

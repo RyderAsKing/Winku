@@ -4,6 +4,7 @@
 	import { follow } from "../lib/follow.ts";
 	import Markdown from "../lib/Markdown.svelte";
 	import ReplyView from "./ReplyView.svelte";
+	import Visual, { shellHandlers } from "./Visual.svelte";
 	import type { MainState } from "./state.svelte.ts";
 
 	/** `embedded`: rows only, inside someone else's scroll box (the reply bubble's way back). */
@@ -40,6 +41,8 @@
 				</summary>
 				{#if item.detail}<pre>{item.detail}</pre>{/if}
 			</details>
+		{:else if item.kind === "visual"}
+			<Visual handlers={app?.visualHandlers ?? shellHandlers} visual={app?.pendingVisuals[item.visualId] ?? { requestId: "", id: item.visualId, title: item.title, at: 0, answered: true }} />
 		{:else if item.kind === "compaction"}
 			<details class="row">
 				<summary>Earlier conversation summarized</summary>

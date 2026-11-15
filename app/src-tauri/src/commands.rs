@@ -82,7 +82,7 @@ pub async fn engine_call(engine: State<'_, Engine>, message: Value) -> Result<Va
     engine.call(message).await
 }
 
-/// Answers a `permission` Request (step 6; the plumbing is trivial so it's here already).
+/// Answers a Request the main window handles: `permission` (step 6) or `visual_show`.
 #[tauri::command]
 pub fn engine_respond(engine: State<'_, Engine>, mut response: Value) -> Result<(), String> {
     response["type"] = Value::String("response".into());
@@ -282,6 +282,18 @@ pub async fn voice_model_remove(app: AppHandle, id: String) -> Result<(), String
     tauri::async_runtime::spawn_blocking(move || crate::voice::remove_model(&app, &id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// "Open in browser" on a visual: opens its saved `.html` file with the default handler.
+#[tauri::command]
+pub fn open_visual(app: AppHandle, store: State<'_, Store>, id: String) -> Result<(), String> {
+    // A copy carrying the visual policy, never the saved file: a browser has no sandbox or header.
+    let out = std::env::temp_dir().join("winku-visuals");
+    let file = crate::visuals::browser_copy(&store.data_dir, &id, &out).ok_or("no such visual")?;
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(file.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 /// Opens a link from a reply in the default browser. Only http(s): a model-written link must not

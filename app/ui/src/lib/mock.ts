@@ -176,6 +176,7 @@ export function createMockShell(): ShellImpl {
 		if (message.type === "prompt") {
 			if (/\bremember\b/i.test(message.text)) memoryReply(message.id);
 			else if (/\bclean up\b/i.test(message.text)) askReply(message.id);
+			else if (/\bchart\b/i.test(message.text)) drawReply(message.id);
 			else stream(message.id, Boolean(message.speak));
 		}
 		if (message.type === "abort" && streaming) {
@@ -199,6 +200,8 @@ export function createMockShell(): ShellImpl {
 				return (params.has("empty") ? [] : params.has("many") ? [...SAMPLE_HISTORY, ...Array.from({ length: 40 }, (_, i) => ({ ...SAMPLE_HISTORY[2], id: `archive-${i}`, title: `Archive ${i + 1}: ${"LongProjectPath".repeat(12)}`, updatedAt: now - (i + 4) * 86400000 }))] : SAMPLE_HISTORY).filter((h) => !message.query || h.title.toLowerCase().includes(message.query.toLowerCase()));
 			case "history_read":
 				return params.has("long") ? [...SAMPLE_TRANSCRIPT, { kind: "assistant", id: "long", text: LONG_REPLY, at: now }] : SAMPLE_TRANSCRIPT;
+			case "history_delete":
+				return undefined;
 			case "clear":
 				setTimeout(() => emit("engine", { type: "thread_changed", reason: "clear", sessionId: "new" }), 10);
 				return { undoToken: "undo-1" };
@@ -241,6 +244,30 @@ export function createMockShell(): ShellImpl {
 				emit("engine", { type: "text_delta", id, delta: text });
 				emit("engine", { type: "reply_end", id, text, aborted: false, mood: "happy" });
 			}, 600),
+		);
+	};
+
+	/** A reply that draws a visual ("chart" prompts): the title streams in, then the call ends. The
+	 * browser has no visual scheme, so it ends with text instead of a visual. */
+	const drawReply = (id: string) => {
+		emit("engine", { type: "thinking", id });
+		const toolCallId = "t-draw";
+		const title = "Sales by region, last quarter";
+		let t = 500;
+		for (let i = 6; i <= title.length; i += 6) {
+			const partial = title.slice(0, i);
+			timers.push(setTimeout(() => emit("engine", { type: "drawing", id, toolCallId, title: partial }), t));
+			t += 120;
+		}
+		timers.push(setTimeout(() => emit("engine", { type: "drawing", id, toolCallId, title }), t));
+		timers.push(setTimeout(() => emit("engine", { type: "tool_start", id, toolCallId, name: "show", summary: title }), t + 3500));
+		timers.push(
+			setTimeout(() => {
+				emit("engine", { type: "tool_end", id, toolCallId, ok: true, summary: title });
+				const text = "The north region grew fastest, up 18%.";
+				emit("engine", { type: "text_delta", id, delta: text });
+				emit("engine", { type: "reply_end", id, text, aborted: false, mood: "happy" });
+			}, t + 3700),
 		);
 	};
 

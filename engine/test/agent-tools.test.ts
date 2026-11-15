@@ -1,11 +1,12 @@
 // The agent tools through the real engine process: cwd is the fake home, Requests are answered
 // by the harness (the shell's part). No network: web tools are covered in tools.test.ts.
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FauxStep } from "../src/faux.ts";
 import type { OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
 import { DECLINED } from "../src/tools/permission.ts";
+import { refusePage } from "../src/tools/show.ts";
 import { EngineProcess, removeTempDirs } from "./harness.ts";
 
 const running: EngineProcess[] = [];
@@ -444,4 +445,208 @@ test("ask before running: clipboard write and edit ask first, read does not", as
 	expect(clip.text).toBe("abc");
 	expect(clip.writes).toBe(0);
 	await engine.shutdown();
+}, T);
+
+// ───────────────────────────── visuals ─────────────────────────────
+
+type ShowRequest = Extract<Request, { method: "visual_show" }>;
+const showRequests = (records: OutboundMessage[]) => records.filter((r): r is ShowRequest => r.type === "request" && r.method === "visual_show");
+
+test("show saves the page as its own file, asks the shell to show it and returns the frame's height and errors", async () => {
+	const engine = start();
+	const answers = [
+		{ ok: true, data: { height: 312, errors: [] } },
+		{ ok: true, data: { height: 40, errors: ["ReferenceError: Chart is not defined (line 3)"] } },
+	];
+	engine.onRequest = (request) => (request.method === "visual_show" ? answers.shift() : { ok: true, data: { decision: "deny" } });
+	const page = "<!doctype html><html><body><p>Hello</p></body></html>";
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				{ text: "Here it is.", toolCalls: [{ name: "show", arguments: { title: "Sales by month", html: page } }] },
+				call("show", { title: "Broken", html: "<script>new Chart()</script>" }),
+				{ text: "done" },
+			],
+		},
+	});
+	const { end, records } = await engine.prompt("chart my sales");
+	expect(end).toMatchObject({ aborted: false });
+
+	// Never asks, even with "Ask before running" on.
+	expect(permissionRequests(engine.records)).toHaveLength(0);
+
+	const shown = showRequests(engine.records);
+	expect(shown.map((r) => r.params.title)).toEqual(["Sales by month", "Broken"]);
+	expect(shown[0]?.params.replyId).toBe(end.id);
+	const [first, second] = shown.map((r) => r.params.visualId);
+	expect(first).toMatch(/^[0-9a-f]{16}$/);
+	expect(second).not.toBe(first);
+	// Each visual is its own file under visuals\ in the data folder, the page exactly as written.
+	expect(readFileSync(join(engine.dataDir, "visuals", `${first}.html`), "utf8")).toBe(page);
+	expect(readdirSync(join(engine.dataDir, "visuals")).sort()).toEqual([`${first}.html`, `${second}.html`].sort());
+
+	expect(records.filter((r) => r.type === "tool_start").map((r) => (r.type === "tool_start" ? r.summary : ""))).toEqual(["Sales by month", "Broken"]);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("312 px");
+	expect(rows[0]?.detail).toContain("No script errors");
+	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
+	await engine.shutdown();
+}, T);
+
+test("show refuses pages sized by the viewport, with an error that says what to change", async () => {
+	const engine = start();
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Tall", html: "<div style=\"height: 100vh\">x</div>" }),
+				call("show", { title: "Mixed", html: "<style>.a{min-height:50DVH}</style>" }),
+				call("show", { title: "Fine", html: "<p>viewport width of 100%, 5 vhs</p>" }),
+				{ text: "done" },
+			],
+		},
+	});
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 20, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.prompt("draw");
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toMatch(/vh.*pixel|pixel.*vh/i);
+	expect(rows[1]?.detail).toMatch(/dvh/i);
+	expect(rows[2]?.detail).toContain("20 px");
+	// Only the page that passed was saved and shown.
+	expect(showRequests(engine.records).map((r) => r.params.title)).toEqual(["Fine"]);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	await engine.shutdown();
+}, T);
+
+test("pages over 512 KB are refused with advice to shrink them", () => {
+	expect(refusePage("x".repeat(512 * 1024))).toBeUndefined();
+	expect(refusePage("x".repeat(512 * 1024 + 1))).toMatch(/over 512 KB.*smaller/);
+	// Counted in bytes, not characters.
+	expect(refusePage("é".repeat(256 * 1024 + 1))).toMatch(/512 KB/);
+});
+
+test("show writes local images into the saved page and refuses a renamed text file", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : { ok: true, data: {} });
+	mkdirSync(engine.dataDir, { recursive: true });
+	const png = join(engine.dataDir, "dot.png");
+	const fake = join(engine.dataDir, "fake.png");
+	const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+	writeFileSync(png, PNG);
+	writeFileSync(fake, "plain text");
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Fake", html: `<img src="${fake}">` }),
+				call("show", { title: "Dot", html: `<img src="${png}"><img src="https://example.com/x.png">` }),
+				{ text: "done" },
+			],
+		},
+	});
+	await engine.prompt("show my picture");
+	const shown = showRequests(engine.records);
+	expect(shown.map((r) => r.params.title)).toEqual(["Dot"]);
+	const saved = readFileSync(join(engine.dataDir, "visuals", `${shown[0]?.params.visualId}.html`), "utf8");
+	expect(saved).toBe(`<img src="data:image/png;base64,${PNG.toString("base64")}"><img src="https://example.com/x.png">`);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("not an image");
+	await engine.shutdown();
+}, T);
+
+test("while show is being written, drawing events carry its title before the tool runs", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 200, errors: [] } } : { ok: true, data: {} });
+	await engine.configure({
+		faux: {
+			tokensPerSecond: 400,
+			replies: [call("show", { title: "Build times, last 7 days", html: `<p>${"x".repeat(400)}</p>` }), { text: "done" }],
+		},
+	});
+	const { records } = await engine.prompt("chart my build times");
+	const drawing = records.filter((r) => r.type === "drawing");
+	expect(drawing.length).toBeGreaterThan(0);
+	expect(drawing.at(-1)).toMatchObject({ title: "Build times, last 7 days" });
+	// Titles only grow toward the full one, and no event repeats the one before it.
+	const titles = drawing.map((r) => (r.type === "drawing" ? r.title : ""));
+	for (let i = 1; i < titles.length; i++) expect(titles[i]).not.toBe(titles[i - 1]);
+	for (const t of titles) expect("Build times, last 7 days".startsWith(t)).toBe(true);
+	// It comes before the tool runs, and names the same tool call.
+	const firstDrawing = records.findIndex((r) => r.type === "drawing");
+	const toolStart = records.findIndex((r) => r.type === "tool_start");
+	expect(firstDrawing).toBeLessThan(toolStart);
+	const start_ = records[toolStart];
+	expect(drawing[0]).toMatchObject({ toolCallId: start_?.type === "tool_start" ? start_.toolCallId : "?" });
+	await engine.shutdown();
+}, T);
+
+test("a scheduled, spoken run can show a visual: no permission ask, say blocks hold the speech, the visual is never read", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 220, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				{
+					text: "<say>Your build times are on screen.</say>",
+					toolCalls: [{ name: "show", arguments: { title: "Build times", html: "<p>secret-chart-words</p>" } }],
+				},
+				{ text: "<say>That's the chart.</say>" },
+			],
+		},
+	});
+	const { end, records } = await engine.prompt("show the build times", { scheduled: { name: "Build report", kind: "timer" }, speak: "enough" });
+	expect(end).toMatchObject({ aborted: false });
+
+	// The visual belongs to the scheduled run's reply, and never asks, even in a scheduled run.
+	expect(permissionRequests(engine.records)).toHaveLength(0);
+	const shown = showRequests(engine.records);
+	expect(shown).toHaveLength(1);
+	expect(shown[0]?.params).toMatchObject({ replyId: end.id, title: "Build times" });
+	expect(records.some((r) => r.type === "drawing" || r.type === "tool_start")).toBe(true);
+
+	// What is said is only the <say> blocks; the page's words appear in no say event or reply text.
+	const said = records.filter((r) => r.type === "say").map((r) => (r.type === "say" ? r.text : ""));
+	expect(said).toEqual(["Your build times are on screen.", "That's the chart."]);
+	expect(said.join(" ")).not.toContain("secret-chart-words");
+	expect(end.text).not.toContain("secret-chart-words");
+	await engine.shutdown();
+}, T);
+
+type VisualRow = Extract<TranscriptItem, { kind: "visual" }>;
+const visualRows = (items: TranscriptItem[]) => items.filter((t): t is VisualRow => t.kind === "visual");
+
+test("visuals stay in the thread after a restart; clearing keeps their files and deleting the History entry removes them", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : undefined);
+	await engine.configure({
+		faux: { replies: [{ text: "Look:", toolCalls: [{ name: "show", arguments: { title: "Pie", html: "<p>pie</p>" } }] }, { text: "That's it." }] },
+	});
+	await engine.prompt("draw a pie");
+	const visualId = showRequests(engine.records)[0]?.params.visualId as string;
+	const file = join(engine.dataDir, "visuals", `${visualId}.html`);
+
+	const items = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	expect(items.map((t) => t.kind)).toEqual(["user", "assistant", "tool", "visual", "assistant"]);
+	expect(visualRows(items)[0]).toMatchObject({ visualId, title: "Pie" });
+	const threadId = (await engine.callOk<{ id: string; current: boolean }[]>({ type: "history_list" })).find((e) => e.current)?.id as string;
+	await engine.shutdown();
+
+	// After a restart the visual is still in the thread, and its file is still there.
+	const again = engine.restart();
+	running.push(again);
+	await again.configure();
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "transcript" }))).toHaveLength(1);
+
+	// The current thread can't be deleted; clear first. Clearing keeps the file.
+	expect(await again.call({ type: "history_delete", entryId: threadId })).toMatchObject({ ok: false });
+	await again.callOk({ type: "clear" });
+	expect(existsSync(file)).toBe(true);
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "history_read", entryId: threadId }))).toHaveLength(1);
+
+	await again.callOk({ type: "history_delete", entryId: threadId });
+	expect(existsSync(file)).toBe(false);
+	expect((await again.callOk<{ id: string }[]>({ type: "history_list" })).map((e) => e.id)).not.toContain(threadId);
+	expect(await again.call({ type: "history_read", entryId: threadId })).toMatchObject({ ok: false });
+	await again.shutdown();
 }, T);

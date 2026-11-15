@@ -11,9 +11,10 @@
 	import Meta from "./Meta.svelte";
 	import HotkeyHints from "./HotkeyHints.svelte";
 	import ReplyBubble from "./ReplyBubble.svelte";
-	import { GAP, headHeight, STRIP, stageSize } from "./stage.ts";
+	import { barWidth, GAP, headHeight, STRIP, stageSize, wideReasons } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
+	import Visual from "./Visual.svelte";
 
 	const app = new MainState();
 	void app.init();
@@ -25,10 +26,12 @@
 	const stage = $derived(stageSize(d));
 	const open = $derived(app.mode !== "pill");
 	const transcript = $derived(app.mode === "transcript");
+	/** A visual opened larger, in the transcript-height bubble. */
+	const large = $derived(open && app.largeVisual !== null);
 	// While talking over the resting pill the bar is drawn open, though the window stays a pill.
-	const wide = $derived(open || app.peek);
+	const barOpen = $derived(open || app.peek);
 	// A long message makes the bar taller; the bubble gives up that much room.
-	const headH = $derived(wide ? Math.min(headHeight(d, app.inputH), stage.h - STRIP - GAP - 120) : d.pillH);
+	const headH = $derived(barOpen ? Math.min(headHeight(d, app.inputH), stage.h - STRIP - GAP - 120) : d.pillH);
 	const bubbleMax = $derived(d.bubbleMax - (headH - d.pillH));
 	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
 	const showHints = $derived(app.hotkeyHints && app.settings !== null);
@@ -37,14 +40,14 @@
 	// the strip on the pill's far side, or, with the pill against that screen edge, as one pill
 	// beside the attachments.
 	const attached = $derived(app.selectionChip !== null || app.imageChip !== null);
-	const floatMeta = $derived(wide && !app.needsConnect && app.crowded);
+	const floatMeta = $derived(barOpen && !app.needsConnect && app.crowded);
 	const inStrip = $derived(floatMeta && (app.layout.room ?? true));
 	const metaInRow = $derived(floatMeta && !inStrip);
-	const showChips = $derived(wide && !app.needsConnect && (attached || metaInRow));
+	const showChips = $derived(barOpen && !app.needsConnect && (attached || metaInRow));
 	let stripW = $state(0);
 	/** The chips' rows (they wrap when crowded). */
 	let chipsH = $state(0);
-	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null || showChips);
+	const showBubble = $derived((open && (app.needsConnect || transcript || large)) || showReply || app.toast !== null || showChips);
 	const above = $derived(app.layout.above);
 	// Scrolled back through the conversation over the reply bubble: the bar and bubble widen to
 	// read it, and narrow again back at the end.
@@ -52,11 +55,21 @@
 	$effect(() => {
 		if (!showReply || transcript) browsing = false;
 	});
-	const barW = $derived(browsing && showReply && !transcript ? d.wideW : d.barW);
+	// A bubble holding a visual is Wide too, until it closes; so is a visual opened larger, and the transcript while it holds one.
+	const barW = $derived(
+		barWidth(
+			d,
+			wideReasons({
+				browsing: browsing && showReply && !transcript,
+				visual: (showReply && !transcript && app.holdsVisual) || large,
+				transcriptVisual: transcript && (app.holdsVisual || app.transcript.some((item) => item.kind === "visual")),
+			}),
+		),
+	);
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
 	$effect(() => {
-		app.eyes.setBarVisible(wide || app.bubbleOpen || app.listening || app.busy || app.speaking);
+		app.eyes.setBarVisible(barOpen || app.bubbleOpen || app.listening || app.busy || app.speaking);
 	});
 
 	// Tell the shell what is drawn. Growth is reported at once so nothing is clipped; shrinking
@@ -75,7 +88,7 @@
 	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
 		const next: Drawn = {
-			headW: wide ? barW : d.pillW,
+			headW: barOpen ? barW : d.pillW,
 			headH,
 			bubbleH: Math.max(showBubble ? roomy(bubbleH) : 0, showHints ? Math.ceil(hintH) : 0, showBubble && peekH ? roomy(peekH) : 0),
 			// The hints are as wide as the bar at most.
@@ -105,13 +118,15 @@
 	});
 
 	function onkeydown(event: KeyboardEvent) {
-		if (event.key === "Escape") {
-			event.preventDefault();
-			void app.escape();
-		} else if (event.key.toLowerCase() === "j" && event.ctrlKey && !event.altKey && !event.shiftKey) {
-			event.preventDefault();
-			void app.toggleTranscript();
-		}
+		const press = { key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey };
+		if (app.key(press)) event.preventDefault();
+	}
+
+	// Focus moving into a visual's frame blurs the window too; only a click outside Winku counts.
+	function onblur() {
+		setTimeout(() => {
+			if (!document.hasFocus()) void app.focusLost();
+		}, 0);
 	}
 
 	// A click on the bubble under the resting pill opens the bar, unless it hit a control.
@@ -122,7 +137,7 @@
 	}
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onblur} />
 
 <div class="root" class:framed>
 	<div
@@ -136,7 +151,7 @@
 		style:--bubble-max="{bubbleMax}px"
 		style:--bar-w="{d.barW}px"
 	>
-		<Head {app} open={wide} height={headH} width={barW} />
+		<Head {app} open={barOpen} height={headH} width={barW} />
 
 		{#if inStrip}
 			<div class="strip" bind:offsetWidth={stripW}><Meta {app} look="pills" /></div>
@@ -162,6 +177,8 @@
 				{/if}
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
+				{:else if large && app.largeVisual}
+					<div class="bubble transcript large-visual"><Visual handlers={app.visualHandlers} visual={app.largeVisual} large /></div>
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
@@ -313,6 +330,10 @@
 	}
 	.resting {
 		cursor: pointer;
+	}
+	.large-visual {
+		overflow-y: auto;
+		padding: 8px 14px;
 	}
 	.transcript {
 		height: var(--bubble-max);

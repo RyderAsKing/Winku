@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BUBBLE_RADIUS, bubbleLinger, CHIP_H, dimsFor, GAP, SIZES, STRIP, shapesFor, stageSize } from "../src/main/stage.ts";
+import { BUBBLE_RADIUS, barWidth, bubbleLinger, CHIP_H, dimsFor, GAP, SIZES, STRIP, shapesFor, stageSize, wideReasons } from "../src/main/stage.ts";
 
 const small = SIZES.small;
 const rightBelow = { alignRight: true, above: false };
@@ -48,7 +48,45 @@ test("a long bubble is capped at the stage, where it scrolls", () => {
 });
 
 test("a bubble under the resting pill lingers longer for longer replies, within limits", () => {
-	expect(bubbleLinger("")).toBe(8000);
-	expect(bubbleLinger("one two three")).toBe(8360);
-	expect(bubbleLinger("word ".repeat(1000))).toBe(30_000);
+	const plain = { visual: false };
+	expect(bubbleLinger("", plain)).toBe(8000);
+	expect(bubbleLinger("one two three", plain)).toBe(8360);
+	expect(bubbleLinger("word ".repeat(1000), plain)).toBe(30_000);
+});
+
+test("the bar and bubble are Wide only while there is a reason", () => {
+	const d = dimsFor("medium", 1920);
+	expect(wideReasons({ browsing: false, visual: false })).toEqual([]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false }))).toBe(d.barW);
+	expect(wideReasons({ browsing: true, visual: false })).toEqual(["browsing"]);
+	expect(barWidth(d, wideReasons({ browsing: true, visual: false }))).toBe(d.wideW);
+});
+
+test("a bubble holding a visual makes the bar and bubble Wide", () => {
+	const d = dimsFor("small", 1920);
+	expect(wideReasons({ browsing: false, visual: true })).toEqual(["visual"]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: true }))).toBe(640);
+	expect(wideReasons({ browsing: true, visual: true })).toEqual(["browsing", "visual"]);
+});
+
+test("the transcript holding a visual makes the bar and bubble Wide", () => {
+	const d = dimsFor("small", 1920);
+	expect(wideReasons({ browsing: false, visual: false, transcriptVisual: true })).toEqual(["transcript"]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false, transcriptVisual: true }))).toBe(640);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false, transcriptVisual: false }))).toBe(d.barW);
+});
+
+test("a bubble holding a visual doesn't time out", () => {
+	expect(bubbleLinger("Here is the chart.", { visual: true })).toBeNull();
+	expect(bubbleLinger("Here is the chart.", { visual: false })).toBe(8480);
+});
+
+test("a visual's wide bubble opens under the resting pill, growing from the eyes' side, and stays until dismissed", () => {
+	const d = dimsFor("small", 1920);
+	// The pill stays pill-sized (a scheduled run doesn't open the bar); only the bubble is Wide.
+	const reasons = wideReasons({ browsing: false, visual: true });
+	const [pill, bubble] = shapesFor(d, rightBelow, { headW: d.pillW, headH: d.pillH, bubbleH: 200, bubbleW: barWidth(d, reasons) });
+	expect(pill).toEqual({ x: 640 - 92, y: STRIP, w: 92, h: 56, r: 28 });
+	expect(bubble).toEqual({ x: 0, y: STRIP + 56 + GAP, w: 640, h: 200, r: BUBBLE_RADIUS });
+	expect(bubbleLinger("Your build finished.", { visual: true })).toBeNull();
 });

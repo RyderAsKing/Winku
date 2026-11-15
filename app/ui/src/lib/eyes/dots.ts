@@ -29,6 +29,22 @@ export function quiet(ax: number, eyes: number): number {
 	return 1 - (1 - UNDER_TEXT) * t * t * (3 - 2 * t);
 }
 
+/** How far from the eyes' row, px, the bar's top and bottom edges begin: the message never reaches
+ * them. */
+export const EDGE = 13;
+
+/**
+ * How brightly a loop's dot may show. Like `quiet`, except that Drawing's plot shines in full along
+ * the bar's top and bottom edges, clear of the message: the one exception (SPEC §4, Dot field).
+ */
+export function quietFor(loop: DotLoop | null, ax: number, ay: number, eyes: number): number {
+	if (loop === "drawing" && Math.abs(ay) > EDGE) return 1;
+	return quiet(ax, eyes);
+}
+
+/** How long one loop cross-fades into the next, ms (Drawing's entry and exit, SPEC §4). */
+export const LOOP_FADE_MS = 600;
+
 /** A dot's opacity for brightness `b` (0…1). */
 export function alphaFor(b: number): number {
 	return 0.04 + (MAX_ALPHA - 0.04) * b;
@@ -43,13 +59,15 @@ export interface Field {
 	level: number;
 	/** Burst strength, 0…1 (higher thinking levels sweep further and brighter). */
 	strength: number;
+	/** Half the pill's width: where the eyes' box ends along the bar, px. Defaults to `half`. */
+	eyes?: number;
 }
 
-export type DotLoop = "listening" | "thinking" | "speaking";
+export type DotLoop = "listening" | "thinking" | "speaking" | "drawing";
 export type DotBurst = "happy" | "hearts" | "surprised" | "sad" | "error" | "cleared" | "level" | "calm";
 
 export function dotLoopFor(state: EyeState): DotLoop | null {
-	return state === "listening" || state === "thinking" || state === "speaking" ? state : null;
+	return state === "listening" || state === "thinking" || state === "speaking" || state === "drawing" ? state : null;
 }
 
 /** The burst when the eyes change to a state, if any. */
@@ -147,6 +165,25 @@ export function loopField(kind: DotLoop, ax: number, ay: number, t: number, f: F
 			const reach = f.half * 0.85 * swing;
 			// A quiet column is dark, not a dot on the centre line.
 			return reach >= PITCH / 2 && Math.abs(ay) <= reach ? clamp(0.75 * falloff(ax, f) ** 1.6) : 0;
+		}
+		// Drawing a visual: bars of dots rise from the bottom one after another along the bar, like
+		// a chart being plotted, hold a moment, then fade, every 3 s.
+		case "drawing": {
+			const p = (t % 3) / 3;
+			const start = (f.eyes ?? f.half) + 8;
+			const end = f.length - 8;
+			if (ax < start || ax > end) return 0;
+			const slot = 4 * PITCH;
+			if ((ax - start) % slot > 2.2 * PITCH) return 0;
+			const i = Math.floor((ax - start) / slot);
+			const count = Math.max(1, Math.floor((end - start) / slot));
+			const grow = clamp((p - (i / count) * 0.6) / 0.08);
+			const room = 2 * f.half - 12;
+			const tall = Math.min(room, (0.25 + 0.7 * (0.5 + 0.5 * Math.sin(i * 0.9 + 1) * hash(i, 4) + 0.2 * hash(i, 9))) * room);
+			const top = f.half - 6 - tall * grow;
+			if (grow <= 0 || ay < top || ay > f.half - 6) return 0;
+			const fade = p > 0.86 ? 1 - (p - 0.86) / 0.14 : 1;
+			return clamp((ay - top < PITCH ? 1 : 0.4) * fade);
 		}
 	}
 }

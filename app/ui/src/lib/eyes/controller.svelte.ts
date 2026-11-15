@@ -7,7 +7,7 @@
 import type { Mood } from "../../../../../engine/src/protocol.ts";
 import { afterReply, type EyeState, HeartsGate, type MoodLook, moodLook } from "./look.ts";
 
-export type Activity = "idle" | "listening" | "thinking" | "speaking" | "error";
+export type Activity = "idle" | "listening" | "thinking" | "speaking" | "drawing" | "error";
 type Transient = MoodLook | "cleared";
 
 interface EyeHandle {

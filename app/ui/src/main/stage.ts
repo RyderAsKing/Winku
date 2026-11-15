@@ -55,6 +55,27 @@ export function stageSize(d: Dims): { w: number; h: number } {
 	return { w: d.wideW, h: STRIP + d.pillH + GAP + d.bubbleMax };
 }
 
+/** Why the bar and bubble are Wide (GLOSSARY.md): reading back through the thread, or showing a
+ * visual in the reply bubble or the transcript. */
+export type WideReason = "browsing" | "visual" | "transcript";
+
+/** The reasons the bar and bubble are Wide right now; none means their usual width.
+ * `browsing`: scrolled back through the thread over the reply bubble (not the transcript).
+ * `visual`: the reply bubble holds a visual.
+ * `transcript`: the transcript holds a visual, so it looks the same there as in the reply bubble. */
+export function wideReasons(now: { browsing: boolean; visual: boolean; transcriptVisual?: boolean }): WideReason[] {
+	const reasons: WideReason[] = [];
+	if (now.browsing) reasons.push("browsing");
+	if (now.visual) reasons.push("visual");
+	if (now.transcriptVisual) reasons.push("transcript");
+	return reasons;
+}
+
+/** The bar and bubble's width: Wide for any reason, else the bar's usual width. */
+export function barWidth(d: Dims, reasons: readonly WideReason[]): number {
+	return reasons.length > 0 ? d.wideW : d.barW;
+}
+
 /** Lines of a message the bar grows to show before the message box scrolls. */
 export const INPUT_LINES = 4;
 
@@ -93,8 +114,11 @@ export function shapesFor(d: Dims, layout: Layout, { headW, headH, bubbleH, head
 	return shapes;
 }
 
-/** How long a reply bubble under the resting pill stays after the reply and its speech end. */
-export function bubbleLinger(text: string): number {
+/** How long a reply bubble under the resting pill stays after the reply and its speech end.
+ * null: it stays until dismissed (`Esc`, or a click elsewhere with the bar open), as a bubble
+ * holding a visual does. */
+export function bubbleLinger(text: string, held: { visual: boolean }): number | null {
+	if (held.visual) return null;
 	const words = text.trim() ? text.trim().split(/\s+/).length : 0;
 	return Math.min(8000 + words * 120, 30_000);
 }

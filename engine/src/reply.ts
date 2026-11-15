@@ -28,6 +28,8 @@ interface ActiveReply {
 	/** Last model error; cleared when a later attempt succeeds (retries). */
 	error: { message: string; kind: ErrorKind } | undefined;
 	tools: Map<string, string>;
+	/** The title last sent in a drawing event, by tool call: a show call being written. */
+	drawing: Map<string, string>;
 	/** The prompt was a scheduled run (prompt `scheduled`). */
 	scheduled: ScheduledRun | undefined;
 	/** The prompt was dictated (prompt `spoken`). */
@@ -180,6 +182,16 @@ export class Replies {
 		this.emit({ type: "text_delta", id: active.id, delta: out });
 	}
 
+	/** A tool call is streaming in. For `show`, send its title each time it grows (SPEC §3). */
+	private drawing(active: ActiveReply, delta: { contentIndex: number; partial: { content: unknown[] } }): void {
+		const block = delta.partial.content[delta.contentIndex] as { type?: string; id?: string; name?: string; arguments?: Record<string, unknown> } | undefined;
+		if (block?.type !== "toolCall" || block.name !== "show" || !block.id) return;
+		const title = typeof block.arguments?.title === "string" ? block.arguments.title.trim() : "";
+		if (active.drawing.get(block.id) === title && active.drawing.has(block.id)) return;
+		active.drawing.set(block.id, title);
+		this.emit({ type: "drawing", id: active.id, toolCallId: block.id, title });
+	}
+
 	private said(active: ActiveReply, blocks: string[]): void {
 		for (const text of blocks) {
 			// A mood tag belongs at the very end of the reply, but models slip it in anywhere.
@@ -209,6 +221,7 @@ export class Replies {
 								shown: false,
 								error: undefined,
 								tools: new Map(),
+								drawing: new Map(),
 								scheduled: this.promptInfo.get(id)?.scheduled,
 								promptSpoken: this.promptInfo.get(id)?.promptSpoken === true,
 							}
@@ -226,6 +239,7 @@ export class Replies {
 			case "message_update": {
 				const active = this.active;
 				const delta = event.assistantMessageEvent;
+				if (active && (delta.type === "toolcall_start" || delta.type === "toolcall_delta")) return this.drawing(active, delta);
 				if (!active?.stripper || delta.type !== "text_delta") return;
 				if (!active.say) return this.show(active, delta.delta);
 				const out = active.say.push(delta.delta);

@@ -71,11 +71,13 @@ function rig(): Rig {
 	});
 	const list = agentTools({
 		home: dir,
+		dataDir: () => dir,
 		shells: { powershell: false, bash: undefined },
 		ripgrep: false,
 		policy: () => policyFrom(r.askBeforeRunning, []),
 		requests: r.requests,
 		replyId: () => "p1",
+		threadVisuals: () => [],
 		scheduledRun: () => undefined,
 		spoken: () => false,
 		supportsImages: () => false,
@@ -129,11 +131,13 @@ test("desktop tools are offered only with agent-desktop, and the acting ones are
 	]);
 	const without = agentTools({
 		home: r.dir,
+		dataDir: () => r.dir,
 		shells: { powershell: false, bash: undefined },
 		ripgrep: false,
 		policy: () => policyFrom(false, []),
 		requests: r.requests,
 		replyId: () => undefined,
+		threadVisuals: () => [],
 		scheduledRun: () => undefined,
 		spoken: () => false,
 		supportsImages: () => false,

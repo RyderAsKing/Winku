@@ -4,6 +4,7 @@
 	// Continuous loops run only while `animate` is true; everything else is a one-off. State
 	// changes ease: colours cross-fade, the eye opening tweens and a loop settles instead of
 	// snapping back.
+	import { untrack } from "svelte";
 	import { cubicOut } from "svelte/easing";
 	import { Tween } from "svelte/motion";
 	import { lookFor, type EyeState } from "./look.ts";
@@ -94,19 +95,65 @@
 			],
 		},
 	} as const;
+	// Drawing: the pair follows the point it plots, in eye-size units, along the bar and back.
+	const PLOT: [number, number, number][] = [
+		[-0.1, 0.04, 0],
+		[-0.04, -0.04, 0.15],
+		[0.02, 0.02, 0.3],
+		[0.08, -0.06, 0.45],
+		[0.14, -0.02, 0.6],
+		[0.14, -0.02, 0.85],
+		[-0.1, 0.04, 1],
+	];
+	function loopSpec(kind: "pulse" | "bounce" | "plot"): { duration: number; frames: Keyframe[]; easing: string } {
+		if (kind === "plot")
+			return {
+				duration: 3000,
+				easing: "cubic-bezier(0.4, 0, 0.3, 1)",
+				frames: PLOT.map(([x, y, offset]) => ({ translate: `${x * eyeSize}px ${y * eyeSize}px`, offset })),
+			};
+		return { ...LOOPS[kind], frames: LOOPS[kind].frames as unknown as Keyframe[], easing: "ease-in-out" };
+	}
 
 	$effect(() => {
 		const el = pair;
 		const kind = loop;
 		if (!el || kind === "none") return;
-		const spec = LOOPS[kind];
-		const running = el.animate(spec.frames as unknown as Keyframe[], { id: kind, duration: spec.duration, iterations: Infinity, easing: "ease-in-out" });
+		const spec = loopSpec(kind);
+		let running: Animation;
+		if (kind === "plot") {
+			// Ease into the path instead of jumping to its first point.
+			const into = el.animate([{ translate: "0 0" }, { translate: (spec.frames[0] as { translate: string }).translate }], { duration: SLOW_MS, easing: "ease-out", fill: "forwards" });
+			running = el.animate(spec.frames, { id: kind, duration: spec.duration, delay: SLOW_MS, iterations: Infinity, easing: spec.easing });
+			running.ready.then(() => into.cancel()).catch(() => {});
+		} else {
+			running = el.animate(spec.frames, { id: kind, duration: spec.duration, iterations: Infinity, easing: spec.easing });
+		}
 		return () => {
 			const now = getComputedStyle(el);
 			const from = { scale: now.scale === "none" ? "1" : now.scale, translate: now.translate === "none" ? "0 0" : now.translate };
-			running.cancel();
-			el.animate([from, { scale: "1", translate: "0 0" }], { duration: 200, easing: "ease-out" });
+			// The loop and any ease into it.
+			el.getAnimations().forEach((a) => a.cancel());
+			el.animate([from, { scale: "1", translate: "0 0" }], { duration: kind === "plot" ? SLOW_MS : 200, easing: "ease-out" });
 		};
+	});
+
+	// ── into and out of Drawing (SPEC §4) ──
+	// A quick half blink as the eyes pick up the pen or put it down, then a slower change of pose
+	// and colour than usual, so it reads as one gesture.
+	const SLOW_MS = 520;
+	let slow = $state(false);
+	let wasDrawing: boolean | null = null;
+	$effect(() => {
+		const drawing = expression === "drawing";
+		if (wasDrawing !== null && wasDrawing !== drawing) {
+			untrack(() => noted());
+			slow = true;
+			const timer = setTimeout(() => (slow = false), SLOW_MS + 120);
+			wasDrawing = drawing;
+			return () => clearTimeout(timer);
+		}
+		wasDrawing = drawing;
 	});
 
 	// ── one-off animations ──
@@ -201,9 +248,11 @@
 <div
 	class="eyes"
 	class:still={reduceMotion}
+	class:slow
 	style:width="{width}px"
 	style:height="{box}px"
 	style:--c={look.colour}
+	style:--slow="{SLOW_MS}ms"
 	role="img"
 	aria-label={label}
 >
@@ -219,7 +268,7 @@
 					style:left="{side === 0 ? 0 : spacing}px"
 					style:width="{box}px"
 					style:height="{box}px"
-					style:transform="rotate({look.slant[side]}deg) scale({look.scale})"
+					style:transform="rotate({look.slant[side]}deg) scale({look.scales?.[side] ?? look.scale})"
 				>
 					<div class="blinker" bind:this={blinkers[side]}>
 						<svg
@@ -329,6 +378,16 @@
 	.shape {
 		transform-box: view-box;
 		transform-origin: 50% 50%;
+	}
+	.slow .pair,
+	.slow .eye {
+		transition-duration: var(--slow);
+		transition-timing-function: cubic-bezier(0.3, 0.7, 0.4, 1);
+	}
+	.slow stop,
+	.slow rect,
+	.slow path {
+		transition-duration: var(--slow);
 	}
 	.still .pair,
 	.still .eye,

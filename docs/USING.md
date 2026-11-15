@@ -24,6 +24,12 @@ Winku keeps one conversation going until you clear it. The bubble under the bar 
   <img src="media/transcript.png" alt="The transcript open under the bar: a question, a PowerShell command Winku ran, its answer with a code block, a saved memory with Undo, and a thank-you." width="440">
 </p>
 
+## Visuals
+
+When a picture says more than words, Winku draws a visual into its reply: a chart, a table or a diagram. You can ask for one, or it draws one on its own. Most replies stay text.
+
+While it draws, the eyes turn lime and the bubble shows a shimmering "Drawing" line. Click a visual to see it larger, or pick "Open in browser" to see it in your browser. Press `Esc` to step back, or click elsewhere with the bar open. It stays in the thread, so the transcript keeps it. A visual can load pictures or scripts from the web, the way a web page does. Nothing about you is sent with them.
+
 ## Actions
 
 Select text in any app and press `Ctrl+Alt+1`. The defaults are Rewrite, Fix grammar, Shorter (each replaces the selection, and `Ctrl+Z` in that app undoes it), Explain (shows in the bar) and Do it (runs it as a task with tools). You can edit all five in Settings > Actions.

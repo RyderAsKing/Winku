@@ -53,6 +53,18 @@ const cases = [
 			await page.waitForTimeout(400);
 		},
 	},
+	{
+		// A chart prompt: the mock streams a visual's title, so the bubble says "Drawing" (SPEC §3).
+		name: "drawing",
+		path: "/",
+		ready: ".bubble",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "Message" }).fill("Make a chart of sales by region");
+			await page.keyboard.press("Enter");
+			await page.waitForTimeout(1600); // the title has streamed in; the call hasn't ended
+		},
+	},
 	{ name: "bar-large", path: "/?size=large", ready: "text=23% ctx", prepare: summon },
 	{
 		name: "pill-update",

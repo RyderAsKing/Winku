@@ -14,6 +14,7 @@ mod secrets;
 mod settings;
 mod tasks;
 mod update;
+mod visuals;
 mod voice;
 mod window;
 
@@ -32,6 +33,12 @@ pub fn run() {
                 .with_handler(hotkeys::handle)
                 .build(),
         )
+        .register_uri_scheme_protocol(visuals::SCHEME, |ctx, request| {
+            match ctx.app_handle().path().data_dir() {
+                Ok(dir) => visuals::serve(&dir.join("winku"), &request),
+                Err(_) => visuals::serve(std::path::Path::new(""), &request),
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().data_dir()?.join("winku");
             // Jobs load before the engine is ready; their notices wait for its `ready`.
@@ -93,6 +100,7 @@ pub fn run() {
             commands::hotkeys_status,
             commands::hotkeys_altgr,
             commands::open_external,
+            commands::open_visual,
             commands::open_data_path,
             commands::speak,
             commands::stop_speaking,

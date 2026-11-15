@@ -92,6 +92,8 @@ export type TranscriptItem =
 	  }
 	| { kind: "assistant"; id: string; text: string; mood?: Mood; aborted?: boolean; at: number }
 	| { kind: "tool"; id: string; name: string; summary: string; ok: boolean | null; detail?: string; at: number }
+	/** A visual the model drew with show (SPEC §3): its page is visuals\<visualId>.html in the data folder. */
+	| { kind: "visual"; id: string; visualId: string; title: string; at: number }
 	| { kind: "compaction"; id: string; summary: string; at: number }
 	| { kind: "memory_saved"; id: string; saveId: string; title: string; undone: boolean; at: number }
 	| { kind: "error"; id: string; errorKind: ErrorKind; message: string; at: number }
@@ -292,6 +294,8 @@ export type Command =
 	| { type: "history_read"; id: string; entryId: string }
 	/** Archive the current thread, make entryId current. Emits thread_changed. */
 	| { type: "history_restore"; id?: string; entryId: string }
+	/** Delete a History entry: a thread's session file and its visuals' files, or an action. Not the current thread. */
+	| { type: "history_delete"; id: string; entryId: string }
 	/**
 	 * Run an action on a selection (SPEC §6). The shell sends this from an action hotkey, with
 	 * an id of its own ("action-…"). Result data: { steered: boolean }, as soon as it starts.
@@ -374,6 +378,9 @@ export type Event =
 	 * that a reply with nothing written ends with its last block as the text.
 	 */
 	| { type: "say"; id: string; text: string }
+	/** A `show` call is being written (SPEC §3 Visuals): its title so far, sent each time it grows,
+	 * before the tool runs. The UI shows "Drawing <title>" and the Drawing eyes until the visual lands. */
+	| { type: "drawing"; id: string; toolCallId: string; title: string }
 	| { type: "tool_start"; id: string; toolCallId: string; name: string; summary: string }
 	| { type: "tool_end"; id: string; toolCallId: string; ok: boolean; summary: string }
 	/** Final text has the mood tag stripped. Sent when the engine is idle again (agent_settled). */
@@ -423,9 +430,32 @@ export type Request =
 	| { type: "request"; id: string; method: "task_list"; params: Record<string, never> }
 	/** cancel_task. Response data: TaskInfo of the cancelled job. */
 	| { type: "request"; id: string; method: "task_cancel"; params: { id: string; from?: string } }
+	/** show: put a visual in the reply. The engine has saved the page as visuals\<visualId>.html in
+	 *  the data folder; the shell forwards this to the main window, which places the frame in reply
+	 *  `replyId` at the end of its text so far, loads it from the visual's own URL scheme and answers
+	 *  once the page has loaded and reported its height. Response data: VisualShown. */
+	| { type: "request"; id: string; method: "visual_show"; params: VisualShowParams }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
+
+export interface VisualShowParams {
+	/** The reply the visual belongs to. */
+	replyId?: string;
+	/** 16 lower-case hex characters; the file is visuals\<visualId>.html. */
+	visualId: string;
+	title: string;
+	/** The broken visual this one replaces in place (SPEC §7 Showing); its file is already gone. */
+	replaces?: string;
+}
+
+/** What the real frame measured once the page loaded. */
+export interface VisualShown {
+	/** The page's height in CSS px, as the page reported it. */
+	height: number;
+	/** Uncaught script errors and failed loads, one line each, in order. */
+	errors: string[];
+}
 
 export interface ScreenCapture {
 	app?: string;

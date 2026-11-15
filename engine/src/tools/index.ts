@@ -20,6 +20,7 @@ import { type Launcher, launchDetached, openTool } from "./open.ts";
 import { gated, type PermissionPolicy } from "./permission.ts";
 import { lookAtScreenTool } from "./screen.ts";
 import type { ShellChoice } from "./shell.ts";
+import { showTool } from "./show.ts";
 import { taskTools } from "./tasks.ts";
 import { defaultWebDeps, type WebDeps, webFetchTool, webSearchTool } from "./web.ts";
 
@@ -29,6 +30,8 @@ export type AnyTool = ToolDefinition<any, any, any>;
 export interface AgentToolDeps {
 	/** The user's home folder: where the tools run. */
 	home: string;
+	/** Winku's data folder (visuals are saved in it). */
+	dataDir: () => string;
 	shells: ShellChoice;
 	/** ripgrep is on PATH: pi's grep needs it (the engine never downloads it). */
 	ripgrep: boolean;
@@ -36,6 +39,8 @@ export interface AgentToolDeps {
 	requests: ShellRequests;
 	/** The reply the tool call belongs to, for permission requests. */
 	replyId: () => string | undefined;
+	/** The current thread's visual ids, for show's `replaces`. */
+	threadVisuals: () => Iterable<string>;
 	/** The active reply is a scheduled run (#43): its job. The task tools pass its id as `from`. */
 	scheduledRun: () => ScheduledRun | undefined;
 	/** The active reply's prompt was dictated. */
@@ -80,6 +85,7 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 		...(clipboardTools(deps.requests, deps.supportsImages) as AnyTool[]),
 		...(taskTools({ requests: deps.requests, scheduledRun: deps.scheduledRun, spoken: deps.spoken, shells, ...(deps.platform ? { platform: deps.platform } : {}) }) as AnyTool[]),
 		...((desktop?.tools ?? []) as AnyTool[]),
+		showTool({ requests: deps.requests, dataDir: deps.dataDir, replyId: deps.replyId, threadVisuals: deps.threadVisuals }) as AnyTool,
 	);
 	const gate = {
 		policy: deps.policy,

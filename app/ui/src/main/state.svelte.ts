@@ -25,6 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
+import { isWebLink, type KeyPress, placeVisual, replaceInTranscript, type ReplyVisual, type VisualHandlers, winkuKey } from "./visuals.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
@@ -53,6 +54,15 @@ export interface Reply {
 	saved?: { saveId: string; title: string; undone: boolean }[];
 	proposals?: VoiceProposal[];
 	permissions?: PermissionAsk[];
+	/** Visuals the model drew into the reply with `show`, in the order it drew them. */
+	visuals?: ReplyVisual[];
+	/** A visual being written right now (SPEC §3): its title so far. Gone once it lands. */
+	drawing?: { toolCallId: string; title: string };
+}
+
+/** A prompt reply with no text or tools yet. */
+function emptyReply(id: string, extra: Partial<Reply>): Reply {
+	return { id, kind: "prompt", text: "", done: false, aborted: false, tools: [], ...extra };
 }
 
 /** "Ask before running": a tool call waiting for the user (SPEC §7). */
@@ -103,6 +113,10 @@ export class MainState {
 	ready: ReadyInfo | null = $state(null);
 	contextPercent: number | null = $state(null);
 	reply: Reply | null = $state(null);
+	/** A visual opened larger: alone in the transcript-height bubble, Wide (SPEC §3). */
+	largeVisual: ReplyVisual | null = $state(null);
+	/** Fixes shown in place of a visual from an earlier reply, by visual id, until their frame answers. */
+	pendingVisuals: Record<string, ReplyVisual> = $state({});
 	busy = $state(false);
 	transcript: TranscriptItem[] = $state([]);
 	transcriptLoading = $state(false);
@@ -151,6 +165,8 @@ export class MainState {
 				!this.settings.main ||
 				(this.settings.provider.kind === "catalog" && !this.hasKey)),
 	);
+	/** The current reply holds a visual: its bubble is Wide and stays until dismissed (SPEC §3). */
+	readonly holdsVisual: boolean = $derived((this.reply?.visuals?.length ?? 0) > 0);
 	readonly thinking: ThinkingLevel = $derived(this.ready?.thinking ?? this.settings?.main?.thinking ?? "medium");
 	readonly tint: string = $derived(TINTS[this.thinking]);
 	readonly lid: number = $derived(lidFor(this.contextPercent));
@@ -217,6 +233,7 @@ export class MainState {
 
 	async hide() {
 		this.#endDictation();
+		this.largeVisual = null;
 		this.bubbleOpen = false;
 		clearTimeout(this.#bubbleTimer);
 		await this.#setMode("pill");
@@ -249,12 +266,15 @@ export class MainState {
 	#armBubble() {
 		clearTimeout(this.#bubbleTimer);
 		if (this.mode !== "pill" || !this.bubbleOpen || this.busy || this.speaking || this.#bubbleHeld) return;
+		const linger = bubbleLinger(this.reply?.text ?? "", { visual: this.holdsVisual });
+		if (linger === null) return;
 		this.#bubbleTimer = setTimeout(() => {
 			this.bubbleOpen = false;
-		}, bubbleLinger(this.reply?.text ?? ""));
+		}, linger);
 	}
 
 	async toggleTranscript() {
+		this.largeVisual = null;
 		if (this.mode === "transcript") {
 			await this.#setMode("bar");
 		} else {
@@ -271,6 +291,11 @@ export class MainState {
 
 	/** Esc: first press stops the reply or the speech, a second press hides the bar (SPEC §5). */
 	async escape() {
+		// Esc over a visual opened larger steps back to the reply.
+		if (this.largeVisual) {
+			this.largeVisual = null;
+			return;
+		}
 		if (this.busy || this.speaking) {
 			if (this.busy) await shell.send({ type: "abort" });
 			await this.stopSpeaking();
@@ -303,16 +328,7 @@ export class MainState {
 		this.selectionChip = null;
 		this.imageChip = null;
 		this.setDraft(false);
-		this.reply = {
-			id,
-			kind: "prompt",
-			text: "",
-			done: false,
-			aborted: false,
-			tools: [],
-			startedAt,
-			ask: { text: prompt, images: images?.length ?? 0, spoken },
-		};
+		this.reply = emptyReply(id, { startedAt, ask: { text: prompt, images: images?.length ?? 0, spoken } });
 		this.busy = true;
 		this.eyes.setActivity("thinking");
 		if (this.mode === "transcript") {
@@ -368,6 +384,57 @@ export class MainState {
 		if (decision === "always" && this.settings && !this.settings.alwaysAllow.includes(ask.allowKey)) {
 			this.settings = await shell.settingsSet({ ...this.settings, alwaysAllow: [...this.settings.alwaysAllow, ask.allowKey] });
 		}
+	}
+
+	/** What a visual's frame in the main window can ask for. */
+	readonly visualHandlers: VisualHandlers = {
+		answer: (visual, height, errors) => void this.visualShown(visual, height, errors),
+		link: (href) => void this.visualLink(href),
+		openLarger: (visual) => void this.openLarger(visual),
+		key: (press) => void this.key(press),
+		openInBrowser: (visual) => void this.openVisualInBrowser(visual),
+	};
+
+	/** A visual's frame loaded (or gave up): answer its visual_show Request, once. */
+	async visualShown(visual: ReplyVisual, height: number, errors: string[]) {
+		if (visual.answered) return;
+		visual.answered = true;
+		if (this.pendingVisuals[visual.id]) {
+			const { [visual.id]: _, ...rest } = this.pendingVisuals;
+			this.pendingVisuals = rest;
+		}
+		await shell.respond({ type: "response", id: visual.requestId, ok: true, data: { height, errors } }).catch(() => {});
+	}
+
+	/** Winku's keys, pressed in the bar or in a visual's frame: true if the key was Winku's. */
+	key(press: KeyPress): boolean {
+		const action = winkuKey(press);
+		if (action === "escape") void this.escape();
+		else if (action === "transcript") void this.toggleTranscript();
+		return action !== null;
+	}
+
+	/** A link clicked in a visual: http(s) opens in the default browser, anything else is ignored. */
+	async visualLink(href: string) {
+		if (isWebLink(href)) await shell.openExternal(href).catch(() => {});
+	}
+
+	/** Clicking a visual opens it larger, opening the bar first if it was resting. */
+	async openLarger(visual: ReplyVisual) {
+		if (this.mode === "pill") await this.summon();
+		if (this.mode === "transcript") await this.#setMode("bar");
+		this.largeVisual = visual;
+	}
+
+	/** "Open in browser": the visual's saved file, in the default browser. */
+	async openVisualInBrowser(visual: ReplyVisual) {
+		await shell.openVisual(visual.id).catch(() => this.showToast("Couldn't open the visual"));
+	}
+
+	/** The bar is open and Winku lost focus to a click elsewhere: a bubble holding a visual goes. */
+	async focusLost() {
+		if (this.mode === "pill" || !this.holdsVisual) return;
+		await this.hide();
 	}
 
 	/** Accept or dismiss a proposed change to a voice profile (SPEC §9). */
@@ -554,15 +621,7 @@ export class MainState {
 				this.speaking = false;
 				this.#endDictation();
 				if (!this.busy) {
-					this.reply = {
-						id: newId("voice"),
-						kind: "prompt",
-						text: "",
-						done: true,
-						aborted: false,
-						tools: [],
-						error: { kind: "voice", message: event.message },
-					};
+					this.reply = emptyReply(newId("voice"), { done: true, error: { kind: "voice", message: event.message } });
 					this.#surface();
 					this.#armBubble();
 				}
@@ -650,14 +709,32 @@ export class MainState {
 			case "say":
 				this.#say(message.id, message.text);
 				break;
+			case "drawing":
+				if (reply?.id !== message.id) break;
+				reply.drawing = { toolCallId: message.toolCallId, title: message.title };
+				this.eyes.setActivity("drawing");
+				break;
 			case "tool_start":
-				// A memory save shows as its own "Saved to memory" row instead.
+				// A memory save shows as its own "Saved to memory" row instead; a visual shows as
+				// "Drawing", then as itself.
 				if (message.name === "memory_save") break;
+				if (message.name === "show") {
+					if (reply?.id === message.id && !reply.drawing) reply.drawing = { toolCallId: message.toolCallId, title: message.summary };
+					this.eyes.setActivity("drawing");
+					break;
+				}
 				if (reply && reply.id !== message.id) break;
 				reply?.tools.push({ toolCallId: message.toolCallId, name: message.name, summary: message.summary, ok: null });
 				this.eyes.setActivity("thinking");
 				break;
 			case "tool_end": {
+				if (reply?.drawing?.toolCallId === message.toolCallId) {
+					reply.drawing = undefined;
+					if (this.eyes.activity === "drawing") this.eyes.setActivity("thinking");
+					// A visual that couldn't be shown leaves a row saying so.
+					if (!message.ok) reply.tools.push({ toolCallId: message.toolCallId, name: "show", summary: message.summary, ok: false });
+					break;
+				}
 				const tool = reply?.tools.find((t) => t.toolCallId === message.toolCallId);
 				if (tool) {
 					tool.ok = message.ok;
@@ -749,8 +826,29 @@ export class MainState {
 					const target = reply && (!message.params.replyId || message.params.replyId === reply.id) ? reply : null;
 					if (target) target.permissions = [...(target.permissions ?? []), ask];
 					else {
-						this.reply = { id: message.params.replyId ?? newId("ask"), kind: "prompt", text: "", done: false, aborted: false, tools: [], permissions: [ask] };
+						this.reply = emptyReply(message.params.replyId ?? newId("ask"), { permissions: [ask] });
 					}
+					this.#surface();
+				} else if (message.method === "visual_show") {
+					// The model drew a visual: it goes in the reply where the text has got to, or, as a fix,
+					// in place of the broken one it replaces, in this reply or an earlier one.
+					const params = message.params;
+					const target = reply && (!params.replyId || params.replyId === reply.id) ? reply : null;
+					const visual: ReplyVisual = { requestId: message.id, id: params.visualId, title: params.title, at: target?.text.length ?? 0 };
+					const earlier =
+						params.replaces && !target?.visuals?.some((v) => v.id === params.replaces)
+							? replaceInTranscript(this.transcript, params.replaces, visual)
+							: undefined;
+					if (earlier) {
+						// Its frame in the transcript answers the request, if it is open.
+						this.transcript = earlier;
+						this.pendingVisuals = { ...this.pendingVisuals, [visual.id]: visual };
+						if (target) target.drawing = undefined;
+					} else if (target) {
+						target.visuals = placeVisual(target.visuals ?? [], visual, params.replaces);
+						target.drawing = undefined;
+					}
+					else this.reply = emptyReply(params.replyId ?? newId("visual"), { visuals: [visual] });
 					this.#surface();
 				}
 				break;
@@ -788,15 +886,7 @@ export class MainState {
 				if (reply && (!message.id || message.id === reply.id)) {
 					reply.error = { kind: message.errorKind, message: message.message };
 				} else {
-					this.reply = {
-						id: message.id ?? newId("err"),
-						kind: "prompt",
-						text: "",
-						done: true,
-						aborted: false,
-						tools: [],
-						error: { kind: message.errorKind, message: message.message },
-					};
+					this.reply = emptyReply(message.id ?? newId("err"), { done: true, error: { kind: message.errorKind, message: message.message } });
 				}
 				this.busy = false;
 				this.#surface();

@@ -9,6 +9,7 @@ import { parseNow } from "./nowline.ts";
 import { parseScheduled } from "./scheduled.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
+import { isVisualId, visualPath } from "./visuals.ts";
 
 interface UndoState {
 	token: string;
@@ -167,6 +168,25 @@ export class Thread {
 		return transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch(), this.undoneSaves());
 	}
 
+	/** Delete a History entry. A thread's visuals go with it; the current thread can't be deleted. */
+	async delete(entryId: string): Promise<void> {
+		if (entryId === this.sessionId) throw new EngineError("The current thread can't be deleted", "engine");
+		const actions = this.readActions();
+		if (actions.some((a) => a.id === entryId)) {
+			const kept = actions.filter((a) => a.id !== entryId).map((a) => `${JSON.stringify(a)}\n`);
+			writeFileSync(this.actionsPath, kept.join(""));
+			return;
+		}
+		const path = await this.findSession(entryId);
+		if (!path) throw new EngineError(`No history entry "${entryId}"`, "engine");
+		const items = transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch());
+		for (const item of items) {
+			if (item.kind === "visual") rmSync(visualPath(this.dataDir, item.visualId), { force: true });
+		}
+		rmSync(path, { force: true });
+		if (this.undo?.archivedFile === path) this.undo = undefined;
+	}
+
 	/** The prompt preamble this thread was started with (pi stores it as a system message), if any. */
 	frozenPrompt(): string | undefined {
 		let preamble: string | undefined;
@@ -180,6 +200,11 @@ export class Thread {
 
 	transcript(): TranscriptItem[] {
 		return transcriptItems(this.manager.getBranch(), this.undoneSaves());
+	}
+
+	/** The visuals in this thread's transcript (a replaced one is gone from it). */
+	visualIds(): string[] {
+		return this.transcript().flatMap((i) => (i.kind === "visual" ? [i.visualId] : []));
 	}
 
 	/** Append one finished one-off action to engine\actions.jsonl. */
@@ -314,6 +339,7 @@ export function toolSummary(name: string, args: unknown): string {
 		case "desktop_wait":
 			return clip(str("text") || str("role") || (typeof a.ms === "number" ? `${a.ms} ms` : "")) || name;
 		case "memory_save":
+		case "show":
 			return clip(str("title")) || name;
 		case "memory_read":
 			return clip(str("topic")) || name;
@@ -423,6 +449,15 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 				tool.ok = !message.isError;
 				const detail = textOf(message.content);
 				if (detail) tool.detail = detail;
+				const visual = (message.details as { visual?: { id?: unknown; title?: unknown; replaces?: unknown } } | undefined)?.visual;
+				if (!message.isError && isVisualId(visual?.id)) {
+					const title = typeof visual.title === "string" ? visual.title : "";
+					const row = { kind: "visual" as const, id: `${tool.id}:visual`, visualId: visual.id, title, at: tool.at };
+					// A fix takes the broken visual's place (SPEC §7 Showing).
+					const old = items.findIndex((i) => i.kind === "visual" && i.visualId === visual.replaces);
+					if (old >= 0) items[old] = { ...row, at: items[old]?.at ?? row.at };
+					else items.push(row);
+				}
 			}
 		}
 	}

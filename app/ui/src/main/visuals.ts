@@ -13,6 +13,14 @@ export interface ReplyVisual {
 	answered?: boolean;
 }
 
+/** The reply's visuals with `visual` added: in place of the one it replaces, at that one's spot
+ * in the text, or after the others (SPEC §7 Showing). */
+export function placeVisual(visuals: readonly ReplyVisual[], visual: ReplyVisual, replaces?: string): ReplyVisual[] {
+	const old = replaces ? visuals.findIndex((v) => v.id === replaces) : -1;
+	if (old < 0) return [...visuals, visual];
+	return visuals.map((v, i) => (i === old ? { ...visual, at: v.at } : v));
+}
+
 export type ReplyPart = { kind: "text"; text: string } | { kind: "visual"; visual: ReplyVisual };
 
 /** The reply's text cut where its visuals go, in order. Empty text between them is left out. */

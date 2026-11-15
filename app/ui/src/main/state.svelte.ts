@@ -25,7 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
-import { isWebLink, type KeyPress, type ReplyVisual, winkuKey } from "./visuals.ts";
+import { isWebLink, type KeyPress, placeVisual, type ReplyVisual, winkuKey } from "./visuals.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
@@ -827,12 +827,13 @@ export class MainState {
 					}
 					this.#surface();
 				} else if (message.method === "visual_show") {
-					// The model drew a visual: it goes in the reply where the text has got to.
+					// The model drew a visual: it goes in the reply where the text has got to, or, as a fix,
+					// in place of the broken one it replaces.
 					const params = message.params;
 					const target = reply && (!params.replyId || params.replyId === reply.id) ? reply : null;
 					const visual: ReplyVisual = { requestId: message.id, id: params.visualId, title: params.title, at: target?.text.length ?? 0 };
 					if (target) {
-						target.visuals = [...(target.visuals ?? []), visual];
+						target.visuals = placeVisual(target.visuals ?? [], visual, params.replaces);
 						target.drawing = undefined;
 					}
 					else this.reply = { id: params.replyId ?? newId("visual"), kind: "prompt", text: "", done: false, aborted: false, tools: [], visuals: [visual] };

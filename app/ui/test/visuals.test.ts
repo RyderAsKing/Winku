@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isBridgeMessage, isWebLink, winkuKey } from "../src/main/visuals.ts";
+import { isBridgeMessage, isWebLink, placeVisual, type ReplyVisual, winkuKey } from "../src/main/visuals.ts";
 
 test("the page may report its height, load, errors, link clicks, clicks and Winku's keys", () => {
 	for (const message of [
@@ -53,4 +53,19 @@ test("only http and https links leave a visual", () => {
 	for (const href of ["file:///C:/Windows", "javascript:alert(1)", "winku-visual://localhost/x.html", "ms-settings:", "data:text/html,x", "https://a\n.com", ""]) {
 		expect(isWebLink(href)).toBe(false);
 	}
+});
+
+const v = (id: string, at: number): ReplyVisual => ({ requestId: `r-${id}`, id, title: id, at });
+
+test("a new visual is added after the others", () => {
+	expect(placeVisual([v("a", 3)], v("b", 9)).map((x) => x.id)).toEqual(["a", "b"]);
+});
+
+test("a replacement takes the old visual's place and position in the text", () => {
+	const out = placeVisual([v("a", 3), v("b", 5)], v("c", 20), "a");
+	expect(out.map((x) => [x.id, x.at])).toEqual([["c", 3], ["b", 5]]);
+});
+
+test("a replacement for a visual not in this reply is added where the text has got to", () => {
+	expect(placeVisual([v("a", 3)], v("c", 20), "zzz").map((x) => [x.id, x.at])).toEqual([["a", 3], ["c", 20]]);
 });

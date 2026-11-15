@@ -444,10 +444,14 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 				tool.ok = !message.isError;
 				const detail = textOf(message.content);
 				if (detail) tool.detail = detail;
-				const visual = (message.details as { visual?: { id?: unknown; title?: unknown } } | undefined)?.visual;
+				const visual = (message.details as { visual?: { id?: unknown; title?: unknown; replaces?: unknown } } | undefined)?.visual;
 				if (!message.isError && typeof visual?.id === "string" && /^[0-9a-f]{16}$/.test(visual.id)) {
 					const title = typeof visual.title === "string" ? visual.title : "";
-					items.push({ kind: "visual", id: `${tool.id}:visual`, visualId: visual.id, title, at: tool.at });
+					const row = { kind: "visual" as const, id: `${tool.id}:visual`, visualId: visual.id, title, at: tool.at };
+					// A fix takes the broken visual's place (SPEC §7 Showing).
+					const old = items.findIndex((i) => i.kind === "visual" && i.visualId === visual.replaces);
+					if (old >= 0) items[old] = { ...row, at: items[old]?.at ?? row.at };
+					else items.push(row);
 				}
 			}
 		}

@@ -120,7 +120,9 @@ async function stills(browser) {
 	await page.locator(".grid").first().screenshot({ path: path.join(media, "eyes.png") });
 
 	// The whole conversation (Ctrl+J).
-	await page.setViewportSize({ width: 640, height: 470 });
+	// The stage is wider than the bar (it widens when scrolled back) and keeps a strip above the
+	// pill, so crop to the bar and the bubble.
+	await page.setViewportSize({ width: 640, height: 520 });
 	await page.goto(`${baseURL}/`);
 	await dress(page, { withDoc: false });
 	await summon(page);
@@ -128,7 +130,7 @@ async function stills(browser) {
 	await page.getByText("Earlier conversation summarized").waitFor();
 	await page.mouse.move(0, 0);
 	await page.waitForTimeout(1200);
-	await page.screenshot({ path: path.join(media, "transcript.png") });
+	await page.screenshot({ path: path.join(media, "transcript.png"), clip: { x: 200, y: 28, width: 440, height: 492 } });
 
 	await page.close();
 }

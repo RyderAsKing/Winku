@@ -58,12 +58,12 @@ You can change every key in Settings. If `Ctrl+Alt` types characters on your key
 - **Right-click the eyes** for Settings, History, Ask before running, Hide eyes, Pause listening and Quit.
 
 <p align="center">
-  <img src="docs/media/transcript.png" alt="The transcript open under the bar: a question, a PowerShell command Winku ran, its answer with a code block, a saved memory with Undo, and a thank-you." width="480">
+  <img src="docs/media/transcript.png" alt="The transcript open under the bar: a question, a PowerShell command Winku ran, its answer with a code block, a saved memory with Undo, and a thank-you." width="440">
 </p>
 
 ## The eyes
 
-The eyes show what Winku is doing. They turn teal while you talk, amber while the model thinks, and lavender while it answers. They close into happy arcs when a reply lands, and slowly fall asleep when nothing has happened for a while. The lids droop a little as the conversation fills the model's context, so you can tell when it's time to clear it.
+The eyes show what Winku is doing. They turn teal while you talk, amber while the model thinks, and lavender while it answers. They close into happy arcs when a reply lands, and slowly fall asleep when nothing has happened for a while. The lids droop a little as the conversation fills the model's context, so you can tell when it's time to clear it. Behind them, a grid of dots lights up with what Winku is doing: rings while you talk, specks drifting off while it thinks, a voice meter while it speaks.
 
 <p align="center">
   <img src="docs/media/eyes.png" alt="Twelve eye states: idle, listening, thinking, speaking, happy, hearts, sad, surprised, pondering, error, cleared and sleeping." width="720">

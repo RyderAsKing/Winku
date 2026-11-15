@@ -9,7 +9,7 @@ import { parseNow } from "./nowline.ts";
 import { parseScheduled } from "./scheduled.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
-import { visualPath } from "./tools/show.ts";
+import { isVisualId, visualPath } from "./visuals.ts";
 
 interface UndoState {
 	token: string;
@@ -200,6 +200,11 @@ export class Thread {
 
 	transcript(): TranscriptItem[] {
 		return transcriptItems(this.manager.getBranch(), this.undoneSaves());
+	}
+
+	/** The visuals in this thread's transcript (a replaced one is gone from it). */
+	visualIds(): string[] {
+		return this.transcript().flatMap((i) => (i.kind === "visual" ? [i.visualId] : []));
 	}
 
 	/** Append one finished one-off action to engine\actions.jsonl. */
@@ -445,7 +450,7 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 				const detail = textOf(message.content);
 				if (detail) tool.detail = detail;
 				const visual = (message.details as { visual?: { id?: unknown; title?: unknown; replaces?: unknown } } | undefined)?.visual;
-				if (!message.isError && typeof visual?.id === "string" && /^[0-9a-f]{16}$/.test(visual.id)) {
+				if (!message.isError && isVisualId(visual?.id)) {
 					const title = typeof visual.title === "string" ? visual.title : "";
 					const row = { kind: "visual" as const, id: `${tool.id}:visual`, visualId: visual.id, title, at: tool.at };
 					// A fix takes the broken visual's place (SPEC §7 Showing).

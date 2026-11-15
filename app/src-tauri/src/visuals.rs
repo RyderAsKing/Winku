@@ -42,6 +42,33 @@ pub fn visual_id(path: &str) -> Option<&str> {
 /// The page with the bridge as the first thing in it: just inside `<head>`, else just inside
 /// `<html>`, else after the doctype, else at the very start. The file itself stays as written.
 pub fn with_bridge(page: &str) -> String {
+    insert_first(page, &format!("<style id=\"winku-style\">{STYLE}</style>{BRIDGE}"))
+}
+
+/// The page for "Open in browser": the visual policy as a `<meta>` (no response header there),
+/// then Winku's style, first in the page. No bridge: nothing is listening.
+pub fn browser_page(page: &str) -> String {
+    insert_first(
+        page,
+        &format!(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><style id=\"winku-style\">{STYLE}</style>"
+        ),
+    )
+}
+
+/// Writes the browser copy of a saved visual to `out_dir\<id>.html` and returns its path; `None`
+/// unless `id` is a saved visual.
+pub fn browser_copy(data_dir: &Path, id: &str, out_dir: &Path) -> Option<std::path::PathBuf> {
+    let page = std::fs::read_to_string(saved_file(data_dir, id)?).ok()?;
+    std::fs::create_dir_all(out_dir).ok()?;
+    let copy = out_dir.join(format!("{id}.html"));
+    std::fs::write(&copy, browser_page(&page)).ok()?;
+    Some(copy)
+}
+
+/// `inserted` as the first thing in the page: just inside `<head>`, else just inside `<html>`,
+/// else after the doctype, else at the very start.
+fn insert_first(page: &str, inserted: &str) -> String {
     let lower = page.to_ascii_lowercase();
     let after_tag = |name: &str| -> Option<usize> {
         let mut from = 0;
@@ -59,12 +86,9 @@ pub fn with_bridge(page: &str) -> String {
         .or_else(|| after_tag("<html"))
         .or_else(|| after_tag("<!doctype"))
         .unwrap_or(0);
-    let mut out = String::with_capacity(page.len() + STYLE.len() + BRIDGE.len() + 32);
+    let mut out = String::with_capacity(page.len() + inserted.len());
     out.push_str(&page[..at]);
-    out.push_str("<style id=\"winku-style\">");
-    out.push_str(STYLE);
-    out.push_str("</style>");
-    out.push_str(BRIDGE);
+    out.push_str(inserted);
     out.push_str(&page[at..]);
     out
 }
@@ -113,6 +137,27 @@ mod tests {
 
     fn inserted() -> String {
         format!("<style id=\"winku-style\">{STYLE}</style>{BRIDGE}")
+    }
+
+    #[test]
+    fn open_in_browser_opens_a_copy_under_the_visual_policy() {
+        let dir = std::env::temp_dir().join(format!("winku-visual-copy-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("visuals")).unwrap();
+        let page = "<!doctype html><html><head><title>t</title></head><body><script>x()</script></body></html>";
+        std::fs::write(dir.join("visuals").join("00000000000000ee.html"), page).unwrap();
+        let out = dir.join("browser");
+        let copy = browser_copy(&dir, "00000000000000ee", &out).unwrap();
+        assert_eq!(copy, out.join("00000000000000ee.html"));
+        let text = std::fs::read_to_string(&copy).unwrap();
+        let meta = format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">");
+        assert!(text.starts_with(&format!("<!doctype html><html><head>{meta}<style id=\"winku-style\">{STYLE}</style><title>")));
+        assert!(!text.contains("winku: \"visual\"") && !text.contains(include_str!("bridge.js")));
+        assert!(text.ends_with("<script>x()</script></body></html>"));
+        // The saved file stays as written.
+        assert_eq!(std::fs::read_to_string(dir.join("visuals").join("00000000000000ee.html")).unwrap(), page);
+        assert_eq!(browser_copy(&dir, "../settings", &out), None);
+        assert_eq!(browser_copy(&dir, "00000000000000dd", &out), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

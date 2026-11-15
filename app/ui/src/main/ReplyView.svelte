@@ -31,7 +31,7 @@
 	{#if reply.visuals?.length}
 		{#each replyParts(reply.text, reply.visuals) as part, i (part.kind === "visual" ? part.visual.requestId : `text-${i}`)}
 			{#if part.kind === "visual"}
-				<Visual {app} visual={part.visual} />
+				<Visual handlers={app.visualHandlers} visual={part.visual} />
 			{:else}
 				<Markdown text={part.text} />
 			{/if}

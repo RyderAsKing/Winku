@@ -132,7 +132,7 @@
 		return () => {
 			const now = getComputedStyle(el);
 			const from = { scale: now.scale === "none" ? "1" : now.scale, translate: now.translate === "none" ? "0 0" : now.translate };
-			running.cancel();
+			// The loop and any ease into it.
 			el.getAnimations().forEach((a) => a.cancel());
 			el.animate([from, { scale: "1", translate: "0 0" }], { duration: kind === "plot" ? SLOW_MS : 200, easing: "ease-out" });
 		};
@@ -252,6 +252,7 @@
 	style:width="{width}px"
 	style:height="{box}px"
 	style:--c={look.colour}
+	style:--slow="{SLOW_MS}ms"
 	role="img"
 	aria-label={label}
 >
@@ -380,13 +381,13 @@
 	}
 	.slow .pair,
 	.slow .eye {
-		transition-duration: 520ms;
+		transition-duration: var(--slow);
 		transition-timing-function: cubic-bezier(0.3, 0.7, 0.4, 1);
 	}
 	.slow stop,
 	.slow rect,
 	.slow path {
-		transition-duration: 520ms;
+		transition-duration: var(--slow);
 	}
 	.still .pair,
 	.still .eye,

@@ -25,7 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
-import { isWebLink, type KeyPress, placeVisual, type ReplyVisual, winkuKey } from "./visuals.ts";
+import { isWebLink, type KeyPress, placeVisual, replaceInTranscript, type ReplyVisual, type VisualHandlers, winkuKey } from "./visuals.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
@@ -58,6 +58,11 @@ export interface Reply {
 	visuals?: ReplyVisual[];
 	/** A visual being written right now (SPEC §3): its title so far. Gone once it lands. */
 	drawing?: { toolCallId: string; title: string };
+}
+
+/** A prompt reply with no text or tools yet. */
+function emptyReply(id: string, extra: Partial<Reply>): Reply {
+	return { id, kind: "prompt", text: "", done: false, aborted: false, tools: [], ...extra };
 }
 
 /** "Ask before running": a tool call waiting for the user (SPEC §7). */
@@ -110,6 +115,8 @@ export class MainState {
 	reply: Reply | null = $state(null);
 	/** A visual opened larger: alone in the transcript-height bubble, Wide (SPEC §3). */
 	largeVisual: ReplyVisual | null = $state(null);
+	/** Fixes shown in place of a visual from an earlier reply, by visual id, until their frame answers. */
+	pendingVisuals: Record<string, ReplyVisual> = $state({});
 	busy = $state(false);
 	transcript: TranscriptItem[] = $state([]);
 	transcriptLoading = $state(false);
@@ -321,16 +328,7 @@ export class MainState {
 		this.selectionChip = null;
 		this.imageChip = null;
 		this.setDraft(false);
-		this.reply = {
-			id,
-			kind: "prompt",
-			text: "",
-			done: false,
-			aborted: false,
-			tools: [],
-			startedAt,
-			ask: { text: prompt, images: images?.length ?? 0, spoken },
-		};
+		this.reply = emptyReply(id, { startedAt, ask: { text: prompt, images: images?.length ?? 0, spoken } });
 		this.busy = true;
 		this.eyes.setActivity("thinking");
 		if (this.mode === "transcript") {
@@ -388,18 +386,31 @@ export class MainState {
 		}
 	}
 
+	/** What a visual's frame in the main window can ask for. */
+	readonly visualHandlers: VisualHandlers = {
+		answer: (visual, height, errors) => void this.visualShown(visual, height, errors),
+		link: (href) => void this.visualLink(href),
+		openLarger: (visual) => void this.openLarger(visual),
+		key: (press) => void this.key(press),
+		openInBrowser: (visual) => void this.openVisualInBrowser(visual),
+	};
+
 	/** A visual's frame loaded (or gave up): answer its visual_show Request, once. */
 	async visualShown(visual: ReplyVisual, height: number, errors: string[]) {
 		if (visual.answered) return;
 		visual.answered = true;
+		if (this.pendingVisuals[visual.id]) {
+			const { [visual.id]: _, ...rest } = this.pendingVisuals;
+			this.pendingVisuals = rest;
+		}
 		await shell.respond({ type: "response", id: visual.requestId, ok: true, data: { height, errors } }).catch(() => {});
 	}
 
-	/** Winku's keys, pressed in the bar or in a visual's frame. */
-	async key(press: KeyPress): Promise<boolean> {
+	/** Winku's keys, pressed in the bar or in a visual's frame: true if the key was Winku's. */
+	key(press: KeyPress): boolean {
 		const action = winkuKey(press);
-		if (action === "escape") await this.escape();
-		else if (action === "transcript") await this.toggleTranscript();
+		if (action === "escape") void this.escape();
+		else if (action === "transcript") void this.toggleTranscript();
 		return action !== null;
 	}
 
@@ -610,15 +621,7 @@ export class MainState {
 				this.speaking = false;
 				this.#endDictation();
 				if (!this.busy) {
-					this.reply = {
-						id: newId("voice"),
-						kind: "prompt",
-						text: "",
-						done: true,
-						aborted: false,
-						tools: [],
-						error: { kind: "voice", message: event.message },
-					};
+					this.reply = emptyReply(newId("voice"), { done: true, error: { kind: "voice", message: event.message } });
 					this.#surface();
 					this.#armBubble();
 				}
@@ -823,20 +826,29 @@ export class MainState {
 					const target = reply && (!message.params.replyId || message.params.replyId === reply.id) ? reply : null;
 					if (target) target.permissions = [...(target.permissions ?? []), ask];
 					else {
-						this.reply = { id: message.params.replyId ?? newId("ask"), kind: "prompt", text: "", done: false, aborted: false, tools: [], permissions: [ask] };
+						this.reply = emptyReply(message.params.replyId ?? newId("ask"), { permissions: [ask] });
 					}
 					this.#surface();
 				} else if (message.method === "visual_show") {
 					// The model drew a visual: it goes in the reply where the text has got to, or, as a fix,
-					// in place of the broken one it replaces.
+					// in place of the broken one it replaces, in this reply or an earlier one.
 					const params = message.params;
 					const target = reply && (!params.replyId || params.replyId === reply.id) ? reply : null;
 					const visual: ReplyVisual = { requestId: message.id, id: params.visualId, title: params.title, at: target?.text.length ?? 0 };
-					if (target) {
+					const earlier =
+						params.replaces && !target?.visuals?.some((v) => v.id === params.replaces)
+							? replaceInTranscript(this.transcript, params.replaces, visual)
+							: undefined;
+					if (earlier) {
+						// Its frame in the transcript answers the request, if it is open.
+						this.transcript = earlier;
+						this.pendingVisuals = { ...this.pendingVisuals, [visual.id]: visual };
+						if (target) target.drawing = undefined;
+					} else if (target) {
 						target.visuals = placeVisual(target.visuals ?? [], visual, params.replaces);
 						target.drawing = undefined;
 					}
-					else this.reply = { id: params.replyId ?? newId("visual"), kind: "prompt", text: "", done: false, aborted: false, tools: [], visuals: [visual] };
+					else this.reply = emptyReply(params.replyId ?? newId("visual"), { visuals: [visual] });
 					this.#surface();
 				}
 				break;
@@ -874,15 +886,7 @@ export class MainState {
 				if (reply && (!message.id || message.id === reply.id)) {
 					reply.error = { kind: message.errorKind, message: message.message };
 				} else {
-					this.reply = {
-						id: message.id ?? newId("err"),
-						kind: "prompt",
-						text: "",
-						done: true,
-						aborted: false,
-						tools: [],
-						error: { kind: message.errorKind, message: message.message },
-					};
+					this.reply = emptyReply(message.id ?? newId("err"), { done: true, error: { kind: message.errorKind, message: message.message } });
 				}
 				this.busy = false;
 				this.#surface();

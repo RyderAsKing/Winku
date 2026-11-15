@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 /** Largest single local image written into a page. */
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 /** Largest total of local image bytes written into one page. */
-export const MAX_PAGE_BYTES = 6 * 1024 * 1024;
+export const MAX_INLINE_IMAGE_BYTES = 6 * 1024 * 1024;
 
 const SMALLER = "Use smaller images (resize or compress them first) or fewer of them.";
 
@@ -56,8 +56,8 @@ export function inlineLocalImages(html: string): string {
 				if (size > MAX_IMAGE_BYTES)
 					throw new Error(`The image ${path} is ${mb(size)}, over the ${mb(MAX_IMAGE_BYTES)} limit for one image. ${SMALLER}`);
 				total += size;
-				if (total > MAX_PAGE_BYTES)
-					throw new Error(`The local images in this page add up to more than the ${mb(MAX_PAGE_BYTES)} limit for a page. ${SMALLER}`);
+				if (total > MAX_INLINE_IMAGE_BYTES)
+					throw new Error(`The local images in this page add up to more than the ${mb(MAX_INLINE_IMAGE_BYTES)} limit for a page. ${SMALLER}`);
 				const bytes = readFileSync(path);
 				const type = sniffImage(bytes);
 				if (!type) throw new Error(`${path} is not an image (checked by its contents, not its name), so it wasn't put in the page.`);

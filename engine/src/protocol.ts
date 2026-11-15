@@ -92,6 +92,8 @@ export type TranscriptItem =
 	  }
 	| { kind: "assistant"; id: string; text: string; mood?: Mood; aborted?: boolean; at: number }
 	| { kind: "tool"; id: string; name: string; summary: string; ok: boolean | null; detail?: string; at: number }
+	/** A visual the model drew with show (SPEC §3): its page is visuals\<visualId>.html in the data folder. */
+	| { kind: "visual"; id: string; visualId: string; title: string; at: number }
 	| { kind: "compaction"; id: string; summary: string; at: number }
 	| { kind: "memory_saved"; id: string; saveId: string; title: string; undone: boolean; at: number }
 	| { kind: "error"; id: string; errorKind: ErrorKind; message: string; at: number }
@@ -292,6 +294,8 @@ export type Command =
 	| { type: "history_read"; id: string; entryId: string }
 	/** Archive the current thread, make entryId current. Emits thread_changed. */
 	| { type: "history_restore"; id?: string; entryId: string }
+	/** Delete a History entry: a thread's session file and its visuals' files, or an action. Not the current thread. */
+	| { type: "history_delete"; id: string; entryId: string }
 	/**
 	 * Run an action on a selection (SPEC §6). The shell sends this from an action hotkey, with
 	 * an id of its own ("action-…"). Result data: { steered: boolean }, as soon as it starts.

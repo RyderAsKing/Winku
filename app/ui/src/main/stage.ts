@@ -56,16 +56,18 @@ export function stageSize(d: Dims): { w: number; h: number } {
 }
 
 /** Why the bar and bubble are Wide (GLOSSARY.md): reading back through the thread, or showing a
- * visual. */
-export type WideReason = "browsing" | "visual";
+ * visual in the reply bubble or the transcript. */
+export type WideReason = "browsing" | "visual" | "transcript";
 
 /** The reasons the bar and bubble are Wide right now; none means their usual width.
  * `browsing`: scrolled back through the thread over the reply bubble (not the transcript).
- * `visual`: the reply bubble holds a visual. */
-export function wideReasons(now: { browsing: boolean; visual: boolean }): WideReason[] {
+ * `visual`: the reply bubble holds a visual.
+ * `transcript`: the transcript holds a visual, so it looks the same there as in the reply bubble. */
+export function wideReasons(now: { browsing: boolean; visual: boolean; transcriptVisual?: boolean }): WideReason[] {
 	const reasons: WideReason[] = [];
 	if (now.browsing) reasons.push("browsing");
 	if (now.visual) reasons.push("visual");
+	if (now.transcriptVisual) reasons.push("transcript");
 	return reasons;
 }
 

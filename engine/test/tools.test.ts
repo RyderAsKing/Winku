@@ -400,3 +400,19 @@ test("images kept by a compaction are replaced; later ones stay", () => {
 	const plain = messages.filter((m) => (m as { role: string }).role !== "compactionSummary");
 	expect(dropCompactedImages(plain)).toBe(plain);
 });
+
+test("a visual kept by a compaction shrinks to its title in what the model sees; later ones stay whole", () => {
+	const show = (id: string, title: string) => ({ type: "toolCall", id, name: "show", arguments: { title, html: "<p>big page</p>" } });
+	const messages = [
+		{ role: "compactionSummary", summary: "s", tokensBefore: 10, timestamp: 100 },
+		{ role: "assistant", content: [{ type: "text", text: "Here:" }, show("a", "Pie")], timestamp: 50 },
+		{ role: "assistant", content: [show("b", "Bars")], timestamp: 150 },
+	] as never[];
+	const out = dropCompactedImages(messages) as unknown as { content: Record<string, unknown>[] }[];
+	expect(out[1]?.content[0]).toEqual({ type: "text", text: "Here:" });
+	expect(out[1]?.content[1]?.arguments).toEqual({ title: "Pie" });
+	expect(JSON.stringify(out[1])).not.toContain("big page");
+	expect(out[2]?.content[0]?.arguments).toEqual({ title: "Bars", html: "<p>big page</p>" });
+	// The session's own copy is untouched.
+	expect((messages[1] as { content: { arguments?: { html?: string } }[] }).content[1]?.arguments?.html).toBe("<p>big page</p>");
+});

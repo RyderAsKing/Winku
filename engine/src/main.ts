@@ -64,6 +64,9 @@ async function handle(message: Command): Promise<unknown> {
 			return engine.threadState.list(message.query);
 		case "history_read":
 			return engine.threadState.read(message.entryId);
+		case "history_delete":
+			await engine.threadState.delete(message.entryId);
+			return undefined;
 		case "history_restore":
 			await engine.restore(message.entryId);
 			return undefined;

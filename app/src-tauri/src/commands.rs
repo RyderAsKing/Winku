@@ -284,6 +284,16 @@ pub async fn voice_model_remove(app: AppHandle, id: String) -> Result<(), String
         .map_err(|e| e.to_string())?
 }
 
+/// "Open in browser" on a visual: opens its saved `.html` file with the default handler.
+#[tauri::command]
+pub fn open_visual(app: AppHandle, store: State<'_, Store>, id: String) -> Result<(), String> {
+    let file = crate::visuals::saved_file(&store.data_dir, &id).ok_or("no such visual")?;
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(file.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Opens a link from a reply in the default browser. Only http(s): a model-written link must not
 /// launch a local file or another URL scheme handler.
 #[tauri::command]

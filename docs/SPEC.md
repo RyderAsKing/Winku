@@ -133,6 +133,7 @@ An action is a config entry with a name, a prompt, a key slot, an output mode an
 - There is one thread, it survives restarts, and it lasts until you clear it.
 - A message sent while a reply is running steers it: the model gets it as soon as its current step ends and carries on from there. Nothing already written is cut off; `Esc` still stops.
 - **Request layout:** the system prompt comes first and stays the same for the whole session. It holds the instructions, tools, About me, the voice profiles and the `MEMORY.md` index as it was when the session started. After that comes the conversation, which is only ever appended to. This keeps provider prompt caching working.
+- **Context size:** the Main model's context window is capped at 250k tokens by default, adjustable in Settings. A model with a smaller window uses its own.
 - **Compaction:** pi auto-compacts at its default threshold, adjustable in Settings. The meter and the eyelids both show how full the context is.
 - **Visuals at compaction:** a visual shrinks to its title in the model's copy of the thread, the way screenshots are dropped; the file and History keep the whole page.
 - **Clear:** archives the session and starts a new one. Memory, About me and voice profiles survive.

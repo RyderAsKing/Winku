@@ -421,6 +421,12 @@ const cases = [
 		ready: "text=Nothing scheduled",
 	},
 	{
+		name: "settings-conversation",
+		path: "/settings.html#conversation",
+		size: SETTINGS,
+		ready: "role=spinbutton[name='Compaction']",
+	},
+	{
 		name: "settings-tools",
 		path: "/settings.html?ask=1#tools",
 		size: SETTINGS,

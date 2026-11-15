@@ -199,6 +199,8 @@ export function createMockShell(): ShellImpl {
 				return (params.has("empty") ? [] : params.has("many") ? [...SAMPLE_HISTORY, ...Array.from({ length: 40 }, (_, i) => ({ ...SAMPLE_HISTORY[2], id: `archive-${i}`, title: `Archive ${i + 1}: ${"LongProjectPath".repeat(12)}`, updatedAt: now - (i + 4) * 86400000 }))] : SAMPLE_HISTORY).filter((h) => !message.query || h.title.toLowerCase().includes(message.query.toLowerCase()));
 			case "history_read":
 				return params.has("long") ? [...SAMPLE_TRANSCRIPT, { kind: "assistant", id: "long", text: LONG_REPLY, at: now }] : SAMPLE_TRANSCRIPT;
+			case "history_delete":
+				return undefined;
 			case "clear":
 				setTimeout(() => emit("engine", { type: "thread_changed", reason: "clear", sessionId: "new" }), 10);
 				return { undoToken: "undo-1" };

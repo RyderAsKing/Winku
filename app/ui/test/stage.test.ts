@@ -69,6 +69,13 @@ test("a bubble holding a visual makes the bar and bubble Wide", () => {
 	expect(wideReasons({ browsing: true, visual: true })).toEqual(["browsing", "visual"]);
 });
 
+test("the transcript holding a visual makes the bar and bubble Wide", () => {
+	const d = dimsFor("small", 1920);
+	expect(wideReasons({ browsing: false, visual: false, transcriptVisual: true })).toEqual(["transcript"]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false, transcriptVisual: true }))).toBe(640);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false, transcriptVisual: false }))).toBe(d.barW);
+});
+
 test("a bubble holding a visual doesn't time out", () => {
 	expect(bubbleLinger("Here is the chart.", { visual: true })).toBeNull();
 	expect(bubbleLinger("Here is the chart.", { visual: false })).toBe(8480);

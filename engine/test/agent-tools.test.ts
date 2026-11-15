@@ -518,3 +518,36 @@ test("while show is being written, drawing events carry its title before the too
 	expect(drawing[0]).toMatchObject({ toolCallId: start_?.type === "tool_start" ? start_.toolCallId : "?" });
 	await engine.shutdown();
 }, T);
+
+test("a scheduled, spoken run can show a visual: no permission ask, say blocks hold the speech, the visual is never read", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 220, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				{
+					text: "<say>Your build times are on screen.</say>",
+					toolCalls: [{ name: "show", arguments: { title: "Build times", html: "<p>secret-chart-words</p>" } }],
+				},
+				{ text: "<say>That's the chart.</say>" },
+			],
+		},
+	});
+	const { end, records } = await engine.prompt("show the build times", { scheduled: { name: "Build report", kind: "timer" }, speak: "enough" });
+	expect(end).toMatchObject({ aborted: false });
+
+	// The visual belongs to the scheduled run's reply, and never asks, even in a scheduled run.
+	expect(permissionRequests(engine.records)).toHaveLength(0);
+	const shown = showRequests(engine.records);
+	expect(shown).toHaveLength(1);
+	expect(shown[0]?.params).toMatchObject({ replyId: end.id, title: "Build times" });
+	expect(records.some((r) => r.type === "drawing" || r.type === "tool_start")).toBe(true);
+
+	// What is said is only the <say> blocks; the page's words appear in no say event or reply text.
+	const said = records.filter((r) => r.type === "say").map((r) => (r.type === "say" ? r.text : ""));
+	expect(said).toEqual(["Your build times are on screen.", "That's the chart."]);
+	expect(said.join(" ")).not.toContain("secret-chart-words");
+	expect(end.text).not.toContain("secret-chart-words");
+	await engine.shutdown();
+}, T);

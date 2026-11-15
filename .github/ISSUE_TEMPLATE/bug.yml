@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Winku doesn't work as it should.
+labels: [needs-triage]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen again
+      placeholder: |
+        1. Select a sentence in Word
+        2. Press Ctrl+Alt+1
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Winku version
+      description: Shown at the bottom of Settings.
+      placeholder: "0.1.8"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model provider and model
+      description: If the problem involves a reply.
+      placeholder: "Anthropic, claude-sonnet-4-5"
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots, your keyboard layout, other apps involved. Leave out API keys and anything private.

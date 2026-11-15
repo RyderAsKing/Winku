@@ -12,6 +12,7 @@ pub mod download;
 pub mod mic;
 pub mod models;
 pub mod partial;
+pub mod speech_text;
 pub mod stt;
 pub mod tts;
 
@@ -426,7 +427,8 @@ fn ensure_download(app: &AppHandle, model: &'static Model) {
 /// `text` is read after whatever is playing or queued instead (the <say> blocks of one reply),
 /// or straight away if nothing is.
 pub fn speak(app: &AppHandle, text: String, append: bool) {
-    let text = text.trim().to_string();
+    // Every text goes through here, <say> blocks and stripped replies alike, for either voice.
+    let text = speech_text::to_speech(text.trim());
     let voice = app.state::<Voice>();
     if append {
         if text.is_empty() {
@@ -472,7 +474,7 @@ pub fn speak(app: &AppHandle, text: String, append: bool) {
                     speak_neural(
                         &app,
                         neural,
-                        settings.tts_voice(),
+                        settings.reading(),
                         &text,
                         next,
                         &stop,
@@ -525,7 +527,7 @@ fn next_queued(app: &AppHandle, id: u64) -> Option<String> {
 fn speak_neural(
     app: &AppHandle,
     model: &'static Model,
-    voice_id: u8,
+    reading: tts::Reading,
     text: &str,
     mut next: impl FnMut() -> Option<String>,
     stop: &Arc<AtomicBool>,
@@ -542,10 +544,11 @@ fn speak_neural(
             let feed = tts::Feed::new(tts::engine_rate(engine));
             std::thread::scope(|s| {
                 let player = s.spawn(|| tts::play(&feed, stop, on_start));
-                tts::supertonic_speak(engine, text, voice_id, &feed, stop);
+                let mut utterance = tts::Utterance::default();
+                tts::supertonic_speak(engine, text, reading, &mut utterance, &feed, stop);
                 while !stop.load(Ordering::SeqCst) {
                     let Some(more) = next() else { break };
-                    tts::supertonic_speak(engine, &more, voice_id, &feed, stop);
+                    tts::supertonic_speak(engine, &more, reading, &mut utterance, &feed, stop);
                 }
                 feed.finish();
                 player
@@ -679,7 +682,15 @@ mod e2e {
         let sentence = "Here are three things: first, 12 apples at $4.50 each. Second, a 15% discount. Third, delivery by 9:30 on March 3rd.";
         let feed = tts::Feed::new(tts::engine_rate(&engine));
         let started = Instant::now();
-        tts::supertonic_speak(&engine, sentence, tts::DEFAULT_VOICE, &feed, &stop);
+        let mut utterance = tts::Utterance::default();
+        tts::supertonic_speak(
+            &engine,
+            sentence,
+            tts::Reading::default(),
+            &mut utterance,
+            &feed,
+            &stop,
+        );
         let spoken = feed.take_all();
         let secs = spoken.len() as f32 / feed.rate as f32;
         eprintln!(
@@ -703,21 +714,7 @@ mod e2e {
         );
         assert!(peak > 0.05 && peak <= 1.0);
         let out = dir.join("playback-48k.wav");
-        let pcm: Vec<u8> = played
-            .iter()
-            .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
-            .collect();
-        let mut wav = b"RIFF".to_vec();
-        wav.extend((36 + pcm.len() as u32).to_le_bytes());
-        wav.extend(b"WAVEfmt ");
-        wav.extend([16, 0, 0, 0, 1, 0, 1, 0]);
-        wav.extend(48_000u32.to_le_bytes());
-        wav.extend(96_000u32.to_le_bytes());
-        wav.extend([2, 0, 16, 0]);
-        wav.extend(b"data");
-        wav.extend((pcm.len() as u32).to_le_bytes());
-        wav.extend(pcm);
-        std::fs::write(&out, wav).unwrap();
+        write_wav(&out, &played, 48_000);
         eprintln!("wrote {}", out.display());
 
         let samples = audio::resample(&played, 48_000, audio::STT_RATE);
@@ -752,5 +749,132 @@ mod e2e {
         }
         assert!(sent.len() >= 3, "{sent:?}");
         assert!(sent[0].to_lowercase().contains("here"), "{sent:?}");
+    }
+
+    /// A 16-bit mono WAV of `samples`.
+    fn write_wav(path: &std::path::Path, samples: &[f32], rate: u32) {
+        let pcm: Vec<u8> = samples
+            .iter()
+            .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+            .collect();
+        let mut wav = b"RIFF".to_vec();
+        wav.extend((36 + pcm.len() as u32).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend([16, 0, 0, 0, 1, 0, 1, 0]);
+        wav.extend(rate.to_le_bytes());
+        wav.extend((rate * 2).to_le_bytes());
+        wav.extend([2, 0, 16, 0]);
+        wav.extend(b"data");
+        wav.extend((pcm.len() as u32).to_le_bytes());
+        wav.extend(pcm);
+        std::fs::write(path, wav).unwrap();
+    }
+
+    /// Lowercase words, for a rough "how much of it was said" score.
+    fn words(text: &str) -> Vec<String> {
+        text.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The share of `expected` words that `heard` contains (each heard word counts once).
+    fn recall(expected: &str, heard: &str) -> f32 {
+        let expected = words(expected);
+        let mut heard = words(heard);
+        let found = expected
+            .iter()
+            .filter(|w| {
+                heard
+                    .iter()
+                    .position(|h| h == *w)
+                    .map(|i| heard.remove(i))
+                    .is_some()
+            })
+            .count();
+        found as f32 / expected.len().max(1) as f32
+    }
+
+    /// Tricky sentences for listening, not asserted on. Run with
+    /// `WINKU_VOICE_E2E=/some/dir cargo test --release tricky -- --ignored --nocapture`:
+    /// downloads both Supertonic models and Whisper base.en into that folder, reads each sentence
+    /// through the same path `speak` uses (`to_speech`, then Supertonic with the default
+    /// settings), writes `tricky/<model>/NN.wav`, transcribes each with Whisper and writes
+    /// `tricky/report.txt` with what was meant, what Whisper heard and a rough word recall.
+    #[test]
+    #[ignore]
+    fn tricky_sentences_for_listening() {
+        const SENTENCES: &[&str] = &[
+            "Yes.",
+            "I can do that.",
+            "Sure. The guide is at https://tauri.app/start/prerequisites/ if you want it.",
+            r"I saved it to C:\Users\me\Documents\report-final.pdf.",
+            "Winku 0.1.7 fixes it; you had v0.1.6 before.",
+            "The meeting moved from 2026-03-02 to 11/15/2026.",
+            "If x = 5 and y = x + 2, then y is 7.",
+            "Sales rose 15% -> 20% & costs fell.",
+            "Done! I renamed **three** files in `~/projects/winku/src` 🎉",
+            "Here are three things: first, 12 apples at $4.50 each. Second, a 15% discount. Third, delivery by 9:30 on March 3rd. That should cover the whole order, and I can add more later if you need it.",
+        ];
+        let Some(dir) = std::env::var_os("WINKU_VOICE_E2E").map(PathBuf::from) else {
+            eprintln!("WINKU_VOICE_E2E not set; skipping");
+            return;
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        for id in ["whisper-base-en", "supertonic", "supertonic-3"] {
+            let model = models::find(id).unwrap();
+            if !model.installed(&dir) {
+                download::install(model, &dir, &download::Https, &mut |_| {}).unwrap();
+            }
+        }
+        let whisper = models::find("whisper-base-en").unwrap();
+        let recognizer = stt::load(whisper, &whisper.dir(&dir)).unwrap();
+        let mut report = String::new();
+        for id in ["supertonic", "supertonic-3"] {
+            let model = models::find(id).unwrap();
+            let engine = tts::load_supertonic(model, &model.dir(&dir)).unwrap();
+            let out = dir.join("tricky").join(id);
+            std::fs::create_dir_all(&out).unwrap();
+            let (mut total, mut audio_secs, mut synth_secs) = (0.0, 0.0, 0.0);
+            report += &format!("== {} ==\n", model.name);
+            for (n, sentence) in SENTENCES.iter().enumerate() {
+                let said = speech_text::to_speech(sentence);
+                let feed = tts::Feed::new(tts::engine_rate(&engine));
+                let started = Instant::now();
+                let mut utterance = tts::Utterance::default();
+                let stop = AtomicBool::new(false);
+                tts::supertonic_speak(
+                    &engine,
+                    &said,
+                    tts::Reading::default(),
+                    &mut utterance,
+                    &feed,
+                    &stop,
+                );
+                synth_secs += started.elapsed().as_secs_f32();
+                let samples = feed.take_all();
+                audio_secs += samples.len() as f32 / feed.rate as f32;
+                write_wav(&out.join(format!("{n:02}.wav")), &samples, feed.rate);
+                let heard = stt::transcribe(
+                    &recognizer,
+                    &audio::resample(&samples, feed.rate, audio::STT_RATE),
+                );
+                let score = recall(&said, &heard);
+                total += score;
+                report += &format!(
+                    "{n:02} {:>3.0}%  in:    {sentence}\n      said:  {said}\n      heard: {}\n",
+                    score * 100.0,
+                    heard.trim()
+                );
+            }
+            report += &format!(
+                "average recall {:.0}%, real-time factor {:.3}\n\n",
+                total / SENTENCES.len() as f32 * 100.0,
+                synth_secs / audio_secs.max(0.001)
+            );
+        }
+        std::fs::write(dir.join("tricky").join("report.txt"), &report).unwrap();
+        eprintln!("{report}");
     }
 }

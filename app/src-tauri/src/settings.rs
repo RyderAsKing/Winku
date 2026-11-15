@@ -134,6 +134,10 @@ pub struct Voice {
     /// voice became the default; `normalize` uses that to move them off the OS voice once.
     #[serde(default)]
     pub tts_voice: Option<u8>,
+    /// Supertonic denoising steps, 2-16: more is cleaner and slower.
+    pub tts_steps: u8,
+    /// Supertonic pace, 0.8-1.5 (1.0 is the model's own).
+    pub tts_speed: f32,
     pub os_voice: Option<String>,
     /// `"mirror"`, `"always_voice"` or `"always_text"` (SPEC §11).
     pub reply: String,
@@ -199,6 +203,8 @@ impl Default for Voice {
             stt: "moonshine-base".into(),
             tts: "supertonic".into(),
             tts_voice: Some(crate::voice::tts::DEFAULT_VOICE),
+            tts_steps: crate::voice::tts::DEFAULT_STEPS,
+            tts_speed: crate::voice::tts::DEFAULT_SPEED,
             os_voice: None,
             reply: "mirror".into(),
             say: "enough".into(),
@@ -211,6 +217,15 @@ impl Default for Voice {
 impl Voice {
     pub fn tts_voice(&self) -> u8 {
         self.tts_voice.unwrap_or(crate::voice::tts::DEFAULT_VOICE)
+    }
+
+    /// How Supertonic reads.
+    pub fn reading(&self) -> crate::voice::tts::Reading {
+        crate::voice::tts::Reading {
+            voice: self.tts_voice(),
+            steps: self.tts_steps,
+            speed: self.tts_speed,
+        }
     }
 
     /// Unknown voice choices fall back to the defaults.
@@ -242,6 +257,12 @@ impl Voice {
         }
         if !matches!(self.say.as_str(), "brief" | "enough" | "full") {
             self.say = defaults.say;
+        }
+        if !(2..=16).contains(&self.tts_steps) {
+            self.tts_steps = defaults.tts_steps;
+        }
+        if !(0.8..=1.5).contains(&self.tts_speed) {
+            self.tts_speed = defaults.tts_speed;
         }
         if self
             .os_voice

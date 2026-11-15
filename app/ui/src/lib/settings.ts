@@ -38,6 +38,10 @@ export interface Settings {
 		tts: "os" | "supertonic";
 		/** Natural voice, 0–4 female and 5–9 male; null in files from before it existed. */
 		ttsVoice: number | null;
+		/** Natural voice denoising steps, 2–16: more is cleaner and slower. */
+		ttsSteps: number;
+		/** Natural voice pace, 0.8–1.5; 1 is the model's own. */
+		ttsSpeed: number;
 		osVoice: string | null;
 		reply: ReplyMode;
 		/** How much of a spoken reply is said; the rest is only on screen (SPEC §11). */

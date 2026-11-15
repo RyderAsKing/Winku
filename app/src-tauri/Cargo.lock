@@ -6210,6 +6210,7 @@ dependencies = [
  "cpal",
  "keyring",
  "png",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",

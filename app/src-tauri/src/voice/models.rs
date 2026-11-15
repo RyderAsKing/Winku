@@ -186,6 +186,37 @@ pub static MODELS: &[Model] = &[
             voice_style: "voice.bin",
         },
     },
+    // Supertonic 3: fewer skipped and repeated words than 2, same files and wiring. Not the
+    // default yet; the upstream repo is archived.
+    Model {
+        id: "supertonic-3",
+        kind: Kind::Tts,
+        name: "Supertonic 3 (English)",
+        assets: &[Asset {
+            url: release!("tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"),
+            sha256: "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+            size: 128_774_318,
+            unpack: Unpack::TarBz2(&[
+                "duration_predictor.int8.onnx",
+                "text_encoder.int8.onnx",
+                "vector_estimator.int8.onnx",
+                "vocoder.int8.onnx",
+                "tts.json",
+                "unicode_indexer.bin",
+                "voice.bin",
+                "LICENSE",
+            ]),
+        }],
+        recipe: Recipe::Supertonic {
+            duration_predictor: "duration_predictor.int8.onnx",
+            text_encoder: "text_encoder.int8.onnx",
+            vector_estimator: "vector_estimator.int8.onnx",
+            vocoder: "vocoder.int8.onnx",
+            tts_json: "tts.json",
+            unicode_indexer: "unicode_indexer.bin",
+            voice_style: "voice.bin",
+        },
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static Model> {
@@ -244,7 +275,8 @@ mod tests {
                 "moonshine-base",
                 "whisper-base-en",
                 "parakeet",
-                "supertonic"
+                "supertonic",
+                "supertonic-3"
             ]
         );
         for model in MODELS {
@@ -315,6 +347,8 @@ mod tests {
         assert!(!is_stt("nope"));
         assert_eq!(find("moonshine-base").unwrap().size_mb(), 111);
         assert_eq!(find("supertonic").unwrap().size_mb(), 85);
+        assert!(!is_stt("supertonic-3"));
+        assert_eq!(find("supertonic-3").unwrap().size_mb(), 129);
         // The settings default must be a real STT model.
         assert!(is_stt(&crate::settings::Settings::default().voice.stt));
     }

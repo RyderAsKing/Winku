@@ -733,6 +733,25 @@
 							<button type="button" class="btn" onclick={() => shell.speak("Hi, I'm Winku. This is how I sound.").catch((e) => (voiceError = String(e)))}>Test</button>
 						</div>
 					</div>
+					{#if settings.voice.tts === "supertonic"}
+						<div class="row">
+							<div class="label"><span class="title">Pace</span></div>
+							<select aria-label="Pace" value={String(settings.voice.ttsSpeed)} onchange={(e) => saveVoice({ ttsSpeed: Number(e.currentTarget.value) })}>
+								<option value="0.95">Slower</option>
+								<option value="1.05">Normal</option>
+								<option value="1.15">Faster</option>
+								<option value="1.3">Fastest</option>
+							</select>
+						</div>
+						<div class="row">
+							<div class="label"><span class="title">Quality</span><span class="desc">Higher is clearer and takes a little longer to start.</span></div>
+							<select aria-label="Quality" value={String(settings.voice.ttsSteps)} onchange={(e) => saveVoice({ ttsSteps: Number(e.currentTarget.value) })}>
+								<option value="5">Fast</option>
+								<option value="8">Balanced</option>
+								<option value="12">Best</option>
+							</select>
+						</div>
+					{/if}
 					{#if settings.voice.tts === "supertonic" && neural && downloads.supertonic === undefined && !neural.downloading}
 						<div class="row">
 							<div class="label"><span class="title">Natural voice model</span></div>

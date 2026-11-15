@@ -196,50 +196,171 @@ pub fn load_supertonic(model: &Model, dir: &Path) -> Result<OfflineTts, String> 
     })
 }
 
-/// Synthesises `text` into `feed` one sentence at a time (so the first one starts playing while
-/// the rest are still being made), stopping early when `stop` is set.
-pub fn supertonic_speak(
-    tts: &OfflineTts,
-    text: &str,
-    voice: u8,
-    feed: &Arc<Feed>,
-    stop: &AtomicBool,
-) {
-    let config = GenerationConfig {
-        sid: i32::from(voice.min(VOICES - 1)),
-        speed: 1.0,
-        ..Default::default()
-    };
-    for piece in split_sentences(text) {
-        if stop.load(Ordering::SeqCst) {
-            return;
-        }
-        if let Some(audio) =
-            tts.generate_with_config(&piece, &config, None::<fn(&[f32], f32) -> bool>)
-        {
-            if !stop.load(Ordering::SeqCst) {
-                let mut samples = audio.samples().to_vec();
-                make_up_gain(&mut samples);
-                feed.push(&samples);
-            }
+/// How Supertonic reads, from Settings > Speech.
+#[derive(Clone, Copy, Debug)]
+pub struct Reading {
+    /// 0-4 female, 5-9 male.
+    pub voice: u8,
+    /// Denoising steps: more is cleaner and slower. Supertonic's own example uses 8.
+    pub steps: u8,
+    /// 1.0 is the model's own pace; Supertonic's example uses 1.05.
+    pub speed: f32,
+}
+
+impl Default for Reading {
+    fn default() -> Self {
+        Self {
+            voice: DEFAULT_VOICE,
+            steps: DEFAULT_STEPS,
+            speed: DEFAULT_SPEED,
         }
     }
 }
 
+pub const DEFAULT_STEPS: u8 = 8;
+pub const DEFAULT_SPEED: f32 = 1.05;
+
+/// What the pieces of one spoken reply share, so they sound like one voice at one volume: the
+/// gain set by the first piece, and whether a piece has been played (the next one gets a gap).
+#[derive(Default)]
+pub struct Utterance {
+    gain: Option<f32>,
+    started: bool,
+}
+
+/// Synthesises `text` into `feed` a few sentences at a time (so the first piece starts playing
+/// while the rest are still being made), stopping early when `stop` is set.
+pub fn supertonic_speak(
+    tts: &OfflineTts,
+    text: &str,
+    reading: Reading,
+    utterance: &mut Utterance,
+    feed: &Arc<Feed>,
+    stop: &AtomicBool,
+) {
+    let mut extra = std::collections::HashMap::new();
+    extra.insert("lang".to_string(), serde_json::Value::from("en"));
+    let config = GenerationConfig {
+        sid: i32::from(reading.voice.min(VOICES - 1)),
+        num_steps: i32::from(reading.steps.max(1)),
+        speed: reading.speed,
+        extra: Some(extra),
+        ..Default::default()
+    };
+    let rate = engine_rate(tts);
+    for piece in split_sentences(text) {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(mut samples) = synthesise(tts, &piece, &config, rate) else {
+            continue;
+        };
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let samples = trim_silence(&mut samples, rate);
+        if samples.is_empty() {
+            continue;
+        }
+        make_up_gain(samples, &mut utterance.gain);
+        if utterance.started {
+            feed.push(&vec![0.0; rate as usize * GAP_MS / 1000]);
+        }
+        utterance.started = true;
+        feed.push(samples);
+    }
+}
+
+/// Silence between pieces, the same every time (the model's own varies from 50 to 200 ms).
+const GAP_MS: usize = 200;
+
+/// One piece's audio. The model sometimes returns nothing or skips part of the text (sherpa drops
+/// a chunk that fails), so either is logged and tried once more, keeping the longer result.
+fn synthesise(
+    tts: &OfflineTts,
+    piece: &str,
+    config: &GenerationConfig,
+    rate: u32,
+) -> Option<Vec<f32>> {
+    let generate = || {
+        tts.generate_with_config(piece, config, None::<fn(&[f32], f32) -> bool>)
+            .map(|audio| audio.samples().to_vec())
+    };
+    let first = generate();
+    let suspect = match &first {
+        None => {
+            eprintln!("winku: Supertonic returned no audio for {piece:?}; trying again");
+            true
+        }
+        Some(samples) if cut_short(piece, samples.len(), rate) => {
+            eprintln!(
+                "winku: Supertonic made {:.2}s for {} characters, so it probably skipped some of {piece:?}; trying again",
+                samples.len() as f32 / rate as f32,
+                piece.chars().count()
+            );
+            true
+        }
+        Some(_) => false,
+    };
+    if !suspect {
+        return first;
+    }
+    let second = generate();
+    match (&second, &first) {
+        (None, None) => eprintln!("winku: Supertonic returned no audio again; skipping {piece:?}"),
+        (Some(again), _) if cut_short(piece, again.len(), rate) => {
+            eprintln!("winku: Supertonic cut {piece:?} short again")
+        }
+        _ => {}
+    }
+    [first, second].into_iter().flatten().max_by_key(Vec::len)
+}
+
+/// The piece without its leading and trailing silence, which the model makes anywhere from 50 to
+/// 200 ms long, keeping a few milliseconds so words don't start or end abruptly.
+fn trim_silence(samples: &mut [f32], rate: u32) -> &mut [f32] {
+    const KEEP_MS: usize = 20;
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let threshold = (peak * 0.02).max(1e-3);
+    let Some(first) = samples.iter().position(|s| s.abs() > threshold) else {
+        return &mut samples[..0];
+    };
+    let last = samples
+        .iter()
+        .rposition(|s| s.abs() > threshold)
+        .unwrap_or(first);
+    let keep = rate as usize * KEEP_MS / 1000;
+    let start = first.saturating_sub(keep);
+    let end = (last + 1 + keep).min(samples.len());
+    &mut samples[start..end]
+}
+
 /// Supertonic's output is quiet (about -28 dBFS RMS, peaks near 0.4), so people turn the volume
-/// up and then get blasted by the next notification. Lifts a sentence towards -22 dBFS RMS, by at
-/// most 3x and never past a 0.95 peak.
-fn make_up_gain(samples: &mut [f32]) {
+/// up and then get blasted by the next notification. The first piece of a reply sets a gain
+/// towards -22 dBFS RMS, at most 3x, kept in `gain`; every later piece reuses it so the volume
+/// doesn't jump between sentences. No piece goes past a 0.95 peak.
+fn make_up_gain(samples: &mut [f32], gain: &mut Option<f32>) {
     const TARGET_RMS: f32 = 0.08;
     let rms = super::audio::rms(samples);
     let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
     if rms < 1e-4 || peak <= 0.0 {
         return;
     }
-    let gain = (TARGET_RMS / rms).clamp(1.0, 3.0).min(0.95 / peak).max(0.0);
-    if gain > 1.0 {
-        samples.iter_mut().for_each(|s| *s *= gain);
+    let shared = *gain.get_or_insert_with(|| (TARGET_RMS / rms).clamp(1.0, 3.0));
+    let applied = shared.min(0.95 / peak).max(0.0);
+    if applied > 1.0 {
+        samples.iter_mut().for_each(|s| *s *= applied);
     }
+}
+
+/// Whether `samples` of audio at `rate` is too short to have said all of `text`, which is how a
+/// chunk the model skipped shows. Speech runs at about 70 ms a character; under 40 is a rough sign something was skipped.
+fn cut_short(text: &str, samples: usize, rate: u32) -> bool {
+    const MIN_MS_PER_CHAR: u64 = 40;
+    const TOO_FEW_TO_JUDGE: usize = 12;
+    let chars = text.chars().count();
+    let ms = samples as u64 * 1000 / u64::from(rate.max(1));
+    chars >= TOO_FEW_TO_JUDGE && ms < MIN_MS_PER_CHAR * chars as u64
 }
 
 /// The synthesiser's output rate, for the feed.
@@ -252,14 +373,21 @@ const ABBREVIATIONS: &[&str] = &[
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e", "approx", "no",
     "fig", "inc", "ltd", "co",
 ];
-/// A piece shorter than this is joined to the next, so "Yes." isn't synthesised on its own.
-const MIN_PIECE: usize = 24;
+/// A piece shorter than this is never synthesised alone: the int8 model turns "I can do that."
+/// on its own into a buzz or "Do that.", so it is joined to a neighbour.
+const MIN_PIECE: usize = 45;
+/// Sentences are packed into pieces of about this many characters (two or three sentences),
+/// which the model reads more steadily than one at a time.
+const TARGET_PIECE: usize = 80;
+/// A sentence isn't added to a piece that would then be longer than this.
+const FULL_PIECE: usize = 200;
 /// A piece longer than this is cut at a comma or semicolon.
 const MAX_PIECE: usize = 280;
 
-/// Cuts `text` into sentence-sized pieces for synthesis: at newlines and after `.`, `!` or `?`
-/// followed by a space (not after "3.5", "e.g." or "Dr."), with short pieces merged forward and
-/// very long ones cut at clause breaks.
+/// Cuts `text` into pieces for synthesis: sentences end at newlines and after `.`, `!` or `?`
+/// followed by a space (not after "3.5", "e.g." or "Dr."), very long ones are cut at clause
+/// breaks, and they are packed two or three to a piece, with a short last one joining the piece
+/// before it.
 pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -294,17 +422,21 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         if sentence.is_empty() {
             continue;
         }
+        let len = carry.chars().count();
+        if len >= MIN_PIECE && len + 1 + sentence.chars().count() > FULL_PIECE {
+            pieces.push(std::mem::take(&mut carry));
+        }
         if !carry.is_empty() {
             carry.push(' ');
         }
         carry.push_str(&sentence);
-        if carry.chars().count() >= MIN_PIECE {
+        if carry.chars().count() >= TARGET_PIECE {
             pieces.push(std::mem::take(&mut carry));
         }
     }
     if !carry.is_empty() {
         match pieces.last_mut() {
-            Some(last) if carry.chars().count() < MIN_PIECE / 2 => {
+            Some(last) if carry.chars().count() < MIN_PIECE => {
                 last.push(' ');
                 last.push_str(&carry);
             }
@@ -471,46 +603,41 @@ mod tests {
         let tone =
             |amp: f32| -> Vec<f32> { (0..4_800).map(|i| amp * (i as f32 * 0.05).sin()).collect() };
         let mut quiet = tone(0.05);
-        make_up_gain(&mut quiet);
+        make_up_gain(&mut quiet, &mut None);
         assert!((super::super::audio::rms(&quiet) - 0.08).abs() < 0.005);
         let mut barely = tone(0.01);
-        make_up_gain(&mut barely);
+        make_up_gain(&mut barely, &mut None);
         let peak = barely.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!((peak - 0.03).abs() < 0.002, "at most 3x: {peak}");
         let mut peaky = tone(0.5);
         peaky[100] = 0.9;
-        make_up_gain(&mut peaky);
+        make_up_gain(&mut peaky, &mut None);
         assert!(peaky.iter().all(|s| s.abs() <= 0.951));
         let mut loud = tone(0.9);
         let before = loud.clone();
-        make_up_gain(&mut loud);
+        make_up_gain(&mut loud, &mut None);
         assert_eq!(loud, before, "loud audio is left alone");
         let mut silence = vec![0.0; 100];
-        make_up_gain(&mut silence);
+        make_up_gain(&mut silence, &mut None);
         assert!(silence.iter().all(|s| *s == 0.0));
     }
 
     #[test]
     fn sentences_split_without_breaking_numbers_or_abbreviations() {
-        let t =
-            "Dr. Lee paid $4.50 for 12 apples, e.g. green ones. Then she left! Was that fine? Yes.";
+        // Each sentence is long enough to be a piece of its own, so the cuts show.
+        let t = "Dr. Lee paid $4.50 for twelve apples at the market, e.g. the green ones from the farm stall. \
+                 Then she walked all the way home along the river and put them in the big bowl on the table! \
+                 Was that a sensible thing to do with so many apples in the middle of a very warm summer?";
         assert_eq!(
             split_sentences(t),
             [
-                "Dr. Lee paid $4.50 for 12 apples, e.g. green ones.",
-                "Then she left! Was that fine? Yes."
+                "Dr. Lee paid $4.50 for twelve apples at the market, e.g. the green ones from the farm stall.",
+                "Then she walked all the way home along the river and put them in the big bowl on the table!",
+                "Was that a sensible thing to do with so many apples in the middle of a very warm summer?",
             ]
         );
         assert_eq!(split_sentences("Hi."), ["Hi."]);
         assert_eq!(split_sentences("  \n "), Vec::<String>::new());
-        // Lines are boundaries, so list items are read one at a time.
-        assert_eq!(
-            split_sentences("Three things\nfirst, the apples are ripe\nsecond, the pears are not"),
-            [
-                "Three things first, the apples are ripe",
-                "second, the pears are not"
-            ]
-        );
         let long = "word, ".repeat(100);
         let pieces = split_sentences(&long);
         assert!(pieces.len() > 1);
@@ -520,6 +647,51 @@ mod tests {
         );
         let joined = pieces.join(" ");
         assert_eq!(joined.split_whitespace().count(), 100);
+    }
+
+    #[test]
+    fn short_sentences_are_never_synthesised_alone() {
+        // Short replies stay whole instead of becoming a buzz and "Do that."
+        assert_eq!(
+            split_sentences("Yes. I can do that."),
+            ["Yes. I can do that."]
+        );
+        // A short last sentence joins the piece before it.
+        let t = "The build finished and every one of the tests passed on the first try this time. I can do that.";
+        assert_eq!(split_sentences(t), [t]);
+        // A short first sentence joins the one after it.
+        assert_eq!(
+            split_sentences("Sure.\nThe meeting moved to Thursday afternoon, right after lunch with the design team."),
+            ["Sure. The meeting moved to Thursday afternoon, right after lunch with the design team."]
+        );
+    }
+
+    #[test]
+    fn sentences_are_packed_two_or_three_to_a_piece() {
+        let sentence = "Each sentence here is forty characters.";
+        let text = [sentence; 7].join(" ");
+        let pieces = split_sentences(&text);
+        for piece in &pieces {
+            let len = piece.chars().count();
+            assert!((80..=200).contains(&len), "{len}: {piece:?}");
+        }
+        assert_eq!(pieces.join(" "), text, "nothing is lost or reordered");
+    }
+
+    #[test]
+    fn audio_too_short_for_its_text_is_caught() {
+        // 80 characters.
+        let text =
+            "The meeting moved to Thursday afternoon, right after lunch with the design team.";
+        let rate = 44_100;
+        let secs = |s: f32| (s * rate as f32) as usize;
+        // About 70 ms a character is ordinary speech.
+        assert!(!cut_short(text, secs(5.5), rate));
+        // A skipped chunk leaves well under 40 ms a character.
+        assert!(cut_short(text, secs(1.5), rate));
+        assert!(cut_short(text, 0, rate));
+        // A word or two can't be judged that finely.
+        assert!(!cut_short("Yes.", secs(0.1), rate));
     }
 
     #[test]

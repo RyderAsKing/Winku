@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { FauxStep } from "../src/faux.ts";
 import type { OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
 import { DECLINED } from "../src/tools/permission.ts";
+import { refusePage } from "../src/tools/show.ts";
 import { EngineProcess, removeTempDirs } from "./harness.ts";
 
 const running: EngineProcess[] = [];
@@ -492,3 +493,34 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
 	await engine.shutdown();
 }, T);
+
+test("show refuses pages sized by the viewport, with an error that says what to change", async () => {
+	const engine = start();
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Tall", html: "<div style=\"height: 100vh\">x</div>" }),
+				call("show", { title: "Mixed", html: "<style>.a{min-height:50DVH}</style>" }),
+				call("show", { title: "Fine", html: "<p>viewport width of 100%, 5 vhs</p>" }),
+				{ text: "done" },
+			],
+		},
+	});
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 20, errors: [] } } : { ok: true, data: { decision: "deny" } });
+	await engine.prompt("draw");
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toMatch(/vh.*pixel|pixel.*vh/i);
+	expect(rows[1]?.detail).toMatch(/dvh/i);
+	expect(rows[2]?.detail).toContain("20 px");
+	// Only the page that passed was saved and shown.
+	expect(showRequests(engine.records).map((r) => r.params.title)).toEqual(["Fine"]);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	await engine.shutdown();
+}, T);
+
+test("pages over 512 KB are refused with advice to shrink them", () => {
+	expect(refusePage("x".repeat(512 * 1024))).toBeUndefined();
+	expect(refusePage("x".repeat(512 * 1024 + 1))).toMatch(/over 512 KB.*smaller/);
+	// Counted in bytes, not characters.
+	expect(refusePage("é".repeat(256 * 1024 + 1))).toMatch(/512 KB/);
+});

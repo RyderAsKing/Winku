@@ -48,15 +48,28 @@ test("a long bubble is capped at the stage, where it scrolls", () => {
 });
 
 test("a bubble under the resting pill lingers longer for longer replies, within limits", () => {
-	expect(bubbleLinger("")).toBe(8000);
-	expect(bubbleLinger("one two three")).toBe(8360);
-	expect(bubbleLinger("word ".repeat(1000))).toBe(30_000);
+	const plain = { visual: false };
+	expect(bubbleLinger("", plain)).toBe(8000);
+	expect(bubbleLinger("one two three", plain)).toBe(8360);
+	expect(bubbleLinger("word ".repeat(1000), plain)).toBe(30_000);
 });
 
 test("the bar and bubble are Wide only while there is a reason", () => {
 	const d = dimsFor("medium", 1920);
-	expect(wideReasons({ browsing: false })).toEqual([]);
-	expect(barWidth(d, wideReasons({ browsing: false }))).toBe(d.barW);
-	expect(wideReasons({ browsing: true })).toEqual(["browsing"]);
-	expect(barWidth(d, wideReasons({ browsing: true }))).toBe(d.wideW);
+	expect(wideReasons({ browsing: false, visual: false })).toEqual([]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: false }))).toBe(d.barW);
+	expect(wideReasons({ browsing: true, visual: false })).toEqual(["browsing"]);
+	expect(barWidth(d, wideReasons({ browsing: true, visual: false }))).toBe(d.wideW);
+});
+
+test("a bubble holding a visual makes the bar and bubble Wide", () => {
+	const d = dimsFor("small", 1920);
+	expect(wideReasons({ browsing: false, visual: true })).toEqual(["visual"]);
+	expect(barWidth(d, wideReasons({ browsing: false, visual: true }))).toBe(640);
+	expect(wideReasons({ browsing: true, visual: true })).toEqual(["browsing", "visual"]);
+});
+
+test("a bubble holding a visual doesn't time out", () => {
+	expect(bubbleLinger("Here is the chart.", { visual: true })).toBeNull();
+	expect(bubbleLinger("Here is the chart.", { visual: false })).toBe(8480);
 });

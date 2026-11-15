@@ -14,19 +14,31 @@ afterAll(() => {
 	for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-function setup() {
+function setup(answer: "ok" | "fail" = "ok") {
 	const dataDir = mkdtempSync(join(tmpdir(), "winku-show-"));
 	dirs.push(dataDir);
 	const sent: Request[] = [];
 	const requests: ShellRequests = new ShellRequests((r) => {
 		sent.push(r as Request);
-		queueMicrotask(() => requests.handle({ type: "response", id: (r as Request).id, ok: true, data: { height: 80, errors: [] } }));
+		const id = (r as Request).id;
+		queueMicrotask(() =>
+			requests.handle(
+				answer === "ok"
+					? { type: "response", id, ok: true, data: { height: 80, errors: [] } }
+					: { type: "response", id, ok: false, error: "window closed" },
+			),
+		);
 	});
-	const tool = showTool({ requests, dataDir: () => dataDir, replyId: () => "reply-1" });
-	const run = (params: { title: string; html: string; replaces?: string }) =>
+	// The thread's visuals: everything this tool showed, unless a test says otherwise.
+	const inThread = new Set<string>();
+	const tool = showTool({ requests, dataDir: () => dataDir, replyId: () => "reply-1", threadVisuals: () => inThread });
+	const run = async (params: { title: string; html: string; replaces?: string }, signal?: AbortSignal) => {
 		// biome-ignore lint/suspicious/noExplicitAny: pi's execute signature
-		(tool.execute as any)("call", params, undefined, undefined, undefined);
-	return { dataDir, sent, run };
+		const result = await (tool.execute as any)("call", params, signal, undefined, undefined);
+		inThread.add(result.details.visual.id);
+		return result;
+	};
+	return { dataDir, sent, run, inThread };
 }
 
 test("show tells the model the visual's id, so a fix can name it", async () => {
@@ -58,6 +70,36 @@ test("replacing an unknown visual is a clear error, and nothing is saved or show
 	expect(sent).toHaveLength(0);
 	expect(readdirSync(join(dataDir, "visuals"))).toEqual(["notavisual.txt"]);
 	expect(existsSync(join(dataDir, "secrets"))).toBe(false);
+});
+
+test("a visual saved on disk but not in this thread can't be replaced, and its file stays", async () => {
+	const { dataDir, sent, run, inThread } = setup();
+	const other = (await run({ title: "Pie", html: "<p>pie</p>" })).details.visual.id as string;
+	inThread.delete(other); // as if it belonged to another thread, or to none
+	sent.length = 0;
+	await expect(run({ title: "Pie", html: "<p>pie</p>", replaces: other })).rejects.toThrow(`There is no visual "${other}" to replace`);
+	expect(sent).toHaveLength(0);
+	expect(readdirSync(join(dataDir, "visuals"))).toEqual([`${other}.html`]);
+});
+
+test("a show that fails before the visual is shown leaves no file behind", async () => {
+	const { dataDir, run } = setup("fail");
+	await expect(run({ title: "Pie", html: "<p>pie</p>" })).rejects.toThrow();
+	expect(readdirSync(join(dataDir, "visuals"))).toEqual([]);
+});
+
+test("a cancelled show leaves no file behind", async () => {
+	const dataDir = mkdtempSync(join(tmpdir(), "winku-show-"));
+	dirs.push(dataDir);
+	const requests = new ShellRequests(() => {}); // never answers
+	const tool = showTool({ requests, dataDir: () => dataDir, replyId: () => undefined, threadVisuals: () => [] });
+	const abort = new AbortController();
+	// biome-ignore lint/suspicious/noExplicitAny: pi's execute signature
+	const running = (tool.execute as any)("call", { title: "Pie", html: "<p>pie</p>" }, abort.signal, undefined, undefined);
+	await new Promise((r) => setTimeout(r, 10));
+	abort.abort();
+	await expect(running).rejects.toThrow();
+	expect(readdirSync(join(dataDir, "visuals"))).toEqual([]);
 });
 
 const ts = (n: number) => new Date(1_000 + n).toISOString();

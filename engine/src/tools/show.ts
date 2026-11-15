@@ -1,13 +1,12 @@
 // show: the assistant puts a visual (a small HTML page) into its reply (SPEC §3 Visuals, §7 Showing).
 // The page is saved as visuals\<id>.html in the data folder; the main window shows it in a
 // sandboxed frame served from the visual's own URL scheme and reports what the frame measured.
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { VisualShown } from "../protocol.ts";
 import { RequestTimeout, type ShellRequests } from "../requests.ts";
+import { isVisualId, newVisualId, visualPath, visualsDir } from "../visuals.ts";
 import { inlineLocalImages } from "./visual-images.ts";
 
 /** How long the frame has to load the page and report its height. */
@@ -26,6 +25,8 @@ export interface ShowDeps {
 	/** Winku's data folder; visuals go in its visuals\ folder. */
 	dataDir: () => string;
 	replyId: () => string | undefined;
+	/** The ids of the visuals in the current thread's transcript: only these can be replaced. */
+	threadVisuals: () => Iterable<string>;
 }
 
 /** The largest page `show` accepts. */
@@ -41,10 +42,6 @@ export function refusePage(html: string): string | undefined {
 		return `This page uses a viewport height unit ("${unit[0].trim()}"). The frame grows to fit the page, so anything sized by the viewport height gets no stable size. Use pixels, rem, % of width or aspect-ratio instead, and don't use vh, dvh, svh or lvh anywhere.`;
 	}
 	return undefined;
-}
-
-export function visualPath(dataDir: string, id: string): string {
-	return join(dataDir, "visuals", `${id}.html`);
 }
 
 /** The tool result: what the frame measured, so a broken page can be fixed in the next step. */
@@ -80,13 +77,13 @@ export function showTool(deps: ShowDeps) {
 			const refusal = refusePage(params.html);
 			if (refusal) throw new Error(refusal);
 			const replaces = params.replaces?.trim() || undefined;
-			if (replaces && (!/^[0-9a-f]{16}$/.test(replaces) || !existsSync(visualPath(deps.dataDir(), replaces))))
+			if (replaces && (!isVisualId(replaces) || !new Set(deps.threadVisuals()).has(replaces)))
 				throw new Error(`There is no visual "${replaces}" to replace. Use the id from the show result of the visual you're fixing.`);
 			// Before anything is saved, so a refused image leaves no file behind.
 			const html = inlineLocalImages(params.html);
-			const ref: VisualRef = { id: randomBytes(8).toString("hex"), title: params.title.trim() || "Visual", ...(replaces ? { replaces } : {}) };
+			const ref: VisualRef = { id: newVisualId(), title: params.title.trim() || "Visual", ...(replaces ? { replaces } : {}) };
 			const path = visualPath(deps.dataDir(), ref.id);
-			mkdirSync(join(deps.dataDir(), "visuals"), { recursive: true });
+			mkdirSync(visualsDir(deps.dataDir()), { recursive: true });
 			writeFileSync(path, html, "utf8");
 			const replyId = deps.replyId();
 			let text: string;
@@ -98,7 +95,11 @@ export function showTool(deps: ShowDeps) {
 				)) as VisualShown | undefined;
 				text = describeShown(ref, { height: shown?.height ?? 0, errors: shown?.errors ?? [] });
 			} catch (error) {
-				if (!(error instanceof RequestTimeout)) throw error;
+				if (!(error instanceof RequestTimeout)) {
+					// Cancelled or failed before it was shown: no thread will refer to the file.
+					rmSync(path, { force: true });
+					throw error;
+				}
 				text = `Saved "${ref.title}" (visual ${ref.id}), but its frame didn't report back in time, so its height and script errors are unknown.`;
 			}
 			// The broken page's file goes; its place in the reply and the thread is the new one's.

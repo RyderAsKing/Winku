@@ -189,6 +189,7 @@ export const shell = {
 	screenshot: () => invoke<ImageAttachment>("screenshot"),
 	/** Open an http(s) URL in the default browser. */
 	openExternal: (url: string) => invoke<void>("open_external", { url }),
+	openVisual: (id: string) => invoke<void>("open_visual", { id }),
 	/** Read `text` aloud, replacing what is playing, or after it with `append`. */
 	speak: (text: string, append = false) => invoke<void>("speak", { text, append }),
 	stopSpeaking: () => invoke<void>("stop_speaking"),

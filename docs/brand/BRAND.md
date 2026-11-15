@@ -29,7 +29,7 @@ The logo is the resting pill cut off by a short line, the edge of the screen, wi
 Use the mark where Peek would be too small to read: app icons, the installer, the tray, favicons and avatars. The app icons in `app/src-tauri/icons/` are rendered from it.
 
 - Use it as it is. Don't recolour the eyes, swap in another eye state, add an outline or put it in a box.
-- The face is always dark, on light and dark backgrounds alike, just as in the app.
+- The face is always dark, on light and dark backgrounds alike, just as in the app. It has no outline, so on a dark background it nearly disappears and the eyes carry it. That is intended.
 
 ## The wordmark
 

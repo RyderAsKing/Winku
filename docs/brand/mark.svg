@@ -20,7 +20,7 @@
       <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect x="64.0" y="243.2" width="896.0" height="537.6" rx="268.8" fill="url(#face)" stroke="#fff" stroke-opacity="0.1" stroke-width="6"/>
+  <rect x="64.0" y="243.2" width="896.0" height="537.6" rx="268.8" fill="url(#face)"/>
     <rect x="288.0" y="416.0" width="192.0" height="192.0" rx="59.3" fill="#5EF6F0" filter="url(#bloom)" opacity="0.9"/>
     <rect x="288.0" y="416.0" width="192.0" height="192.0" rx="59.3" fill="url(#fill)"/>
     <rect x="304.9" y="430.1" width="158.1" height="88.3" rx="39.5" fill="url(#sheen)" opacity="0.65"/>

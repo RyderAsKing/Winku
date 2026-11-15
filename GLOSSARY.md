@@ -16,6 +16,14 @@ _Avoid_: Input, prompt box, chat box
 The translucent box under or over the bar where a reply appears.
 _Avoid_: Popup, panel, card
 
+**Visual**:
+A small page the assistant draws into a reply, such as a chart, a table or a diagram, when showing beats telling.
+_Avoid_: Card, panel, render, artifact, sketch
+
+**Wide**:
+The bar and bubble at their larger width, for reading back through the thread or showing a visual.
+_Avoid_: Expanded, full width, open (the bar is open whenever it shows, at any width)
+
 **Transcript**:
 The whole thread shown at once, opened with `Ctrl+J`.
 _Avoid_: History (History is where cleared threads and past actions are kept), log

@@ -8,5 +8,6 @@ There is no account and no telemetry. Winku talks only to the model provider you
 - **What the model sees.** Each message you send carries a short note: the app and window title you're in, the text you have selected, and the kind and size of what's on the clipboard (not its contents). A screenshot or the clipboard's contents go only when you attach them or when Winku looks at them for something you asked.
 - **Clipboard history** of your last 20 text copies is kept in memory while Winku runs, never on disk. Content a password manager marks as private is never kept or read.
 - **Updates** are downloaded from GitHub Releases.
+- **Visuals.** A visual the assistant draws can load pictures or scripts from the web, the way a web page does. Nothing about you is sent with them.
 
 Found a security problem? Please report it privately, as [SECURITY.md](../SECURITY.md) explains.

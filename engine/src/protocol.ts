@@ -374,6 +374,9 @@ export type Event =
 	 * that a reply with nothing written ends with its last block as the text.
 	 */
 	| { type: "say"; id: string; text: string }
+	/** A `show` call is being written (SPEC §3 Visuals): its title so far, sent each time it grows,
+	 * before the tool runs. The UI shows "Drawing <title>" and the Drawing eyes until the visual lands. */
+	| { type: "drawing"; id: string; toolCallId: string; title: string }
 	| { type: "tool_start"; id: string; toolCallId: string; name: string; summary: string }
 	| { type: "tool_end"; id: string; toolCallId: string; ok: boolean; summary: string }
 	/** Final text has the mood tag stripped. Sent when the engine is idle again (agent_settled). */

@@ -26,13 +26,7 @@ pub const CSP: &str = "default-src 'none'; \
 /// Runs first in every page. It reports the page's height whenever it changes, uncaught errors
 /// and failed loads, and `loaded` once the page has loaded. The page never scrolls by itself.
 /// Keep the message shape in step with app/ui/src/main/Visual.svelte.
-pub const BRIDGE: &str = r#"<script>(()=>{const post=(m)=>parent.postMessage(Object.assign({winku:"visual"},m),"*");
-addEventListener("error",(e)=>{if(e instanceof ErrorEvent){post({kind:"error",message:(e.message||"Script error")+(e.lineno?" (line "+e.lineno+")":"")});return}const t=e.target;if(t&&t!==window)post({kind:"error",message:"Couldn't load "+(t.src||t.href||t.tagName)})},true);
-addEventListener("unhandledrejection",(e)=>post({kind:"error",message:"Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason)}));
-const root=document.documentElement;root.style.overflow="hidden";root.style.background="transparent";root.style.colorScheme="dark";
-let last=-1;const measure=()=>{const b=document.body;const h=Math.ceil(Math.max(root.getBoundingClientRect().height,b?b.getBoundingClientRect().bottom+parseFloat(getComputedStyle(b).marginBottom||"0"):0));if(h!==last){last=h;post({kind:"height",height:h})}};
-new ResizeObserver(measure).observe(root);
-addEventListener("load",()=>{measure();post({kind:"loaded",height:last})});})();</script>"#;
+pub const BRIDGE: &str = concat!("<script>", include_str!("bridge.js"), "</script>");
 
 /// The visual id in a request path, `/<16 hex>.html`; anything else is not a visual.
 pub fn visual_id(path: &str) -> Option<&str> {
@@ -68,6 +62,14 @@ pub fn with_bridge(page: &str) -> String {
     out
 }
 
+/// A saved visual's file, for "Open in browser"; `None` unless `id` is a visual id and the file
+/// exists.
+pub fn saved_file(data_dir: &Path, id: &str) -> Option<std::path::PathBuf> {
+    visual_id(&format!("/{id}.html"))?;
+    let file = data_dir.join("visuals").join(format!("{id}.html"));
+    file.is_file().then_some(file)
+}
+
 /// Answers a `winku-visual` request from `data_dir\visuals`.
 pub fn serve(data_dir: &Path, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let plain = |status: StatusCode, text: &'static str| {
@@ -101,6 +103,21 @@ pub fn serve(data_dir: &Path, request: &Request<Vec<u8>>) -> Response<Cow<'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_in_browser_finds_only_saved_visuals() {
+        let dir = std::env::temp_dir().join(format!("winku-visual-file-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("visuals")).unwrap();
+        std::fs::write(dir.join("visuals").join("00000000000000cc.html"), "<p>x</p>").unwrap();
+        assert_eq!(
+            saved_file(&dir, "00000000000000cc"),
+            Some(dir.join("visuals").join("00000000000000cc.html"))
+        );
+        assert_eq!(saved_file(&dir, "00000000000000dd"), None);
+        assert_eq!(saved_file(&dir, "../settings"), None);
+        assert_eq!(saved_file(&dir, "00000000000000CC"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn only_visual_files_are_served() {

@@ -445,6 +445,8 @@ export interface VisualShowParams {
 	/** 16 lower-case hex characters; the file is visuals\<visualId>.html. */
 	visualId: string;
 	title: string;
+	/** The broken visual this one replaces in place (SPEC §7 Showing); its file is already gone. */
+	replaces?: string;
 }
 
 /** What the real frame measured once the page loaded. */

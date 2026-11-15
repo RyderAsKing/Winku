@@ -68,12 +68,24 @@
 	}
 
 	function close(smooth = true) {
-		if (browsing && smooth) glide();
+		const closing = browsing && smooth;
+		if (closing) glide();
 		browsing = false;
-		if (node) {
-			node.scrollTop = node.scrollHeight;
-			lastTop = node.scrollTop;
-		}
+		settle();
+		if (closing) requestAnimationFrame(settleWhileClosing);
+	}
+
+	function settle() {
+		if (!node) return;
+		node.scrollTop = node.scrollHeight;
+		lastTop = node.scrollTop;
+	}
+
+	/** While the bubble closes it narrows too, and the text rewraps taller: keep the end in view. */
+	function settleWhileClosing() {
+		if (!node || browsing || !gliding) return;
+		settle();
+		requestAnimationFrame(settleWhileClosing);
 	}
 
 	function onscroll() {

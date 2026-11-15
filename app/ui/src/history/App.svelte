@@ -131,7 +131,7 @@
 					<button type="button" class="primary" disabled={restoring} onclick={restore}>Restore as current</button>
 				{/if}
 				{#if !selected.current}
-					<button type="button" class="quiet" disabled={deleting} onclick={remove}>{confirmingDelete === selected.id ? "Delete for good" : "Delete"}</button>
+					<button type="button" class="secondary" disabled={deleting} onclick={remove}>{confirmingDelete === selected.id ? "Delete for good" : "Delete"}</button>
 				{/if}
 			</header>
 			<div class="read">{#if reading}<p class="feedback" role="status">Loading conversation…</p>{:else}<TranscriptList {items} live={false} />{/if}</div>
@@ -254,7 +254,7 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
-	.quiet {
+	.secondary {
 		flex: none;
 		height: 32px;
 		padding: 0 14px;
@@ -264,7 +264,7 @@
 		color: var(--text);
 		cursor: pointer;
 	}
-	.quiet:disabled,
+	.secondary:disabled,
 	.primary:disabled {
 		opacity: 0.45;
 	}

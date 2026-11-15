@@ -1,6 +1,6 @@
 // Visuals in a reply (SPEC §3): where each one sits in the reply's text, and where its page loads
 // from. The shell serves each saved page from Winku's own URL scheme (app/src-tauri/src/visuals.rs).
-import type { VisualShown } from "../../../../engine/src/protocol.ts";
+import type { TranscriptItem } from "../../../../engine/src/protocol.ts";
 
 /** A visual the model put in the current reply with `show`. */
 export interface ReplyVisual {
@@ -13,12 +13,31 @@ export interface ReplyVisual {
 	answered?: boolean;
 }
 
+/** What a visual's frame can ask of its window. The main window builds these from MainState;
+ * History, with no main window state, opens links and the browser copy through the shell only. */
+export interface VisualHandlers {
+	/** Answer the visual's visual_show Request with what the frame measured. */
+	answer?: (visual: ReplyVisual, height: number, errors: string[]) => void;
+	link: (href: string) => void;
+	openLarger?: (visual: ReplyVisual) => void;
+	key?: (press: KeyPress) => void;
+	openInBrowser: (visual: ReplyVisual) => void;
+}
+
 /** The reply's visuals with `visual` added: in place of the one it replaces, at that one's spot
  * in the text, or after the others (SPEC §7 Showing). */
 export function placeVisual(visuals: readonly ReplyVisual[], visual: ReplyVisual, replaces?: string): ReplyVisual[] {
 	const old = replaces ? visuals.findIndex((v) => v.id === replaces) : -1;
 	if (old < 0) return [...visuals, visual];
 	return visuals.map((v, i) => (i === old ? { ...visual, at: v.at } : v));
+}
+
+/** The loaded transcript with a fix in place of the visual it replaces, from an earlier reply
+ * (SPEC §7 Showing); undefined if the transcript doesn't hold that visual. */
+export function replaceInTranscript(items: readonly TranscriptItem[], replaces: string, visual: ReplyVisual): TranscriptItem[] | undefined {
+	const old = items.findIndex((i) => i.kind === "visual" && i.visualId === replaces);
+	if (old < 0) return undefined;
+	return items.map((item, i) => (i === old ? { ...item, visualId: visual.id, title: visual.title } as TranscriptItem : item));
 }
 
 export type ReplyPart = { kind: "text"; text: string } | { kind: "visual"; visual: ReplyVisual };
@@ -100,5 +119,3 @@ export function winkuKey(press: KeyPress): WinkuKey | null {
 export function isWebLink(href: string): boolean {
 	return /^https?:\/\//i.test(href.trimStart()) && !/[\u0000-\u001f\u007f]/.test(href);
 }
-
-export type { VisualShown };

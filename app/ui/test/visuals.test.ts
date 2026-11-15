@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { isBridgeMessage, isWebLink, placeVisual, type ReplyVisual, winkuKey } from "../src/main/visuals.ts";
+import { isBridgeMessage, isWebLink, placeVisual, replaceInTranscript, type ReplyVisual, winkuKey } from "../src/main/visuals.ts";
+import type { TranscriptItem } from "../../../engine/src/protocol.ts";
 
 test("the page may report its height, load, errors, link clicks, clicks and Winku's keys", () => {
 	for (const message of [
@@ -68,4 +69,19 @@ test("a replacement takes the old visual's place and position in the text", () =
 
 test("a replacement for a visual not in this reply is added where the text has got to", () => {
 	expect(placeVisual([v("a", 3)], v("c", 20), "zzz").map((x) => [x.id, x.at])).toEqual([["a", 3], ["c", 20]]);
+});
+
+test("a fix for a visual in an earlier reply takes that visual's place in the loaded transcript", () => {
+	const items: TranscriptItem[] = [
+		{ kind: "assistant", id: "t1", text: "Here", at: 1 },
+		{ kind: "visual", id: "c1:visual", visualId: "a", title: "Pie", at: 2 },
+		{ kind: "visual", id: "c2:visual", visualId: "b", title: "Bar", at: 3 },
+	];
+	const out = replaceInTranscript(items, "a", v("c", 20));
+	expect(out?.map((i) => (i.kind === "visual" ? [i.visualId, i.title, i.at] : i.kind))).toEqual([
+		"assistant",
+		["c", "c", 2],
+		["b", "Bar", 3],
+	]);
+	expect(replaceInTranscript(items, "zzz", v("c", 20))).toBeUndefined();
 });

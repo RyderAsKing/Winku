@@ -1,19 +1,30 @@
+<script lang="ts" module>
+	import { shell } from "../lib/shell.ts";
+	import { isWebLink, type VisualHandlers } from "./visuals.ts";
+
+	/** For History, which has no main window state: links and the browser copy go to the shell. */
+	export const shellHandlers: VisualHandlers = {
+		link: (href) => {
+			if (isWebLink(href)) void shell.openExternal(href).catch(() => {});
+		},
+		openInBrowser: (visual) => void shell.openVisual(visual.id).catch(() => {}),
+	};
+</script>
+
 <script lang="ts">
 	// One visual in a reply: the saved page in a sandboxed frame on its own origin (allow-scripts
 	// only, so it can't reach the app). The page's bridge reports its height, which the frame grows
 	// to, and its script errors; once it has loaded, what it measured goes back to the engine as the
 	// show tool's result. The frame never scrolls; a tall page scrolls with the bubble. In the
 	// transcript and History a visual is shown again from its file and answers nothing; History has
-	// no main window state (`app`), so there links and "Open in browser" go to the shell directly.
+	// no main window state, so its handlers send links and "Open in browser" to the shell directly.
 	// The frame and Winku pass only what isBridgeMessage lists (SPEC §3): link clicks open http(s)
 	// in the browser, a click on the visual opens it larger, Esc and Ctrl+J work as in the bar, and
 	// Winku's theme goes the other way. Nothing from a page sends a message or runs a tool.
 	import { onDestroy } from "svelte";
-	import { shell } from "../lib/shell.ts";
-	import type { MainState } from "./state.svelte.ts";
-	import { isBridgeMessage, isWebLink, type ReplyVisual, visualUrl } from "./visuals.ts";
+	import { isBridgeMessage, type ReplyVisual, visualUrl } from "./visuals.ts";
 
-	let { app, visual, large = false }: { app?: MainState; visual: ReplyVisual; large?: boolean } = $props();
+	let { handlers, visual, large = false }: { handlers: VisualHandlers; visual: ReplyVisual; large?: boolean } = $props();
 
 	/** Winku's palette and fonts, handed to the page as CSS variables once it has loaded. */
 	const THEME_VARS = ["--text", "--muted", "--accent", "--error", "--line", "--font", "--mono"];
@@ -40,8 +51,8 @@
 	let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function answer(extra?: string) {
-		if (visual.answered || !app) return;
-		void app.visualShown(visual, height, extra ? [...errors, extra] : [...errors]);
+		if (visual.answered) return;
+		handlers.answer?.(visual, height, extra ? [...errors, extra] : [...errors]);
 	}
 
 	const giveUp = setTimeout(() => answer(`The page didn't finish loading in ${GIVE_UP_MS / 1000} s.`), GIVE_UP_MS);
@@ -50,16 +61,15 @@
 		if (!frame || event.source !== frame.contentWindow || !isBridgeMessage(event.data)) return;
 		const message = event.data;
 		if (message.kind === "link") {
-			if (app) void app.visualLink(message.href);
-			else if (isWebLink(message.href)) void shell.openExternal(message.href).catch(() => {});
+			handlers.link(message.href);
 			return;
 		}
 		if (message.kind === "click") {
-			if (app && !large) void app.openLarger(visual);
+			if (!large) handlers.openLarger?.(visual);
 			return;
 		}
 		if (message.kind === "key") {
-			if (app) void app.key(message);
+			handlers.key?.(message);
 			return;
 		}
 		if (message.kind === "error") {
@@ -95,7 +105,7 @@
 		scrolling="no"
 		style:height="{height}px"
 	></iframe>
-	<button type="button" class="open" onclick={() => (app ? app.openVisualInBrowser(visual) : shell.openVisual(visual.id).catch(() => {}))}>Open in browser</button>
+	<button type="button" class="open" onclick={() => handlers.openInBrowser(visual)}>Open in browser</button>
 </figure>
 
 <style>

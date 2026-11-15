@@ -15,7 +15,6 @@
 	import { MainState } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
 	import Visual from "./Visual.svelte";
-	import { winkuKey } from "./visuals.ts";
 
 	const app = new MainState();
 	void app.init();
@@ -120,10 +119,7 @@
 
 	function onkeydown(event: KeyboardEvent) {
 		const press = { key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey };
-		if (winkuKey(press)) {
-			event.preventDefault();
-			void app.key(press);
-		}
+		if (app.key(press)) event.preventDefault();
 	}
 
 	// Focus moving into a visual's frame blurs the window too; only a click outside Winku counts.
@@ -182,7 +178,7 @@
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
 				{:else if large && app.largeVisual}
-					<div class="bubble transcript large-visual"><Visual {app} visual={app.largeVisual} large /></div>
+					<div class="bubble transcript large-visual"><Visual handlers={app.visualHandlers} visual={app.largeVisual} large /></div>
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}

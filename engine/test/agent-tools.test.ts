@@ -1,7 +1,7 @@
 // The agent tools through the real engine process: cwd is the fake home, Requests are answered
 // by the harness (the shell's part). No network: web tools are covered in tools.test.ts.
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FauxStep } from "../src/faux.ts";
 import type { OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
@@ -493,6 +493,35 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	await engine.shutdown();
 }, T);
 
+test("show writes local images into the saved page and refuses a renamed text file", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : { ok: true, data: {} });
+	mkdirSync(engine.dataDir, { recursive: true });
+	const png = join(engine.dataDir, "dot.png");
+	const fake = join(engine.dataDir, "fake.png");
+	const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+	writeFileSync(png, PNG);
+	writeFileSync(fake, "plain text");
+	await engine.configure({
+		faux: {
+			replies: [
+				call("show", { title: "Fake", html: `<img src="${fake}">` }),
+				call("show", { title: "Dot", html: `<img src="${png}"><img src="https://example.com/x.png">` }),
+				{ text: "done" },
+			],
+		},
+	});
+	await engine.prompt("show my picture");
+	const shown = showRequests(engine.records);
+	expect(shown.map((r) => r.params.title)).toEqual(["Dot"]);
+	const saved = readFileSync(join(engine.dataDir, "visuals", `${shown[0]?.params.visualId}.html`), "utf8");
+	expect(saved).toBe(`<img src="data:image/png;base64,${PNG.toString("base64")}"><img src="https://example.com/x.png">`);
+	expect(readdirSync(join(engine.dataDir, "visuals"))).toHaveLength(1);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("not an image");
+	await engine.shutdown();
+}, T);
+
 test("while show is being written, drawing events carry its title before the tool runs", async () => {
 	const engine = start();
 	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 200, errors: [] } } : { ok: true, data: {} });
@@ -550,4 +579,41 @@ test("a scheduled, spoken run can show a visual: no permission ask, say blocks h
 	expect(said.join(" ")).not.toContain("secret-chart-words");
 	expect(end.text).not.toContain("secret-chart-words");
 	await engine.shutdown();
+
+type VisualRow = Extract<TranscriptItem, { kind: "visual" }>;
+const visualRows = (items: TranscriptItem[]) => items.filter((t): t is VisualRow => t.kind === "visual");
+
+test("visuals stay in the thread after a restart; clearing keeps their files and deleting the History entry removes them", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : undefined);
+	await engine.configure({
+		faux: { replies: [{ text: "Look:", toolCalls: [{ name: "show", arguments: { title: "Pie", html: "<p>pie</p>" } }] }, { text: "That's it." }] },
+	});
+	await engine.prompt("draw a pie");
+	const visualId = showRequests(engine.records)[0]?.params.visualId as string;
+	const file = join(engine.dataDir, "visuals", `${visualId}.html`);
+
+	const items = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	expect(items.map((t) => t.kind)).toEqual(["user", "assistant", "tool", "visual", "assistant"]);
+	expect(visualRows(items)[0]).toMatchObject({ visualId, title: "Pie" });
+	const threadId = (await engine.callOk<{ id: string; current: boolean }[]>({ type: "history_list" })).find((e) => e.current)?.id as string;
+	await engine.shutdown();
+
+	// After a restart the visual is still in the thread, and its file is still there.
+	const again = engine.restart();
+	running.push(again);
+	await again.configure();
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "transcript" }))).toHaveLength(1);
+
+	// The current thread can't be deleted; clear first. Clearing keeps the file.
+	expect(await again.call({ type: "history_delete", entryId: threadId })).toMatchObject({ ok: false });
+	await again.callOk({ type: "clear" });
+	expect(existsSync(file)).toBe(true);
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "history_read", entryId: threadId }))).toHaveLength(1);
+
+	await again.callOk({ type: "history_delete", entryId: threadId });
+	expect(existsSync(file)).toBe(false);
+	expect((await again.callOk<{ id: string }[]>({ type: "history_list" })).map((e) => e.id)).not.toContain(threadId);
+	expect(await again.call({ type: "history_read", entryId: threadId })).toMatchObject({ ok: false });
+	await again.shutdown();
 }, T);

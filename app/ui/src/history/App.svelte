@@ -1,5 +1,6 @@
 <script lang="ts">
-	// History (SPEC §8): read and search archived threads and actions; restore one as current.
+	// History (SPEC §8): read and search archived threads and actions; restore one as current, or
+	// delete one (a thread's visuals go with it).
 	import type { HistoryEntry, TranscriptItem } from "../../../../engine/src/protocol.ts";
 	import "../lib/theme.css";
 	import { onEngine, shell } from "../lib/shell.ts";
@@ -12,6 +13,9 @@
 	let loading = $state(true);
 	let restoring = $state(false);
 	let reading = $state(false);
+	/** Delete asks once more before it deletes: the id of the entry waiting for that second click. */
+	let confirmingDelete: string | null = $state(null);
+	let deleting = $state(false);
 	let error = $state("");
 	let readVersion = 0;
 
@@ -59,6 +63,29 @@
 		}
 	}
 
+	async function remove() {
+		if (!selected) return;
+		if (confirmingDelete !== selected.id) {
+			confirmingDelete = selected.id;
+			return;
+		}
+		deleting = true;
+		try {
+			await shell.call({ type: "history_delete", entryId: selected.id });
+			confirmingDelete = null;
+			selected = null;
+			await load();
+		} catch {
+			error = "Could not delete this conversation. Try again.";
+		} finally {
+			deleting = false;
+		}
+	}
+
+	$effect(() => {
+		if (selected?.id !== confirmingDelete) confirmingDelete = null;
+	});
+
 	$effect(() => {
 		void query;
 		const timer = setTimeout(load, 200);
@@ -102,6 +129,9 @@
 				<h1>{selected.title || "Untitled"}</h1>
 				{#if selected.kind === "thread" && !selected.current}
 					<button type="button" class="primary" disabled={restoring} onclick={restore}>Restore as current</button>
+				{/if}
+				{#if !selected.current}
+					<button type="button" class="quiet" disabled={deleting} onclick={remove}>{confirmingDelete === selected.id ? "Delete for good" : "Delete"}</button>
 				{/if}
 			</header>
 			<div class="read">{#if reading}<p class="feedback" role="status">Loading conversation…</p>{:else}<TranscriptList {items} live={false} />{/if}</div>
@@ -224,6 +254,17 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
+	.quiet {
+		flex: none;
+		height: 32px;
+		padding: 0 14px;
+		border-radius: 999px;
+		border: 1px solid var(--line-strong);
+		background: none;
+		color: var(--text);
+		cursor: pointer;
+	}
+	.quiet:disabled,
 	.primary:disabled {
 		opacity: 0.45;
 	}

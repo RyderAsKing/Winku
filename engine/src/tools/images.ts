@@ -1,4 +1,4 @@
-// Screenshots don't survive compaction: images in the messages a compaction kept are replaced
+// Screenshots and visuals' pages don't survive compaction (a show call keeps only its title): images in the messages a compaction kept are replaced
 // by a short note in what is sent to the model. The session file keeps them (the transcript
 // still counts them), and messages after the compaction keep their images.
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -18,6 +18,22 @@ function withoutImages(message: AgentMessage): AgentMessage {
 	} as unknown as AgentMessage;
 }
 
+/** A visual's page is the bulk of its show call: once compacted, the call keeps only the title. */
+function withoutVisuals(message: AgentMessage): AgentMessage {
+	const content = (message as { content?: unknown }).content;
+	if ((message as { role?: string }).role !== "assistant" || !Array.isArray(content)) return message;
+	const isShow = (b: Block) => b?.type === "toolCall" && b.name === "show" && !!b.arguments && typeof b.arguments === "object";
+	if (!content.some(isShow)) return message;
+	return {
+		...message,
+		content: (content as Block[]).map((b) => {
+			if (!isShow(b)) return b;
+			const { html: _html, ...rest } = b.arguments as Record<string, unknown>;
+			return { ...b, arguments: rest };
+		}),
+	} as unknown as AgentMessage;
+}
+
 export function dropCompactedImages(messages: AgentMessage[]): AgentMessage[] {
 	let summaryIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -31,7 +47,7 @@ export function dropCompactedImages(messages: AgentMessage[]): AgentMessage[] {
 	return messages.map((message, i) => {
 		if (i <= summaryIndex) return message;
 		const at = (message as { timestamp?: number }).timestamp ?? 0;
-		return at < compactedAt ? withoutImages(message) : message;
+		return at < compactedAt ? withoutVisuals(withoutImages(message)) : message;
 	});
 }
 

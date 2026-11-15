@@ -9,6 +9,7 @@ import { parseNow } from "./nowline.ts";
 import { parseScheduled } from "./scheduled.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
+import { visualPath } from "./tools/show.ts";
 
 interface UndoState {
 	token: string;
@@ -165,6 +166,25 @@ export class Thread {
 		const path = await this.findSession(entryId);
 		if (!path) throw new EngineError(`No history entry "${entryId}"`, "engine");
 		return transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch(), this.undoneSaves());
+	}
+
+	/** Delete a History entry. A thread's visuals go with it; the current thread can't be deleted. */
+	async delete(entryId: string): Promise<void> {
+		if (entryId === this.sessionId) throw new EngineError("The current thread can't be deleted", "engine");
+		const actions = this.readActions();
+		if (actions.some((a) => a.id === entryId)) {
+			const kept = actions.filter((a) => a.id !== entryId).map((a) => `${JSON.stringify(a)}\n`);
+			writeFileSync(this.actionsPath, kept.join(""));
+			return;
+		}
+		const path = await this.findSession(entryId);
+		if (!path) throw new EngineError(`No history entry "${entryId}"`, "engine");
+		const items = transcriptItems(SessionManager.open(path, this.sessionDir, this.dataDir).getBranch());
+		for (const item of items) {
+			if (item.kind === "visual") rmSync(visualPath(this.dataDir, item.visualId), { force: true });
+		}
+		rmSync(path, { force: true });
+		if (this.undo?.archivedFile === path) this.undo = undefined;
 	}
 
 	/** The prompt preamble this thread was started with (pi stores it as a system message), if any. */
@@ -424,6 +444,11 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 				tool.ok = !message.isError;
 				const detail = textOf(message.content);
 				if (detail) tool.detail = detail;
+				const visual = (message.details as { visual?: { id?: unknown; title?: unknown } } | undefined)?.visual;
+				if (!message.isError && typeof visual?.id === "string" && /^[0-9a-f]{16}$/.test(visual.id)) {
+					const title = typeof visual.title === "string" ? visual.title : "";
+					items.push({ kind: "visual", id: `${tool.id}:visual`, visualId: visual.id, title, at: tool.at });
+				}
 			}
 		}
 	}

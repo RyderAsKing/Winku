@@ -8,6 +8,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { VisualShown } from "../protocol.ts";
 import { RequestTimeout, type ShellRequests } from "../requests.ts";
+import { inlineLocalImages } from "./visual-images.ts";
 
 /** How long the frame has to load the page and report its height. */
 export const SHOW_TIMEOUT_MS = 20_000;
@@ -45,6 +46,7 @@ export function showTool(deps: ShowDeps) {
 			"Draw a visual into your reply: a small HTML page, such as a chart, a table, a diagram or a small interactive widget, " +
 			"shown where you call this, between the text before and after it. Use it when showing beats telling; most replies stay text. " +
 			"Write one complete page with its own <style> and <script>; it may load scripts and pictures from https URLs. " +
+			"To show a local picture, give its absolute path as an <img> src; it is written into the page, and must be a real image under 2 MB. " +
 			"Give it no background of its own and let it grow to fit its content; don't size anything by the viewport. " +
 			"The result tells you the height the page measured and any script errors, so you can fix a broken page.",
 		parameters: Type.Object({
@@ -52,10 +54,12 @@ export function showTool(deps: ShowDeps) {
 			html: Type.String({ description: "The whole page: HTML with its styles and scripts" }),
 		}),
 		async execute(_id, params, signal) {
+			// Before anything is saved, so a refused image leaves no file behind.
+			const html = inlineLocalImages(params.html);
 			const ref: VisualRef = { id: randomBytes(8).toString("hex"), title: params.title.trim() || "Visual" };
 			const path = visualPath(deps.dataDir(), ref.id);
 			mkdirSync(join(deps.dataDir(), "visuals"), { recursive: true });
-			writeFileSync(path, params.html, "utf8");
+			writeFileSync(path, html, "utf8");
 			const replyId = deps.replyId();
 			let text: string;
 			try {

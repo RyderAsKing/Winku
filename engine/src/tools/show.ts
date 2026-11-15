@@ -8,6 +8,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { VisualShown } from "../protocol.ts";
 import { RequestTimeout, type ShellRequests } from "../requests.ts";
+import { inlineLocalImages } from "./visual-images.ts";
 
 /** How long the frame has to load the page and report its height. */
 export const SHOW_TIMEOUT_MS = 20_000;
@@ -55,7 +56,7 @@ export function describeShown(title: string, shown: VisualShown): string {
 export const SHOW_INSTRUCTIONS = [
 	"Draw a visual into your reply: a small HTML page, such as a chart, a table, a diagram or a small interactive widget, shown where you call this, between the text before and after it.",
 	"When to draw: only when showing beats telling, such as numbers to compare, a shape to see or something to try. Most replies stay text; never draw for decoration or to restate what you said.",
-	"Layout: write one complete page with its own <style> and <script>; it may load scripts and pictures from https URLs (no fetch or network calls from the page). It sits in a small translucent bubble, so keep it compact (about 560 px wide at most), with a short caption instead of a big heading, and let it grow to fit its content. Never size anything by the viewport: vh, dvh, svh and lvh units are refused. Pages over 512 KB are refused too.",
+	"Layout: write one complete page with its own <style> and <script>; it may load scripts and pictures from https URLs (no fetch or network calls from the page). It sits in a small translucent bubble, so keep it compact (about 560 px wide at most), with a short caption instead of a big heading, and let it grow to fit its content. Never size anything by the viewport: vh, dvh, svh and lvh units are refused. Pages over 512 KB are refused too. To show a local picture, give its absolute path as an <img> src; it is written into the page, and must be a real image under 2 MB.",
 	"Look: every page already has Winku's palette as CSS variables (--text, --muted, --faint, --accent #5ef6f0, --hot #ffd56a, --error, --line, --panel, --font, --mono), no background (leave it that way; the bubble shows through), light text on dark, and a 4 px body margin. Use the variables instead of your own colours and fonts.",
 	"House style: draw charts and diagrams as dot matrices, like Winku's own dot field, and not with smooth bars, lines or gradients. There are no faint unlit dots. A bar chart needs only HTML: <figure class=\"w-chart\"><figcaption>Build time by day</figcaption><div class=\"w-bars\"><div class=\"w-bar\" style=\"--rows:6\"><span class=\"w-value\">6s</span><i class=\"w-dots\"></i><span class=\"w-label\">Mon</span></div><div class=\"w-bar hot\" style=\"--rows:12\">...</div></div></figure>. --rows is a bar's height in dots (keep the tallest at about 14), --cols its width in dots (default 7), and class hot highlights the one bar that matters. The bars' dots rise once when the chart lands, then stay still. For other charts in SVG, draw circles r=2.3 on an 8 px grid filled with var(--accent) or var(--hot), and add class w-rise with style=\"--i:N\" (N a small number per column) for the same rise.",
 	"The result tells you the height the page measured and any script errors, so you can fix a broken page.",
@@ -73,10 +74,12 @@ export function showTool(deps: ShowDeps) {
 		async execute(_id, params, signal) {
 			const refusal = refusePage(params.html);
 			if (refusal) throw new Error(refusal);
+			// Before anything is saved, so a refused image leaves no file behind.
+			const html = inlineLocalImages(params.html);
 			const ref: VisualRef = { id: randomBytes(8).toString("hex"), title: params.title.trim() || "Visual" };
 			const path = visualPath(deps.dataDir(), ref.id);
 			mkdirSync(join(deps.dataDir(), "visuals"), { recursive: true });
-			writeFileSync(path, params.html, "utf8");
+			writeFileSync(path, html, "utf8");
 			const replyId = deps.replyId();
 			let text: string;
 			try {

@@ -52,8 +52,17 @@
 	$effect(() => {
 		if (!showReply || transcript) browsing = false;
 	});
-	// A bubble holding a visual is Wide too, until it closes.
-	const barW = $derived(barWidth(d, wideReasons({ browsing: browsing && showReply && !transcript, visual: showReply && !transcript && app.holdsVisual })));
+	// A bubble holding a visual is Wide too, until it closes; so is the transcript while it holds one.
+	const barW = $derived(
+		barWidth(
+			d,
+			wideReasons({
+				browsing: browsing && showReply && !transcript,
+				visual: showReply && !transcript && app.holdsVisual,
+				transcriptVisual: transcript && (app.holdsVisual || app.transcript.some((item) => item.kind === "visual")),
+			}),
+		),
+	);
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
 	$effect(() => {

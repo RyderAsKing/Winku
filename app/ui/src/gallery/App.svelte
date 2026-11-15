@@ -22,6 +22,7 @@
 		{ state: "error", label: "Error" },
 		{ state: "cleared", label: "Cleared" },
 		{ state: "sleeping", label: "Sleeping" },
+		{ state: "drawing", label: "Drawing" },
 	];
 	const LEVELS = Object.keys(TINTS) as ThinkingLevel[];
 	const CONTEXT = [0, 20, 50, 80, 100];

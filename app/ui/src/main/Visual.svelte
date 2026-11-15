@@ -2,11 +2,12 @@
 	// One visual in a reply: the saved page in a sandboxed frame on its own origin (allow-scripts
 	// only, so it can't reach the app). The page's bridge reports its height, which the frame grows
 	// to, and its script errors; once it has loaded, what it measured goes back to the engine as the
-	// show tool's result. The frame never scrolls; a tall page scrolls with the bubble.
+	// show tool's result. The frame never scrolls; a tall page scrolls with the bubble. In the
+	// transcript and History a visual is shown again from its file and answers nothing.
 	import { onDestroy } from "svelte";
 	import { isBridgeMessage, type ReplyVisual, visualUrl } from "./visuals.ts";
 
-	let { visual, onshown }: { visual: ReplyVisual; onshown: (visual: ReplyVisual, height: number, errors: string[]) => void } = $props();
+	let { visual, onshown }: { visual: ReplyVisual; onshown?: (visual: ReplyVisual, height: number, errors: string[]) => void } = $props();
 
 	/** Heights often change right after load (fonts, a chart drawing itself): wait this long for them. */
 	const SETTLE_MS = 300;
@@ -20,7 +21,7 @@
 	let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function answer(extra?: string) {
-		if (visual.answered) return;
+		if (visual.answered || !onshown) return;
 		onshown(visual, height, extra ? [...errors, extra] : [...errors]);
 	}
 

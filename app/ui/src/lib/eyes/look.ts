@@ -13,7 +13,8 @@ export type EyeState =
 	| "pondering"
 	| "error"
 	| "cleared"
-	| "sleeping";
+	| "sleeping"
+	| "drawing";
 
 /** Short looks shown after a reply finishes. */
 export type MoodLook = "happy" | "hearts" | "sad" | "surprised" | "pondering";
@@ -38,6 +39,7 @@ const STATE_COLOURS: Partial<Record<EyeState, string>> = {
 	error: "#FF8B82",
 	cleared: "#E7FFFB",
 	sleeping: "#8ED8D3",
+	drawing: "#C8F27A",
 };
 
 export interface Look {
@@ -45,6 +47,8 @@ export interface Look {
 	shape: EyeShape;
 	/** Eye scale relative to the resting size. */
 	scale: number;
+	/** Per-eye scale, [left, right], when the eyes differ (Drawing's magnifier); else `scale` for both. */
+	scales?: [number, number];
 	/** Whole-pair rotation in degrees. */
 	tilt: number;
 	/** Per-eye rotation in degrees: [left, right]. */
@@ -57,7 +61,7 @@ export interface Look {
 	ring: boolean;
 	tear: boolean;
 	/** Continuous loop, only while the bar is showing and motion is allowed. */
-	loop: "none" | "pulse" | "bounce";
+	loop: "none" | "pulse" | "bounce" | "plot";
 }
 
 export function lookFor(state: EyeState, tint: string): Look {
@@ -99,6 +103,10 @@ export function lookFor(state: EyeState, tint: string): Look {
 			return { ...base, scale: 1.12 };
 		case "sleeping":
 			return { ...base, shape: "crescent" };
+		case "drawing":
+			// Writing a visual: one eye grows like a magnifier and the pair follows the point it
+			// plots (the plot loop), in lime.
+			return { ...base, gaze: [0.06, 0.06], slant: [0, -4], scales: [0.9, 1.2], loop: "plot" };
 		default:
 			return base;
 	}

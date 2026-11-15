@@ -1,10 +1,12 @@
 <script lang="ts">
 	// The current reply under the bar: tools, streamed markdown, errors, memory saves.
 	import Markdown from "../lib/Markdown.svelte";
+	import Working from "./Working.svelte";
 	import type { MainState, Reply } from "./state.svelte.ts";
 
 	let { app, reply }: { app: MainState; reply: Reply } = $props();
 
+	const asking = $derived(reply.permissions?.some((ask) => !ask.decided) ?? false);
 	const fixable = $derived(reply.error && (reply.error.kind === "auth" || reply.error.kind === "config"));
 </script>
 
@@ -14,10 +16,10 @@
 	{/if}
 
 	{#each reply.tools as tool (tool.toolCallId)}
-		<details class="tool mono" class:failed={tool.ok === false}>
+		<details class="tool" class:failed={tool.ok === false} class:running={tool.ok === null}>
 			<summary title={tool.summary}>
-			{tool.ok === null ? (reply.permissions?.some((ask) => !ask.decided) ? "Wants to run" : "Running") : tool.ok ? "Ran" : "Failed"}
-			{tool.name}<span class="summary">: {tool.summary}</span>
+				<span class="verb" class:shimmer={tool.ok === null && !asking}>{tool.ok === null ? (asking ? "Wants to run" : "Running") : tool.ok ? "Ran" : "Failed"} {tool.name}</span>
+				<span class="arg mono">{tool.summary}</span>
 			</summary>
 			<pre>{tool.summary}</pre>
 		</details>
@@ -26,7 +28,11 @@
 	{#if reply.text}
 		<Markdown text={reply.text} />
 	{:else if !reply.done && !reply.error}
-		<p class="waiting">{reply.permissions?.some((ask) => !ask.decided) ? "Waiting for you" : "Thinking…"}</p>
+		{#if asking}
+			<p class="waiting">Waiting for you</p>
+		{:else if !reply.tools.some((tool) => tool.ok === null)}
+			<Working label="Thinking" since={reply.startedAt} />
+		{/if}
 	{/if}
 
 	{#if reply.aborted}
@@ -91,7 +97,7 @@
 		display: grid;
 		gap: 8px;
 		padding: 12px 0 0;
-		border-top: 1px solid var(--line-strong);
+		border-top: 1px solid var(--line);
 	}
 	.ask p {
 		margin: 0;
@@ -119,7 +125,8 @@
 		max-height: 160px;
 		overflow: auto;
 		padding: 8px 10px;
-		border-left: 2px solid var(--line-strong);
+		border-radius: 8px;
+		background: rgb(0 0 0 / 0.32);
 		overflow-wrap: anywhere;
 		font-size: 12px;
 		white-space: pre-wrap;
@@ -132,15 +139,14 @@
 	.choices button {
 		min-height: 32px;
 		padding: 0 12px;
-		border-radius: 8px;
-		border: 1px solid var(--line-strong);
-		background: none;
+		border-radius: 999px;
+		border: 0;
+		background: rgb(255 255 255 / 0.08);
 		font-size: 12px;
 		cursor: pointer;
 	}
 	.choices .accept {
 		background: var(--accent);
-		border-color: var(--accent);
 		color: #071012;
 		font-weight: 600;
 	}
@@ -157,34 +163,60 @@
 		font-weight: 600;
 		color: var(--muted);
 	}
+	/* A tool call: what it did, then the command in a mono chip. Click for the whole command. */
 	.tool {
 		min-width: 0;
 		max-width: 100%;
 		margin: 0;
 		color: var(--muted);
+		font-size: 12px;
 		white-space: normal;
 		overflow-wrap: anywhere;
 	}
 	.tool summary {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		padding: 2px 0;
 		cursor: pointer;
+		list-style: none;
+	}
+	.tool summary::-webkit-details-marker {
+		display: none;
+	}
+	.verb {
+		flex: none;
+		font-weight: 600;
+	}
+	.verb:not(.shimmer) {
+		color: var(--text);
+	}
+	.arg {
+		min-width: 0;
+		padding: 2px 7px;
+		border-radius: 6px;
+		background: rgb(255 255 255 / 0.06);
+		color: var(--muted);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		padding: 3px 0;
+	}
+	.tool[open] .arg {
+		display: none;
 	}
 	.tool pre {
+		margin: 4px 0 6px;
+		padding: 8px 10px;
+		border-radius: 8px;
+		background: rgb(0 0 0 / 0.32);
+		font-family: var(--mono);
+		font-size: 11px;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		font: inherit;
-		margin: 4px 0 8px;
-		padding-left: 10px;
-		border-left: 2px solid var(--line-strong);
 	}
-	.tool.failed {
+	.tool.failed .verb {
 		color: var(--error);
-	}
-	.summary {
-		color: var(--faint);
 	}
 	.waiting,
 	.note {

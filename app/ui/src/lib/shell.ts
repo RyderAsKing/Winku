@@ -63,6 +63,9 @@ export type SettingsSection = "schedules";
 export interface Layout {
 	alignRight: boolean;
 	above: boolean;
+	/** The strip on the pill's far side (STRIP in stage.ts) is on screen. Older shells leave it
+	 * out: treat that as room. */
+	room?: boolean;
 }
 
 /** A shape the main window draws, logical px from the stage's top-left. */
@@ -168,7 +171,7 @@ export const shell = {
 	windowMode: (mode: WindowMode) => invoke<void>("window_mode", { mode }),
 	/** The stage size and the shapes drawn on it (logical px). The window becomes the stage around
 	 * the pill, clipped to the shapes on Windows. Returns which way things grow. */
-	windowShape: (width: number, height: number, shapes: Shape[]) => invoke<Layout>("window_shape", { width, height, shapes }),
+	windowShape: (width: number, height: number, inset: number, shapes: Shape[]) => invoke<Layout>("window_shape", { width, height, inset, shapes }),
 	windowLayout: () => invoke<Layout | null>("window_layout"),
 	openWindow: (name: "settings" | "history", section?: SettingsSection) =>
 		invoke<void>("open_window", section ? { name, section } : { name }),

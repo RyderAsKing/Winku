@@ -116,6 +116,102 @@ const cases = [
 		},
 	},
 	{
+		// A short message: the meter and thinking level stay in the bar until it reaches them.
+		name: "typing-short",
+		path: "/",
+		ready: "role=button[name='Remove selection']",
+		prepare: async (page) => {
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Warmer");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		// Typing past them: the meter and thinking level float into the strip above the bar.
+		name: "typing",
+		path: "/",
+		ready: "role=button[name='Remove selection']",
+		prepare: async (page) => {
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Make this sound warmer but keep it short");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		// Both attachments while typing: the busiest the row gets.
+		name: "typing-both",
+		path: "/",
+		ready: "role=button[name='Remove screenshot']",
+		prepare: async (page) => {
+			// A stand-in capture: a window with a title bar and a few lines.
+			const data = await page.evaluate(() => {
+				const c = document.createElement("canvas");
+				c.width = 320;
+				c.height = 200;
+				const g = c.getContext("2d");
+				g.fillStyle = "#e9edf3";
+				g.fillRect(0, 0, 320, 200);
+				g.fillStyle = "#3b6ea8";
+				g.fillRect(0, 0, 320, 26);
+				g.fillStyle = "#9aa6b8";
+				for (let y = 48; y < 180; y += 22) g.fillRect(24, y, 120 + ((y * 7) % 150), 8);
+				return c.toDataURL("image/png").split(",")[1];
+			});
+			await ui(page, { kind: "attach_screenshot", image: { data, mimeType: "image/png" } });
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Does this match the screenshot?");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		// Low on the screen the strip is under the bar.
+		name: "typing-low",
+		path: "/?low",
+		ready: "role=button[name='Remove selection']",
+		prepare: async (page) => {
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Make this sound warmer but keep it short");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		// Against the top of the screen: one pill beside the attachment instead.
+		name: "typing-noroom",
+		path: "/?noroom",
+		ready: "role=button[name='Remove selection']",
+		prepare: async (page) => {
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Make this sound warmer but keep it short");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
+		// Both attachments, against the top of the screen: the busiest the row gets.
+		name: "typing-both-noroom",
+		path: "/?noroom",
+		ready: "role=button[name='Remove screenshot']",
+		prepare: async (page) => {
+			// A stand-in capture: a window with a title bar and a few lines.
+			const data = await page.evaluate(() => {
+				const c = document.createElement("canvas");
+				c.width = 320;
+				c.height = 200;
+				const g = c.getContext("2d");
+				g.fillStyle = "#e9edf3";
+				g.fillRect(0, 0, 320, 200);
+				g.fillStyle = "#3b6ea8";
+				g.fillRect(0, 0, 320, 26);
+				g.fillStyle = "#9aa6b8";
+				for (let y = 48; y < 180; y += 22) g.fillRect(24, y, 120 + ((y * 7) % 150), 8);
+				return c.toDataURL("image/png").split(",")[1];
+			});
+			await ui(page, { kind: "attach_screenshot", image: { data, mimeType: "image/png" } });
+			await ui(page, { kind: "ask_selection", text: "Thanks for the quick turnaround, I'll loop in Sam." });
+			await page.getByRole("textbox", { name: "Message" }).fill("Does this match the screenshot?");
+			await page.waitForTimeout(300);
+		},
+	},
+	{
 		name: "chip-screenshot",
 		path: "/",
 		ready: "role=button[name='Remove screenshot']",
@@ -580,7 +676,7 @@ try {
 				const box = item.size
 					? null
 					: await page.evaluate(() => {
-							const rects = [...document.querySelectorAll(".head, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
+							const rects = [...document.querySelectorAll(".head, .strip, .bubbles, .hint-bubble, .window")].map((el) => el.getBoundingClientRect());
 							if (rects.length === 0) return null;
 							const x = Math.min(...rects.map((r) => r.left));
 							const y = Math.min(...rects.map((r) => r.top));

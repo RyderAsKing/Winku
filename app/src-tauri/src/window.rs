@@ -68,6 +68,17 @@ pub struct Layout {
     pub align_right: bool,
     /// The pill is low on the screen: the bubble goes above it.
     pub above: bool,
+    /// The strip on the other side of the pill (above it, or below when `above`), where the UI
+    /// floats the context meter and thinking level while you type, is on screen. It isn't when
+    /// the pill is snapped to that edge; the UI then puts them beside the attachments.
+    pub room: bool,
+}
+
+impl Layout {
+    /// Same corner of the stage: the window goes in the same place. `room` doesn't move it.
+    pub fn same_corner(self, other: Layout) -> bool {
+        self.align_right == other.align_right && self.above == other.above
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -190,25 +201,33 @@ pub fn default_pill_position(primary: &MonitorInfo, pill: (f64, f64)) -> (f64, f
 }
 
 /// Things grow toward the middle of the monitor: left when the pill is on the right half, and up
-/// when it sits in the lower 40% of the work area.
-pub fn layout_for(anchor: Rect, work: Rect) -> Layout {
+/// when it sits in the lower 40% of the work area. `inset`: the stage's strip on the far side of
+/// the pill, physical px; `room` says whether it fits on the work area.
+pub fn layout_for(anchor: Rect, work: Rect, inset: f64) -> Layout {
+    let above = anchor.y + anchor.h / 2.0 > work.y + work.h * 0.6;
     Layout {
         align_right: anchor.x + anchor.w / 2.0 > work.x + work.w / 2.0,
-        above: anchor.y + anchor.h / 2.0 > work.y + work.h * 0.6,
+        above,
+        room: if above {
+            anchor.bottom() + inset <= work.bottom() + 0.5
+        } else {
+            anchor.y - inset >= work.y - 0.5
+        },
     }
 }
 
-/// The stage (the whole window) of `size` with the pill `anchor` in the corner `layout` names.
-pub fn stage_rect(anchor: Rect, size: (f64, f64), layout: Layout) -> Rect {
+/// The stage (the whole window) of `size` with the pill `anchor` in the corner `layout` names,
+/// `inset` px in from the top (or the bottom, when `above`): the strip on the pill's far side.
+pub fn stage_rect(anchor: Rect, size: (f64, f64), layout: Layout, inset: f64) -> Rect {
     let x = if layout.align_right {
         anchor.right() - size.0
     } else {
         anchor.x
     };
     let y = if layout.above {
-        anchor.bottom() - size.1
+        anchor.bottom() + inset - size.1
     } else {
-        anchor.y
+        anchor.y - inset
     };
     Rect {
         x,
@@ -219,17 +238,17 @@ pub fn stage_rect(anchor: Rect, size: (f64, f64), layout: Layout) -> Rect {
 }
 
 /// Where the pill is inside a window at `window`: the inverse of `stage_rect`. A pill-sized
-/// window is its own anchor.
-pub fn anchor_in(window: Rect, pill: (f64, f64), layout: Layout) -> Rect {
+/// window is its own anchor (`inset` 0).
+pub fn anchor_in(window: Rect, pill: (f64, f64), layout: Layout, inset: f64) -> Rect {
     let x = if layout.align_right {
         window.right() - pill.0
     } else {
         window.x
     };
     let y = if layout.above {
-        window.bottom() - pill.1
+        window.bottom() - inset - pill.1
     } else {
-        window.y
+        window.y + inset
     };
     Rect {
         x,
@@ -273,10 +292,11 @@ pub fn rest_anchor(
     pill: (f64, f64),
     window: Rect,
     layout: Layout,
+    inset: f64,
 ) -> Option<(Rect, MonitorInfo)> {
     let first = monitor_at(monitors, window.x, window.y)?;
     let pill = scaled(pill, first.scale);
-    let dropped = anchor_in(window, pill, layout);
+    let dropped = anchor_in(window, pill, layout, inset * first.scale);
     let monitor = monitor_at(
         monitors,
         dropped.x + dropped.w / 2.0,
@@ -414,6 +434,8 @@ struct View {
     stage: Option<(f64, f64)>,
     /// The window spans the stage (rather than just the pill).
     staged: bool,
+    /// The stage's strip on the far side of the pill, logical px, as the UI reported it.
+    inset: f64,
     /// Where the last bring left the pill. Settling a window still there keeps it off the edge
     /// snap, which would pull it away from the pointer.
     brought: Option<Rect>,
@@ -577,7 +599,12 @@ fn apply_view(
     match view.stage {
         Some(stage) if view.staged => place(
             window,
-            stage_rect(anchor, scaled(stage, monitor.scale), layout),
+            stage_rect(
+                anchor,
+                scaled(stage, monitor.scale),
+                layout,
+                view.inset * monitor.scale,
+            ),
         ),
         _ => place(window, anchor),
     }
@@ -597,7 +624,7 @@ pub fn place_pill(app: &AppHandle) -> Result<(), String> {
     };
     let state = app.state::<WindowState>();
     let mut view = state.view();
-    let layout = layout_for(anchor, monitor.work);
+    let layout = layout_for(anchor, monitor.work, view.inset * monitor.scale);
     let changed = view.layout != Some(layout);
     view.anchor = Some(anchor);
     view.layout = Some(layout);
@@ -613,7 +640,7 @@ fn emit_layout(app: &AppHandle, layout: Layout) {
     let _ = app.emit_to(
         MAIN,
         "ui",
-        serde_json::json!({ "kind": "layout", "alignRight": layout.align_right, "above": layout.above }),
+        serde_json::json!({ "kind": "layout", "alignRight": layout.align_right, "above": layout.above, "room": layout.room }),
     );
 }
 
@@ -631,8 +658,14 @@ pub struct Shape {
 
 /// The UI reports its stage size and the shapes it is drawing (pill or bar, bubble). The window
 /// becomes the stage around the pill, clipped to the shapes on Windows. Elsewhere there is no
-/// clipping, so a bare pill keeps a pill-sized window. Returns which way things grow.
-pub fn set_shape(app: &AppHandle, stage: (f64, f64), shapes: &[Shape]) -> Result<Layout, String> {
+/// clipping, so a bare pill keeps a pill-sized window. `inset`: the stage's strip on the far side
+/// of the pill, logical px. Returns which way things grow.
+pub fn set_shape(
+    app: &AppHandle,
+    stage: (f64, f64),
+    inset: f64,
+    shapes: &[Shape],
+) -> Result<Layout, String> {
     let window = main_window(app)?;
     let state = app.state::<WindowState>();
     let mut view = state.view();
@@ -651,6 +684,13 @@ pub fn set_shape(app: &AppHandle, stage: (f64, f64), shapes: &[Shape]) -> Result
     let bare_pill = shapes.len() == 1 && shapes[0].w <= pill.0 + 0.5 && shapes[0].h <= pill.1 + 0.5;
     view.stage = Some(stage);
     view.staged = cfg!(windows) || !bare_pill;
+    view.inset = inset;
+    // The strip may have changed size: whether it fits is part of the layout.
+    let layout = Layout {
+        room: layout_for(anchor, monitor.work, inset * monitor.scale).room,
+        ..layout
+    };
+    view.layout = Some(layout);
     apply_view(&window, &mut view, &monitor)?;
     if let Some(hwnd) = handle(&window) {
         let s = monitor.scale;
@@ -763,9 +803,10 @@ pub fn start_drag(app: &AppHandle) -> Result<(), String> {
         return os_drag();
     };
     let state = app.state::<WindowState>();
-    let (anchor, layout) = {
+    let (anchor, layout, inset) = {
         let view = state.view();
-        (view.anchor, view.placed.or(view.layout))
+        let inset = if view.staged { view.inset } else { 0.0 };
+        (view.anchor, view.placed.or(view.layout), inset)
     };
     let (Some(anchor), Some(layout), Some(cursor), Some(rect)) = (
         anchor,
@@ -839,9 +880,11 @@ pub fn start_drag(app: &AppHandle) -> Result<(), String> {
                 w: now.2 as f64,
                 h: now.3 as f64,
             };
-            let rest = rest_anchor(&monitors(&window), eye_size(&app).pill(), dropped, layout);
+            let all = monitors(&window);
+            let rest = rest_anchor(&all, eye_size(&app).pill(), dropped, layout, inset);
             if let Some((rest, _)) = rest {
-                let was = anchor_in(dropped, (rest.w, rest.h), layout);
+                let scale = monitor_at(&all, dropped.x, dropped.y).map_or(1.0, |m| m.scale);
+                let was = anchor_in(dropped, (rest.w, rest.h), layout, inset * scale);
                 let (dx, dy) = (rest.x - was.x, rest.y - was.y);
                 if (dx, dy) != (0.0, 0.0) {
                     animate(GLIDE, ease_out, |e| {
@@ -927,23 +970,25 @@ fn settle_pill(app: &AppHandle) {
         return;
     };
     let all = monitors(&window);
+    let inset = if view.staged { view.inset } else { 0.0 };
     // Still where a bring left it: keep it beside the pointer rather than snapping it.
     let brought = view.brought.filter(|b| {
-        let now = anchor_in(rect, (b.w, b.h), placed);
+        let scale = monitor_at(&all, rect.x, rect.y).map_or(1.0, |m| m.scale);
+        let now = anchor_in(rect, (b.w, b.h), placed, inset * scale);
         (now.x - b.x).abs() <= 1.5 && (now.y - b.y).abs() <= 1.5
     });
     view.brought = brought;
     let rest = match brought {
         Some(b) => monitor_at(&all, b.x + b.w / 2.0, b.y + b.h / 2.0).map(|m| (b, m)),
-        None => rest_anchor(&all, eye_size(app).pill(), rect, placed),
+        None => rest_anchor(&all, eye_size(app).pill(), rect, placed, inset),
     };
     let Some((anchor, monitor)) = rest else {
         return;
     };
-    let next = layout_for(anchor, monitor.work);
+    let next = layout_for(anchor, monitor.work, view.inset * monitor.scale);
     view.anchor = Some(anchor);
     view.layout = Some(next);
-    if next == placed {
+    if next.same_corner(placed) {
         let _ = apply_view(&window, &mut view, &monitor);
     }
     // Otherwise the pill moves to another corner of the stage. The UI redraws it there and
@@ -1056,13 +1101,14 @@ fn glide_to_pointer(app: &AppHandle, hwnd: crate::platform::WindowHandle) {
             let (rect, flipped) = {
                 let mut view = state.view();
                 view.anchor = Some(anchor);
-                let next = layout_for(anchor, monitor.work);
+                let inset = view.inset * monitor.scale;
+                let next = layout_for(anchor, monitor.work, inset);
                 let flipped = (view.layout != Some(next)).then_some(next);
                 view.layout = Some(next);
                 let placed = view.placed.unwrap_or(next);
                 let rect = match view.stage {
                     Some(stage) if view.staged => {
-                        stage_rect(anchor, scaled(stage, monitor.scale), placed)
+                        stage_rect(anchor, scaled(stage, monitor.scale), placed, inset)
                     }
                     _ => anchor,
                 };
@@ -1287,22 +1333,48 @@ mod tests {
 
     #[test]
     fn things_grow_toward_the_middle() {
-        let right_top = layout_for(pill_at(1828.0, 300.0), WORK);
+        let right_top = layout_for(pill_at(1828.0, 300.0), WORK, 38.0);
         assert_eq!(
             right_top,
             Layout {
                 align_right: true,
-                above: false
+                above: false,
+                room: true,
             }
         );
-        let left_low = layout_for(pill_at(0.0, 900.0), WORK);
+        let left_low = layout_for(pill_at(0.0, 900.0), WORK, 38.0);
         assert_eq!(
             left_low,
             Layout {
                 align_right: false,
-                above: true
+                above: true,
+                room: true,
             }
         );
+    }
+
+    #[test]
+    fn the_strip_has_room_unless_the_pill_is_against_that_edge() {
+        // Snapped to the top: nothing above it. Just under the strip's height: still none.
+        assert!(!layout_for(pill_at(1828.0, 0.0), WORK, 38.0).room);
+        assert!(!layout_for(pill_at(1828.0, 30.0), WORK, 38.0).room);
+        assert!(layout_for(pill_at(1828.0, 38.0), WORK, 38.0).room);
+        // Low on the screen the strip is below the pill: snapped to the bottom, none.
+        assert!(!layout_for(pill_at(0.0, WORK.bottom() - 56.0), WORK, 38.0).room);
+        assert!(layout_for(pill_at(0.0, WORK.bottom() - 56.0 - 38.0), WORK, 38.0).room);
+        // Without a strip there is always room.
+        assert!(layout_for(pill_at(1828.0, 0.0), WORK, 0.0).room);
+    }
+
+    #[test]
+    fn the_same_corner_ignores_room() {
+        let a = Layout {
+            align_right: true,
+            above: false,
+            room: true,
+        };
+        assert!(a.same_corner(Layout { room: false, ..a }));
+        assert!(!a.same_corner(Layout { above: true, ..a }));
     }
 
     #[test]
@@ -1310,28 +1382,39 @@ mod tests {
         let anchor = pill_at(1828.0, 300.0);
         let layouts = [(false, false), (true, false), (false, true), (true, true)];
         for (align_right, above) in layouts {
-            let layout = Layout { align_right, above };
-            let stage = stage_rect(anchor, (400.0, 424.0), layout);
-            assert_eq!(anchor_in(stage, (92.0, 56.0), layout), anchor, "{layout:?}");
+            let layout = Layout {
+                align_right,
+                above,
+                room: true,
+            };
+            for inset in [0.0, 38.0] {
+                let stage = stage_rect(anchor, (400.0, 424.0), layout, inset);
+                assert_eq!(
+                    anchor_in(stage, (92.0, 56.0), layout, inset),
+                    anchor,
+                    "{layout:?} {inset}"
+                );
+            }
         }
-        let right_below = stage_rect(
-            anchor,
-            (400.0, 424.0),
-            Layout {
-                align_right: true,
-                above: false,
-            },
-        );
-        assert_eq!((right_below.x, right_below.y), (1520.0, 300.0));
+        let right_below = Layout {
+            align_right: true,
+            above: false,
+            room: true,
+        };
+        let stage = stage_rect(anchor, (400.0, 424.0), right_below, 0.0);
+        assert_eq!((stage.x, stage.y), (1520.0, 300.0));
+        // The strip is above the pill: the stage starts that much higher.
+        let stage = stage_rect(anchor, (400.0, 462.0), right_below, 38.0);
+        assert_eq!((stage.x, stage.y), (1520.0, 262.0));
+        // Low on the screen it is below: the stage ends that much lower.
+        let right_above = Layout {
+            above: true,
+            ..right_below
+        };
+        let stage = stage_rect(anchor, (400.0, 462.0), right_above, 38.0);
+        assert_eq!(stage.bottom(), anchor.bottom() + 38.0);
         assert_eq!(
-            anchor_in(
-                anchor,
-                (92.0, 56.0),
-                Layout {
-                    align_right: true,
-                    above: true
-                }
-            ),
+            anchor_in(anchor, (92.0, 56.0), right_above, 0.0),
             anchor,
             "a pill-sized window is its own anchor"
         );
@@ -1364,19 +1447,20 @@ mod tests {
         let layout = Layout {
             align_right: true,
             above: true,
+            room: true,
         };
         // A stage whose pill (bottom right corner) is 10 px from the right edge, mid-height.
-        let stage = stage_rect(pill_at(1818.0, 500.0), (400.0, 424.0), layout);
-        let (rest, on) = rest_anchor(&[m], pill, stage, layout).unwrap();
+        let stage = stage_rect(pill_at(1818.0, 500.0), (400.0, 462.0), layout, 38.0);
+        let (rest, on) = rest_anchor(&[m], pill, stage, layout, 38.0).unwrap();
         assert_eq!((rest.x, rest.y), (1828.0, 500.0));
         assert_eq!(on, m);
         // Well away from every edge it stays where it was dropped, even with the stage's top
         // above the screen.
-        let stage = stage_rect(pill_at(900.0, 200.0), (400.0, 424.0), layout);
+        let stage = stage_rect(pill_at(900.0, 200.0), (400.0, 462.0), layout, 38.0);
         assert!(stage.y < 0.0);
-        let (rest, _) = rest_anchor(&[m], pill, stage, layout).unwrap();
+        let (rest, _) = rest_anchor(&[m], pill, stage, layout, 38.0).unwrap();
         assert_eq!((rest.x, rest.y), (900.0, 200.0));
-        assert_eq!(rest_anchor(&[], pill, stage, layout), None);
+        assert_eq!(rest_anchor(&[], pill, stage, layout, 38.0), None);
     }
 
     #[test]

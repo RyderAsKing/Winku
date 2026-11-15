@@ -95,9 +95,8 @@ textarea {
 .md pre {
 	position: relative;
 	margin: 0.4em 0 0.7em;
-	padding: 10px 12px;
-	background: #07080c;
-	border: 1px solid var(--line);
+	padding: 8px 12px 10px;
+	background: rgb(0 0 0 / 0.32);
 	border-radius: 10px;
 	overflow-x: auto;
 }
@@ -255,5 +254,23 @@ label,
 	*::after {
 		transition: none !important;
 		animation: none !important;
+	}
+}
+
+/* Work in progress: a soft highlight sweeps across the text, left to right. Only on labels that
+   show while the agent is working, so it never runs at idle. With reduced motion it is plain
+   muted text. */
+.shimmer {
+	color: transparent;
+	background: linear-gradient(90deg, var(--muted) 0 40%, var(--text) 50%, var(--muted) 60% 100%);
+	background-size: 250% 100%;
+	background-position: 100% 0;
+	-webkit-background-clip: text;
+	background-clip: text;
+	animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer {
+	to {
+		background-position: 0 0;
 	}
 }

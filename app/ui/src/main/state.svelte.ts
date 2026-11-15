@@ -25,7 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
-import { bubbleLinger, DEFAULT_LAYOUT, type Dims, dimsFor, shapesFor, stageSize } from "./stage.ts";
+import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
 	toolCallId: string;
@@ -124,6 +124,9 @@ export class MainState {
 	peek = $state(false);
 	/** Height of the message box's content (attachments and text), which the bar grows to fit. */
 	inputH = $state(0);
+	/** The message, typed or being heard, has reached the meter and thinking level: they float off
+	 * the bar to give it the room. */
+	crowded = $state(false);
 	/** Winku is gliding to the pointer ("Bring Winku here"), and which way it is going. */
 	travelling: { dx: number; dy: number } | null = $state(null);
 	/** It has just arrived: the eyes settle with a wobble. */
@@ -151,7 +154,7 @@ export class MainState {
 	readonly thinking: ThinkingLevel = $derived(this.ready?.thinking ?? this.settings?.main?.thinking ?? "medium");
 	readonly tint: string = $derived(TINTS[this.thinking]);
 	readonly lid: number = $derived(lidFor(this.contextPercent));
-	readonly dims: Dims = $derived(dimsFor(this.settings?.eyes.size));
+	readonly dims: Dims = $derived(dimsFor(this.settings?.eyes.size, typeof screen === "undefined" ? Infinity : screen.availWidth));
 	/** The conversation before the current reply: what scrolling back in the bubble shows. */
 	readonly older: TranscriptItem[] = $derived.by(() => {
 		const reply = this.reply;
@@ -222,10 +225,10 @@ export class MainState {
 	}
 
 	/** The window is the stage around the pill; tell the shell what is drawn on it. */
-	async reportShape(dims: Dims, headW: number, headH: number, bubbleH: number, headRoom = headH) {
+	async reportShape(dims: Dims, drawn: Drawn) {
 		const stage = stageSize(dims);
-		const layout = await shell.windowShape(stage.w, stage.h, shapesFor(dims, this.layout, headW, headH, bubbleH, headRoom)).catch(() => null);
-		if (layout && (layout.alignRight !== this.layout.alignRight || layout.above !== this.layout.above)) this.layout = layout;
+		const layout = await shell.windowShape(stage.w, stage.h, STRIP, shapesFor(dims, this.layout, drawn)).catch(() => null);
+		if (layout && (layout.alignRight !== this.layout.alignRight || layout.above !== this.layout.above || (layout.room ?? true) !== (this.layout.room ?? true))) this.layout = layout;
 	}
 
 	/** Show something without opening the bar: under the resting pill it goes in the bubble. */
@@ -571,7 +574,7 @@ export class MainState {
 				this.updateReady = event.version;
 				break;
 			case "layout":
-				this.layout = { alignRight: event.alignRight, above: event.above };
+				this.layout = { alignRight: event.alignRight, above: event.above, room: event.room ?? true };
 				break;
 			case "bring":
 				if (event.phase === "start") {

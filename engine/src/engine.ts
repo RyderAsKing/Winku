@@ -20,7 +20,7 @@ import { buildSystemPrompt } from "./prompt.ts";
 import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
 import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
-import { clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
+import { capContextWindow, clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
 import { NOTICE_TYPE, Thread } from "./thread.ts";
 import { cliRunner, findAgentDesktop } from "./tools/desktop/cli.ts";
 import { installImageDrop } from "./tools/images.ts";
@@ -172,7 +172,7 @@ export class Engine {
 			modelIds: [mainId, ...(quickId ? [quickId] : [])],
 			faux: config.provider.kind === "catalog" && config.provider.id === FAUX_PROVIDER ? config.faux : undefined,
 		});
-		const model = resolveModel(runtime, config.provider, mainId);
+		const model = capContextWindow(resolveModel(runtime, config.provider, mainId), config.contextLimit);
 		if (quickId) resolveModel(runtime, config.provider, quickId);
 
 		await this.stop();

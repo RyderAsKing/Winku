@@ -23,6 +23,8 @@ export interface Settings {
 	main: ModelChoice | null;
 	/** null = follow main with thinking "off". */
 	quick: ModelChoice | null;
+	/** Cap on the Main model's context window, in tokens; a smaller window is used as is. */
+	contextLimit: number;
 	compactionReserveTokens: number | null;
 	askBeforeRunning: boolean;
 	alwaysAllow: string[];

@@ -14,6 +14,9 @@ use serde_json::{json, Map, Value};
 
 pub const FILE_NAME: &str = "settings.json";
 
+/// Default cap on the Main model's context window, in tokens.
+pub const DEFAULT_CONTEXT_LIMIT: u64 = 250_000;
+
 type Extra = Map<String, Value>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,6 +28,8 @@ pub struct Settings {
     pub main: Option<ModelChoice>,
     /// None = follow main with thinking "off".
     pub quick: Option<ModelChoice>,
+    /// The Main model's context window is capped here; a smaller window is used as is.
+    pub context_limit: u64,
     pub compaction_reserve_tokens: Option<u64>,
     pub ask_before_running: bool,
     pub always_allow: Vec<String>,
@@ -155,6 +160,7 @@ impl Default for Settings {
             provider: None,
             main: None,
             quick: None,
+            context_limit: DEFAULT_CONTEXT_LIMIT,
             compaction_reserve_tokens: None,
             ask_before_running: false,
             always_allow: Vec::new(),
@@ -360,6 +366,7 @@ impl Settings {
             "dataDir": data_dir,
             "provider": provider,
             "main": { "id": main.id, "thinking": main.thinking },
+            "contextLimit": self.context_limit,
             "askBeforeRunning": self.ask_before_running,
             "alwaysAllow": self.always_allow,
             "assistantStyle": self.assistant_style,
@@ -572,6 +579,7 @@ mod tests {
         let value = serde_json::to_value(Settings::default()).unwrap();
         assert_eq!(value["version"], 1);
         assert_eq!(value["provider"], Value::Null);
+        assert_eq!(value["contextLimit"], 250_000);
         assert_eq!(value["compactionReserveTokens"], Value::Null);
         assert_eq!(value["askBeforeRunning"], false);
         assert_eq!(value["voiceProfiles"]["default"], "casual");
@@ -731,6 +739,7 @@ mod tests {
         );
         assert_eq!(message["apiKey"], "k");
         assert_eq!(message["compactionReserveTokens"], 20000);
+        assert_eq!(message["contextLimit"], 250_000);
         assert!(message.get("quick").is_none());
         assert_eq!(message["defaultVoiceProfile"], "casual");
     }

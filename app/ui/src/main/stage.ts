@@ -55,6 +55,22 @@ export function stageSize(d: Dims): { w: number; h: number } {
 	return { w: d.wideW, h: STRIP + d.pillH + GAP + d.bubbleMax };
 }
 
+/** Why the bar and bubble are Wide (GLOSSARY.md): reading back through the thread. */
+export type WideReason = "browsing";
+
+/** The reasons the bar and bubble are Wide right now; none means their usual width.
+ * `browsing`: scrolled back through the thread over the reply bubble (not the transcript). */
+export function wideReasons(now: { browsing: boolean }): WideReason[] {
+	const reasons: WideReason[] = [];
+	if (now.browsing) reasons.push("browsing");
+	return reasons;
+}
+
+/** The bar and bubble's width: Wide for any reason, else the bar's usual width. */
+export function barWidth(d: Dims, reasons: readonly WideReason[]): number {
+	return reasons.length > 0 ? d.wideW : d.barW;
+}
+
 /** Lines of a message the bar grows to show before the message box scrolls. */
 export const INPUT_LINES = 4;
 

@@ -114,6 +114,10 @@ export function shapesFor(d: Dims, layout: Layout, { headW, headH, bubbleH, head
 	return shapes;
 }
 
+/** The open bar (or transcript) folds back to the resting pill after this long with nothing
+ * happening: no typing, pointer movement or scrolling over Winku, no reply or speech running. */
+export const IDLE_CLOSE_MS = 30_000;
+
 /** How long a reply bubble under the resting pill stays after the reply and its speech end.
  * null: it stays until dismissed (`Esc`, or a click elsewhere with the bar open), as a bubble
  * holding a visual does. */

@@ -137,7 +137,8 @@
 	}
 </script>
 
-<svelte:window {onkeydown} {onblur} />
+<!-- Any of these over Winku keeps the open bar from folding away when idle. -->
+<svelte:window {onkeydown} {onblur} onpointermove={() => app.nudge()} onpointerdown={() => app.nudge()} onwheel={() => app.nudge()} oninput={() => app.nudge()} />
 
 <div class="root" class:framed>
 	<div

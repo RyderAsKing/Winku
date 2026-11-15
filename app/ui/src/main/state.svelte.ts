@@ -26,7 +26,7 @@ import {
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
 import { isWebLink, type KeyPress, placeVisual, replaceInTranscript, type ReplyVisual, type VisualHandlers, winkuKey } from "./visuals.ts";
-import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
+import { bubbleLinger, DEFAULT_LAYOUT, IDLE_CLOSE_MS, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
 	toolCallId: string;
@@ -190,6 +190,7 @@ export class MainState {
 	readonly #spokenReplies = new Map<string, { said: boolean }>();
 	#bubbleTimer: ReturnType<typeof setTimeout> | undefined;
 	#bubbleHeld = false;
+	#idleTimer: ReturnType<typeof setTimeout> | undefined;
 	#dictationTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Last draft state told to the shell: due tasks wait while the message box has text. */
 	#draft = false;
@@ -232,13 +233,35 @@ export class MainState {
 	}
 
 	async hide() {
+		await this.#fold();
+		this.selectionChip = null;
+		this.imageChip = null;
+	}
+
+	/** Back to the resting pill. Unlike `hide`, attachments stay for the next summon. */
+	async #fold() {
 		this.#endDictation();
 		this.largeVisual = null;
 		this.bubbleOpen = false;
 		clearTimeout(this.#bubbleTimer);
 		await this.#setMode("pill");
-		this.selectionChip = null;
-		this.imageChip = null;
+	}
+
+	/** Something happened over the open bar: start the idle countdown again. */
+	nudge() {
+		this.#armIdle();
+	}
+
+	/** The open bar folds to the pill after IDLE_CLOSE_MS with nothing happening. A reply,
+	 * speech, talking, the Connect form or the pointer on the bubble holds it open. */
+	#armIdle() {
+		clearTimeout(this.#idleTimer);
+		if (this.mode === "pill") return;
+		this.#idleTimer = setTimeout(() => {
+			if (this.mode === "pill") return;
+			if (this.busy || this.speaking || this.listening || this.needsConnect || this.#bubbleHeld) return this.#armIdle();
+			void this.#fold();
+		}, IDLE_CLOSE_MS);
 	}
 
 	/** The window is the stage around the pill; tell the shell what is drawn on it. */
@@ -262,8 +285,10 @@ export class MainState {
 		else this.#armBubble();
 	}
 
-	/** Once a reply under the pill is finished and read out, let the bubble go after a while. */
+	/** Once a reply under the pill is finished and read out, let the bubble go after a while.
+	 * With the bar open, the idle countdown starts over instead. */
 	#armBubble() {
+		this.#armIdle();
 		clearTimeout(this.#bubbleTimer);
 		if (this.mode !== "pill" || !this.bubbleOpen || this.busy || this.speaking || this.#bubbleHeld) return;
 		const linger = bubbleLinger(this.reply?.text ?? "", { visual: this.holdsVisual });
@@ -286,6 +311,7 @@ export class MainState {
 
 	async #setMode(mode: WindowMode) {
 		this.mode = mode;
+		this.#armIdle();
 		await shell.windowMode(mode);
 	}
 
@@ -408,6 +434,7 @@ export class MainState {
 
 	/** Winku's keys, pressed in the bar or in a visual's frame: true if the key was Winku's. */
 	key(press: KeyPress): boolean {
+		this.nudge();
 		const action = winkuKey(press);
 		if (action === "escape") void this.escape();
 		else if (action === "transcript") void this.toggleTranscript();

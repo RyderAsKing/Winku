@@ -492,3 +492,41 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
 	await engine.shutdown();
 }, T);
+
+type VisualRow = Extract<TranscriptItem, { kind: "visual" }>;
+const visualRows = (items: TranscriptItem[]) => items.filter((t): t is VisualRow => t.kind === "visual");
+
+test("visuals stay in the thread after a restart; clearing keeps their files and deleting the History entry removes them", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 100, errors: [] } } : undefined);
+	await engine.configure({
+		faux: { replies: [{ text: "Look:", toolCalls: [{ name: "show", arguments: { title: "Pie", html: "<p>pie</p>" } }] }, { text: "That's it." }] },
+	});
+	await engine.prompt("draw a pie");
+	const visualId = showRequests(engine.records)[0]?.params.visualId as string;
+	const file = join(engine.dataDir, "visuals", `${visualId}.html`);
+
+	const items = await engine.callOk<TranscriptItem[]>({ type: "transcript" });
+	expect(items.map((t) => t.kind)).toEqual(["user", "assistant", "tool", "visual", "assistant"]);
+	expect(visualRows(items)[0]).toMatchObject({ visualId, title: "Pie" });
+	const threadId = (await engine.callOk<{ id: string; current: boolean }[]>({ type: "history_list" })).find((e) => e.current)?.id as string;
+	await engine.shutdown();
+
+	// After a restart the visual is still in the thread, and its file is still there.
+	const again = engine.restart();
+	running.push(again);
+	await again.configure();
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "transcript" }))).toHaveLength(1);
+
+	// The current thread can't be deleted; clear first. Clearing keeps the file.
+	expect(await again.call({ type: "history_delete", entryId: threadId })).toMatchObject({ ok: false });
+	await again.callOk({ type: "clear" });
+	expect(existsSync(file)).toBe(true);
+	expect(visualRows(await again.callOk<TranscriptItem[]>({ type: "history_read", entryId: threadId }))).toHaveLength(1);
+
+	await again.callOk({ type: "history_delete", entryId: threadId });
+	expect(existsSync(file)).toBe(false);
+	expect((await again.callOk<{ id: string }[]>({ type: "history_list" })).map((e) => e.id)).not.toContain(threadId);
+	expect(await again.call({ type: "history_read", entryId: threadId })).toMatchObject({ ok: false });
+	await again.shutdown();
+}, T);

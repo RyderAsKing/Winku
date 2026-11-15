@@ -1,25 +1,33 @@
 <script lang="ts">
 	// The pill, and the bar it stretches into. The eyes never move: the bar grows from the pill
 	// toward the middle of the screen. Click the eyes to open or close, drag them to move Winku,
-	// right-click for the menu. Open: the message box, then the context meter and thinking level.
+	// right-click for the menu. Open: the message box, then the context meter and thinking level,
+	// which float off the bar (App.svelte) once there is a message, so it has the whole bar.
 	//
 	// The eyes are pinned to the anchored corner and the body is laid out at the full bar width the
 	// whole time, so opening and closing only move the clip edge: nothing inside reflows or slides.
 	// A long message makes the bar taller, away from the eyes' row, up to INPUT_LINES; then the
 	// message box scrolls.
+	import { untrack } from "svelte";
 	import { cubicOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 	import { ms } from "../lib/motion.ts";
 	import Eyes from "../lib/eyes/Eyes.svelte";
+	import Dots from "../lib/eyes/Dots.svelte";
+	import { lookFor } from "../lib/eyes/look.ts";
+	import Meta from "./Meta.svelte";
 	import { shell } from "../lib/shell.ts";
 	import { INPUT_LINES } from "./stage.ts";
 	import type { MainState } from "./state.svelte.ts";
 
-	/** `open`: the bar is showing. `height`: the bar's height, taller than the pill for a long message. */
-	let { app, open, height }: { app: MainState; open: boolean; height: number } = $props();
+	/** `open`: the bar is showing. `height`: the bar's height, taller than the pill for a long message.
+	 * `width`: the open bar's width, wider while scrolled back through the conversation. */
+	let { app, open, height, width }: { app: MainState; open: boolean; height: number; width: number } = $props();
 
 	let eyes: Eyes | undefined = $state();
+	let dots: Dots | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
+	let meta: HTMLElement | undefined = $state();
 	let text = $state("");
 
 	$effect(() => app.eyes.attach(eyes));
@@ -33,9 +41,7 @@
 	});
 
 	const d = $derived(app.dims);
-	const ctx = $derived(app.contextPercent === null ? null : Math.round(app.contextPercent));
 	const waiting = $derived(app.tasks.length);
-	const selectionWords = $derived(app.selectionChip ? app.selectionChip.trim().split(/\s+/).length : 0);
 	// While talking the box shows what has been heard; the typed draft comes back afterwards.
 	const dictating = $derived(app.dictation !== null);
 	const shown = $derived(app.dictation ?? text);
@@ -90,7 +96,53 @@
 	$effect(() => {
 		void shown;
 		void maxInput;
+		// The meter leaving the bar widens the box: fewer lines.
+		void app.crowded;
 		autosize();
+	});
+
+	// The meter and thinking level stay in the bar until the message reaches them, then float off
+	// it (App.svelte) to give the message the whole bar. They come back once it is short again,
+	// well clear of where they would sit, so they don't hop in and out at one width.
+	let metaW = 0;
+	let measurer: CanvasRenderingContext2D | null = null;
+	$effect(() => {
+		const value = shown;
+		void width;
+		void maxInput;
+		untrack(() => {
+			if (!input) return;
+			if (!value.trim()) return void (app.crowded = false);
+			if (value.includes("\n")) return void (app.crowded = true);
+			if (meta) metaW = meta.offsetWidth;
+			const room = input.clientWidth - (meta ? 0 : metaW);
+			measurer ??= document.createElement("canvas").getContext("2d");
+			if (!measurer) return;
+			measurer.font = getComputedStyle(input).font;
+			const used = measurer.measureText(value).width;
+			if (!app.crowded && used > room - 16) app.crowded = true;
+			else if (app.crowded && used < room - 56) app.crowded = false;
+		});
+	});
+
+	// A new thinking level: the eyes perk up and the new colour sweeps along the face, more for
+	// higher levels; back to the bottom, both settle. Not for the level the engine starts with.
+	let lastLevel: { level: string; known: boolean } | null = null;
+	$effect(() => {
+		const level = app.thinking;
+		const known = app.ready !== null;
+		const from = lastLevel;
+		lastLevel = { level, known };
+		if (!from?.known || from.level === level) return;
+		untrack(() => {
+			const levels: string[] = app.ready?.thinkingLevels ?? ["off", "low", "medium", "high", "max"];
+			const at = Math.max(0, levels.indexOf(level));
+			const strength = levels.length > 1 ? at / (levels.length - 1) : 1;
+			const calm = at < levels.indexOf(from.level);
+			app.eyes.touch();
+			eyes?.perk(strength, calm);
+			dots?.burst(calm ? "calm" : "level", { tone: app.tint, strength });
+		});
 	});
 
 	function onkeydown(event: KeyboardEvent) {
@@ -115,14 +167,29 @@
 	class:arrived={app.arrived}
 	style:--lean-x="{lean.x}px"
 	style:--lean-y="{lean.y}px"
-	style:width="{open ? d.barW : d.pillW}px"
+	style:width="{open ? width : d.pillW}px"
 	style:height="{height}px"
 	style:--font="{d.font}px"
 	style:--pill-w="{d.pillW}px"
 	style:--pill-h="{d.pillH}px"
 	style:--radius="{d.pillH / 2}px"
-	style:--body-w="{d.barW - d.pillW}px"
+	style:--body-w="{width - d.pillW}px"
+	style:--eye="{d.eye}px"
 >
+	<Dots
+		bind:this={dots}
+		width={open ? width : d.pillW}
+		{height}
+		pillW={d.pillW}
+		pillH={d.pillH}
+		alignRight={app.layout.alignRight}
+		above={app.layout.above}
+		expression={app.eyes.state}
+		colour={lookFor(app.eyes.state, app.tint).colour}
+		animate={app.eyes.animate}
+		reduceMotion={app.eyes.reduceMotion}
+		level={app.talkLevel}
+	/>
 	<button
 		class="eyes"
 		type="button"
@@ -147,34 +214,21 @@
 			animate={app.eyes.animate}
 			reduceMotion={app.eyes.reduceMotion}
 		/>
-		{#if app.updateReady && !open}
-			<span class="dot" title="Winku {app.updateReady} installs when you quit or restart"></span>
-		{/if}
-		{#if waiting > 0 && !open}
-			<span class="dot tasks" style:background={app.tint} title="{waiting} scheduled {waiting === 1 ? 'task' : 'tasks'}"></span>
+		{#if (app.updateReady || waiting > 0) && !open}
+			<span class="badges">
+				{#if app.updateReady}
+					<span class="dot update" title="Winku {app.updateReady} installs when you quit or restart"></span>
+				{/if}
+				{#if waiting > 0}
+					<span class="dot tasks" style:background={app.tint} title="{waiting} scheduled {waiting === 1 ? 'task' : 'tasks'}"></span>
+				{/if}
+			</span>
 		{/if}
 	</button>
 
 	{#if open}
 		<div class="body" in:fade={{ duration: ms(180), delay: ms(60), easing: cubicOut }} out:fade={{ duration: ms(110) }}>
 			<div class="field" bind:clientHeight={app.inputH}>
-				{#if app.selectionChip || app.imageChip}
-					<div class="attached">
-						{#if app.imageChip}
-							<button type="button" class="shot" aria-label="Remove screenshot" title="Screenshot attached. Click to remove." onclick={() => (app.imageChip = null)}>
-								<img src="data:{app.imageChip.mimeType};base64,{app.imageChip.data}" alt="" />
-								<span class="x" aria-hidden="true"></span>
-							</button>
-						{/if}
-						{#if app.selectionChip}
-							<button type="button" class="quote" aria-label="Remove selection" title="Selected text attached. Click to remove." onclick={() => (app.selectionChip = null)}>
-								<span class="quote-text">{app.selectionChip.trim()}</span>
-								<span class="quote-count">{selectionWords} {selectionWords === 1 ? "word" : "words"}</span>
-								<span class="x" aria-hidden="true"></span>
-							</button>
-						{/if}
-					</div>
-				{/if}
 				<textarea
 					bind:this={input}
 					value={shown}
@@ -191,22 +245,8 @@
 				></textarea>
 			</div>
 
-			{#if !app.needsConnect}
-				<div class="meta">
-					{#if app.updateReady}
-						<button type="button" class="mono level" title="Install Winku {app.updateReady} and restart" onclick={() => shell.updateRestart()}>Restart to update</button>
-					{/if}
-					{#if app.download}
-						<span class="mono" title="Downloading a voice model">{app.download.what === "stt" ? "Speech" : "Voice"} model {Math.round(app.download.fraction * 100)}%</span>
-					{/if}
-					{#if waiting > 0}
-						<button type="button" class="mono level" title="Scheduled tasks" onclick={() => app.openSchedules()}>{waiting} waiting</button>
-					{/if}
-					{#if ctx !== null}<span class="mono" title="Context used">{ctx}% ctx</span>{/if}
-					<button type="button" class="mono level" title="Thinking level (Ctrl+Alt+T)" onclick={() => app.cycleThinking()}>
-						{app.thinking}
-					</button>
-				</div>
+			{#if !app.needsConnect && !app.crowded}
+				<div class="meta" bind:this={meta} in:fade={{ duration: ms(160), easing: cubicOut }}><Meta {app} /></div>
 			{/if}
 		</div>
 	{/if}
@@ -218,7 +258,7 @@
 		/* clip, not hidden: a hidden box can be scrolled, and focusing the message box while the
 		   bar is still narrow would scroll it into view, sliding the eyes. */
 		overflow: clip;
-		border: 1px solid var(--line);
+		/* No outline: the dark face and the eyes are the edge. */
 		/* Half the pill's height, in px: a bar that grows taller keeps the same corners. */
 		border-radius: var(--radius);
 		background: radial-gradient(ellipse 72% 72% at 50% 28%, var(--face-hi), var(--face-lo));
@@ -242,9 +282,8 @@
 		z-index: 1;
 		display: grid;
 		place-items: center;
-		/* The pill's inner box, so the eyes are centred inside the border. */
-		width: calc(var(--pill-w) - 2px);
-		height: calc(var(--pill-h) - 2px);
+		width: var(--pill-w);
+		height: var(--pill-h);
 		padding: 0;
 		border: 0;
 		border-radius: 999px;
@@ -300,36 +339,42 @@
 			scale: 1;
 		}
 	}
-	/* An update is waiting (SPEC §1). Static: no pulse. */
-	.dot {
+	/* Status under the eyes, centred between them and the pill's lower edge: a dot in the accent
+	   when an update is waiting (SPEC §1), one in the resting tint while something is scheduled
+	   (#43). Static: no pulse. */
+	.badges {
 		position: absolute;
-		top: 18%;
-		right: 22%;
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--accent);
+		left: 0;
+		right: 0;
+		top: calc((var(--pill-h) + var(--eye)) / 2 + (var(--pill-h) - var(--eye)) / 4);
+		translate: 0 -50%;
+		display: flex;
+		justify-content: center;
+		gap: 4px;
+		pointer-events: none;
 	}
-	/* Something is scheduled (#43): opposite the update dot, in the resting tint. Static. */
-	.dot.tasks {
-		top: auto;
-		right: auto;
-		bottom: 16%;
-		left: 16%;
+	.dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+	}
+	.dot.update {
+		background: var(--accent);
 	}
 	/* Fixed at the open width, beside the eyes, so it is uncovered rather than squeezed. */
 	.body {
 		position: absolute;
 		top: 0;
 		bottom: 0;
-		left: calc(var(--pill-w) - 2px);
+		left: var(--pill-w);
 		width: var(--body-w);
 		display: flex;
 		align-items: center;
+		transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
 	.right .body {
 		left: auto;
-		right: calc(var(--pill-w) - 2px);
+		right: var(--pill-w);
 	}
 	.field {
 		flex: 1;
@@ -385,104 +430,12 @@
 	textarea:focus-visible {
 		outline: none;
 	}
-	/* What goes with the message: a thumbnail of the screenshot, the start of the selection.
-	   Each is one button; clicking it takes the attachment off. */
-	.attached {
-		display: flex;
-		gap: 6px;
-		min-width: 0;
-	}
-	.shot,
-	.quote {
-		position: relative;
-		flex: none;
-		height: 38px;
-		padding: 0;
-		border: 1px solid var(--line-strong);
-		border-radius: 10px;
-		background: var(--panel-raised);
-		cursor: pointer;
-		overflow: hidden;
-		animation: attach 240ms cubic-bezier(0.3, 1.5, 0.5, 1);
-	}
-	@keyframes attach {
-		from {
-			scale: 0.8;
-			opacity: 0;
-		}
-	}
-	.shot {
-		width: 56px;
-	}
-	.shot img {
-		display: block;
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		object-position: top left;
-	}
-	.quote {
-		flex: 0 1 auto;
-		min-width: 0;
-		max-width: 190px;
-		display: grid;
-		align-content: center;
-		gap: 1px;
-		padding: 0 26px 0 10px;
-		text-align: left;
-		box-shadow: inset 2px 0 0 var(--accent);
-	}
-	.quote-text {
-		font-size: 12px;
-		line-height: 1.25;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.quote-count {
-		font-size: 10px;
-		line-height: 1.25;
-		color: var(--faint);
-	}
-	/* The remove mark: a small cross in the corner, drawn with two strokes. */
-	.x {
-		position: absolute;
-		top: 3px;
-		right: 3px;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: rgb(7 8 12 / 0.78);
-	}
-	.x::before,
-	.x::after {
-		content: "";
-		position: absolute;
-		top: 6.5px;
-		left: 3.5px;
-		width: 7px;
-		height: 1px;
-		background: var(--text);
-		rotate: 45deg;
-	}
-	.x::after {
-		rotate: -45deg;
-	}
-	.quote .x {
-		top: 50%;
-		right: 6px;
-		translate: 0 -50%;
-		background: none;
-	}
 	.meta {
 		flex: none;
 		align-self: flex-start;
-		height: calc(var(--pill-h) - 2px);
+		height: var(--pill-h);
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		color: var(--faint);
-		font-size: 11px;
 	}
 	.above .meta {
 		align-self: flex-end;
@@ -492,14 +445,5 @@
 	}
 	.head.right .meta {
 		padding-right: 2px;
-	}
-	.level {
-		border: 1px solid var(--line);
-		border-radius: 999px;
-		background: none;
-		color: var(--muted);
-		padding: 3px 8px;
-		cursor: pointer;
-		font-size: 11px;
 	}
 </style>

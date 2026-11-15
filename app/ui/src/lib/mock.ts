@@ -3,6 +3,7 @@
 //   ?connect=1     no provider yet (Connect form)
 //   ?ctx=0.62      context fullness
 //   ?thinking=high Main thinking level
+//   ?noroom=1      the pill is against the screen edge: no strip for the meter while typing
 //   ?altgr=1       the keyboard layout has AltGr (Settings offers Ctrl+Shift)
 //   ?taken=action2 a hotkey another app already registered
 //   ?long=1        transcript with long paths, unbroken text, code and a table
@@ -114,7 +115,7 @@ export function createMockShell(): ShellImpl {
 	const size = params.get("size");
 	if (size === "medium" || size === "large") settings = { ...settings, eyes: { ...settings.eyes, size } };
 	// ?left puts the pill on the left half of the screen, ?low in the lower part.
-	const layout = { alignRight: !params.has("left"), above: params.has("low") };
+	const layout = { alignRight: !params.has("left"), above: params.has("low"), room: !params.has("noroom") };
 	let hasKey = !params.has("connect");
 	let hasSearchKey = false;
 	let pendingAsk: ((decision: string) => void) | null = null;
@@ -395,7 +396,8 @@ export function createMockShell(): ShellImpl {
 				case "settings_get":
 					return structuredClone(settings) as T;
 				case "settings_set":
-					settings = structuredClone(args?.settings as Settings);
+					// Like the real shell, which gets them as JSON (a Svelte state proxy can't be cloned).
+					settings = JSON.parse(JSON.stringify(args?.settings)) as Settings;
 					emit("settings_changed", settings);
 					setTimeout(ready, 50);
 					return structuredClone(settings) as T;

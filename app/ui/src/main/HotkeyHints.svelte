@@ -62,9 +62,9 @@
 	kbd {
 		min-width: 22px;
 		padding: 1px 6px;
-		border: 1px solid var(--line-strong);
-		border-bottom-width: 2px;
 		border-radius: 6px;
+		background: rgb(255 255 255 / 0.08);
+		box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.35);
 		color: var(--text);
 		text-align: center;
 	}

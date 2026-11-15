@@ -13,6 +13,9 @@ export interface Dims {
 	spacing: number;
 	/** The open bar, and the bubble under it. */
 	barW: number;
+	/** Bar and bubble while scrolled back through the conversation: wider, to read it. The stage
+	 * is this wide all the time, so widening only moves the clip edge. */
+	wideW: number;
 	/** Tallest the bubble gets before it scrolls; the transcript uses all of it. */
 	bubbleMax: number;
 	/** Input text size. */
@@ -20,25 +23,36 @@ export interface Dims {
 }
 
 export const SIZES: Record<EyeSize, Dims> = {
-	small: { pillW: 92, pillH: 56, eye: 20, spacing: 27, barW: 400, bubbleMax: 360, font: 14 },
-	medium: { pillW: 116, pillH: 70, eye: 25, spacing: 33, barW: 480, bubbleMax: 420, font: 15 },
-	large: { pillW: 140, pillH: 84, eye: 30, spacing: 40, barW: 560, bubbleMax: 480, font: 15 },
+	small: { pillW: 92, pillH: 56, eye: 20, spacing: 27, barW: 400, wideW: 640, bubbleMax: 360, font: 14 },
+	medium: { pillW: 116, pillH: 70, eye: 25, spacing: 33, barW: 480, wideW: 760, bubbleMax: 420, font: 15 },
+	large: { pillW: 140, pillH: 84, eye: 30, spacing: 40, barW: 560, wideW: 880, bubbleMax: 480, font: 15 },
 };
 
 /** Space between the bar (or pill) and the bubble. */
 export const GAP = 8;
 
+/** Floating pills (attachments, and the meter and thinking level while typing) are this tall. */
+export const CHIP_H = 32;
+
+/** The strip on the pill's far side (above it, or below when the bubble goes above), where the
+ * meter and thinking level float while you type: a row of pills and the gap to the bar. The
+ * window keeps it on that side all the time; the shell says whether it is on screen. */
+export const STRIP = CHIP_H + 6;
+
 /** The bubble's corner radius; App.svelte's .bubble matches it. */
 export const BUBBLE_RADIUS = 18;
 
-export const DEFAULT_LAYOUT: Layout = { alignRight: true, above: false };
+export const DEFAULT_LAYOUT: Layout = { alignRight: true, above: false, room: true };
 
-export function dimsFor(size: EyeSize | undefined): Dims {
-	return SIZES[size ?? "small"] ?? SIZES.small;
+/** `screenW`: the monitor's width. The pill is always on the half the stage grows away from, so a
+ * stage no wider than half the monitor stays on it. */
+export function dimsFor(size: EyeSize | undefined, screenW = Infinity): Dims {
+	const d = SIZES[size ?? "small"] ?? SIZES.small;
+	return { ...d, wideW: Math.max(d.barW, Math.min(d.wideW, Math.floor(screenW / 2))) };
 }
 
 export function stageSize(d: Dims): { w: number; h: number } {
-	return { w: d.barW, h: d.pillH + GAP + d.bubbleMax };
+	return { w: d.wideW, h: STRIP + d.pillH + GAP + d.bubbleMax };
 }
 
 /** Lines of a message the bar grows to show before the message box scrolls. */
@@ -52,17 +66,31 @@ export function headHeight(d: Dims, inputH: number): number {
 	return Math.max(d.pillH, Math.ceil(inputH) + 2 * INPUT_PAD);
 }
 
-/** The head (pill or open bar) and, when showing, the bubble, in stage coordinates. A bar taller
- * than the pill takes its extra height from the bubble's room. `headRoom`: the height to outline
- * for the head, more than `headH` while a bar that is getting shorter is still drawn taller. */
-export function shapesFor(d: Dims, layout: Layout, headW: number, headH: number, bubbleH: number, headRoom = headH): Shape[] {
+/** What is drawn besides the head. `bubbleH`: the bubble column's height, 0 when none.
+ * `headRoom`: the height to outline for the head, more than `headH` while a bar that is getting
+ * shorter is still drawn taller. `bubbleW`: the bubble's width, `wideW` while scrolled back.
+ * `stripW`: the floating meter's width in the strip, 0 when it isn't there. */
+export interface Drawn {
+	headW: number;
+	headH: number;
+	bubbleH: number;
+	headRoom?: number;
+	bubbleW?: number;
+	stripW?: number;
+}
+
+/** The head (pill or open bar), the floating meter in the strip and the bubble, in stage
+ * coordinates. A bar taller than the pill takes its extra height from the bubble's room. */
+export function shapesFor(d: Dims, layout: Layout, { headW, headH, bubbleH, headRoom = headH, bubbleW = d.barW, stripW = 0 }: Drawn): Shape[] {
 	const stage = stageSize(d);
 	const x = (w: number) => (layout.alignRight ? stage.w - w : 0);
-	const head: Shape = { x: x(headW), y: layout.above ? stage.h - headRoom : 0, w: headW, h: headRoom, r: d.pillH / 2 };
-	if (bubbleH <= 0) return [head];
-	const h = Math.min(Math.ceil(bubbleH), stage.h - headH - GAP);
-	const y = layout.above ? stage.h - headH - GAP - h : headH + GAP;
-	return [head, { x: x(d.barW), y, w: d.barW, h, r: BUBBLE_RADIUS }];
+	const shapes: Shape[] = [{ x: x(headW), y: layout.above ? stage.h - STRIP - headRoom : STRIP, w: headW, h: headRoom, r: d.pillH / 2 }];
+	if (stripW > 0) shapes.push({ x: x(stripW), y: layout.above ? stage.h - CHIP_H : 0, w: stripW, h: CHIP_H, r: CHIP_H / 2 });
+	if (bubbleH <= 0) return shapes;
+	const h = Math.min(Math.ceil(bubbleH), stage.h - STRIP - headH - GAP);
+	const y = layout.above ? stage.h - STRIP - headH - GAP - h : STRIP + headH + GAP;
+	shapes.push({ x: x(bubbleW), y, w: bubbleW, h, r: BUBBLE_RADIUS });
+	return shapes;
 }
 
 /** How long a reply bubble under the resting pill stays after the reply and its speech end. */

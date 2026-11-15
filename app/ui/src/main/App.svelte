@@ -5,11 +5,13 @@
 	import { fly } from "svelte/transition";
 	import { ms, pop } from "../lib/motion.ts";
 	import "../lib/theme.css";
+	import Attachments from "./Attachments.svelte";
 	import Connect from "./Connect.svelte";
 	import Head from "./Head.svelte";
+	import Meta from "./Meta.svelte";
 	import HotkeyHints from "./HotkeyHints.svelte";
 	import ReplyBubble from "./ReplyBubble.svelte";
-	import { GAP, headHeight, stageSize } from "./stage.ts";
+	import { GAP, headHeight, STRIP, stageSize } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
 
@@ -26,12 +28,31 @@
 	// While talking over the resting pill the bar is drawn open, though the window stays a pill.
 	const wide = $derived(open || app.peek);
 	// A long message makes the bar taller; the bubble gives up that much room.
-	const headH = $derived(wide ? Math.min(headHeight(d, app.inputH), stage.h - GAP - 120) : d.pillH);
+	const headH = $derived(wide ? Math.min(headHeight(d, app.inputH), stage.h - STRIP - GAP - 120) : d.pillH);
 	const bubbleMax = $derived(d.bubbleMax - (headH - d.pillH));
 	const showReply = $derived(app.reply !== null && (open || app.bubbleOpen));
 	const showHints = $derived(app.hotkeyHints && app.settings !== null);
-	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null);
+	// Attachments float as pills of their own on the bubble's side of the bar. Once the message
+	// reaches them the meter and thinking level float off the bar too, to give it the whole bar: into
+	// the strip on the pill's far side, or, with the pill against that screen edge, as one pill
+	// beside the attachments.
+	const attached = $derived(app.selectionChip !== null || app.imageChip !== null);
+	const floatMeta = $derived(wide && !app.needsConnect && app.crowded);
+	const inStrip = $derived(floatMeta && (app.layout.room ?? true));
+	const metaInRow = $derived(floatMeta && !inStrip);
+	const showChips = $derived(wide && !app.needsConnect && (attached || metaInRow));
+	let stripW = $state(0);
+	/** The chips' rows (they wrap when crowded). */
+	let chipsH = $state(0);
+	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null || showChips);
 	const above = $derived(app.layout.above);
+	// Scrolled back through the conversation over the reply bubble: the bar and bubble widen to
+	// read it, and narrow again back at the end.
+	let browsing = $state(false);
+	$effect(() => {
+		if (!showReply || transcript) browsing = false;
+	});
+	const barW = $derived(browsing && showReply && !transcript ? d.wideW : d.barW);
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
 	$effect(() => {
@@ -47,27 +68,34 @@
 	let bubbleH = $state(0);
 	// The hints draw over the bubble, so the window only has to be as tall as the taller of the two.
 	let hintH = $state(0);
-	type Drawn = { headW: number; headH: number; bubbleH: number; key: string };
+	// A hovered selection unrolls over the reply, and past it when the reply is short or gone.
+	let peekH = $state(0);
+	type Drawn = { headW: number; headH: number; bubbleH: number; bubbleW: number; stripW: number; key: string };
 	let sent: Drawn | null = null;
 	let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
 		const next: Drawn = {
-			headW: wide ? d.barW : d.pillW,
+			headW: wide ? barW : d.pillW,
 			headH,
-			bubbleH: Math.max(showBubble ? roomy(bubbleH) : 0, showHints ? Math.ceil(hintH) : 0),
+			bubbleH: Math.max(showBubble ? roomy(bubbleH) : 0, showHints ? Math.ceil(hintH) : 0, showBubble && peekH ? roomy(peekH) : 0),
+			// The hints are as wide as the bar at most.
+			bubbleW: showBubble ? barW : d.barW,
+			stripW: inStrip ? Math.ceil(stripW) : 0,
 			key: `${app.settings?.eyes.size}:${app.layout.alignRight}:${app.layout.above}`,
 		};
 		const dims = d;
 		clearTimeout(shrinkTimer);
 		const send = (drawn: Drawn, headRoom = drawn.headH) => {
 			sent = { ...drawn, headH: headRoom };
-			void app.reportShape(dims, drawn.headW, drawn.headH, drawn.bubbleH, headRoom);
+			void app.reportShape(dims, { ...drawn, headRoom });
 		};
-		if (sent && sent.headW === next.headW && sent.headH === next.headH && sent.bubbleH === next.bubbleH && sent.key === next.key) return;
+		if (sent && sent.headW === next.headW && sent.headH === next.headH && sent.bubbleH === next.bubbleH && sent.bubbleW === next.bubbleW && sent.stripW === next.stripW && sent.key === next.key) return;
 		const same = sent !== null && sent.key === next.key;
-		const shrinking = same && sent !== null && (next.headW < sent.headW || next.bubbleH < sent.bubbleH);
+		// The strip's pills leave at once, so there is nothing to wait for there.
+		const shrinking = same && sent !== null && (next.headW < sent.headW || next.bubbleH < sent.bubbleH || next.bubbleW < sent.bubbleW);
 		const shorter = same && sent !== null && next.headH < sent.headH;
-		if (shrinking) shrinkTimer = setTimeout(() => send(next), 240);
+		// Narrowing after scrolling back takes 260 ms; closing the bar, less.
+		if (shrinking) shrinkTimer = setTimeout(() => send(next), next.bubbleW < (sent?.bubbleW ?? 0) || next.headW < (sent?.headW ?? 0) ? 280 : 240);
 		else if (shorter && sent) {
 			// The bar is getting shorter and the bubble moves up with it at once: give the bubble
 			// its new place now, and keep the bar's old outline until it has finished shrinking.
@@ -103,16 +131,22 @@
 		class:above
 		style:width="{stage.w}px"
 		style:height="{stage.h}px"
-		style:--gap="{headH + GAP}px"
+		style:--strip="{STRIP}px"
+		style:--gap="{STRIP + headH + GAP}px"
 		style:--bubble-max="{bubbleMax}px"
+		style:--bar-w="{d.barW}px"
 	>
-		<Head {app} open={wide} height={headH} />
+		<Head {app} open={wide} height={headH} width={barW} />
+
+		{#if inStrip}
+			<div class="strip" bind:offsetWidth={stripW}><Meta {app} look="pills" /></div>
+		{/if}
 
 		{#if showBubble}
 			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 			<div
 				class="bubbles"
-				style:width="{d.barW}px"
+				style:width="{barW}px"
 				bind:offsetHeight={bubbleH}
 				onclick={onBubbleClick}
 				onpointerenter={() => app.holdBubble(true)}
@@ -120,12 +154,18 @@
 				in:pop={{ y: above ? 10 : -10, duration: 280, delay: open ? 40 : 0 }}
 				out:fly={{ y: above ? 4 : -4, duration: ms(140), easing: cubicIn }}
 			>
+				{#if showChips}
+					<div class="chips" bind:offsetHeight={chipsH}>
+						{#if attached}<Attachments {app} bind:peek={peekH} />{/if}
+						{#if metaInRow}<div class="float-meta"><Meta {app} look="merged" /></div>{/if}
+					</div>
+				{/if}
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
-					<div class="bubble reply-box" class:resting={!open}><ReplyBubble {app} reply={app.reply} max={bubbleMax - 2} /></div>
+					<div class="bubble reply-box" class:resting={!open}><ReplyBubble {app} reply={app.reply} max={bubbleMax - (showChips ? chipsH + 6 : 0)} bind:browsing /></div>
 				{/if}
 				{#if app.toast}
 					<div class="bubble toast" role="status" in:pop={{ y: above ? 6 : -6, duration: 240 }}>
@@ -177,8 +217,9 @@
 		top: auto;
 		bottom: 0;
 	}
+	/* The pill sits the strip's height in from the stage's edge: the strip is on its far side. */
 	.stage :global(.head) {
-		top: 0;
+		top: var(--strip);
 		left: 0;
 	}
 	.stage.right :global(.head) {
@@ -186,6 +227,21 @@
 		right: 0;
 	}
 	.stage.above :global(.head) {
+		top: auto;
+		bottom: var(--strip);
+	}
+	/* The meter and thinking level while you type, over the bar's eyes end (under it, low on the
+	   screen). */
+	.strip {
+		position: absolute;
+		top: 0;
+		left: 0;
+	}
+	.right .strip {
+		left: auto;
+		right: 0;
+	}
+	.above .strip {
 		top: auto;
 		bottom: 0;
 	}
@@ -199,6 +255,7 @@
 		max-height: var(--bubble-max);
 		/* Bubbles grow out of the corner the eyes are in. */
 		transform-origin: 0 0;
+		transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
 	.right .bubbles {
 		left: auto;
@@ -214,10 +271,31 @@
 	.right.above .bubbles {
 		transform-origin: 100% 100%;
 	}
-	/* Translucent and rounded, apart from the pill: the reply sits over whatever is behind. */
+	/* Attachments at the start; with no strip, the meter and thinking level at the end. The
+	   selection shrinks first (to its minimum); only past that does the meter wrap. */
+	.chips {
+		position: relative;
+		z-index: 2;
+		flex: none;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.chips > :global(.attachments) {
+		flex: 1 1 0;
+		min-width: auto;
+		max-width: 100%;
+	}
+	.float-meta {
+		flex: none;
+		margin-left: auto;
+	}
+	/* Translucent and rounded, apart from the pill: the reply sits over whatever is behind. No
+	   outline, like the pill. */
 	.bubble {
 		min-height: 0;
-		border: 1px solid var(--line);
 		border-radius: 18px; /* BUBBLE_RADIUS in stage.ts */
 		background: rgb(14 16 21 / 0.88);
 		overflow-wrap: anywhere;
@@ -249,11 +327,10 @@
 		z-index: 2;
 		top: var(--gap);
 		left: 0;
-		max-width: 100%;
+		max-width: var(--bar-w);
 		max-height: var(--bubble-max);
 		overflow: hidden;
 		background: rgb(14 16 21);
-		border-color: var(--line-strong);
 		transform-origin: 0 0;
 	}
 	.right .hint-bubble {

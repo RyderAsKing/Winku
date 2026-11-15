@@ -9,7 +9,8 @@
 	import type { MainState, Reply } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
 
-	let { app, reply, max }: { app: MainState; reply: Reply; max: number } = $props();
+	/** `browsing`: scrolled back into the conversation; App widens the bar and bubble meanwhile. */
+	let { app, reply, max, browsing = $bindable(false) }: { app: MainState; reply: Reply; max: number; browsing?: boolean } = $props();
 
 	/** Padding above and below the reply; keep in step with the CSS. */
 	const PAD_TOP = 12;
@@ -20,7 +21,6 @@
 	let node: HTMLElement | undefined = $state();
 	let current: HTMLElement | undefined = $state();
 	let currentH = $state(0);
-	let browsing = $state(false);
 	/** Opening or closing: the height glides. (A reply growing as it streams is followed at once.) */
 	let gliding = $state(false);
 	let glideTimer: ReturnType<typeof setTimeout> | undefined;

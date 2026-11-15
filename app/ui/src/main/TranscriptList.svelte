@@ -33,10 +33,10 @@
 				{#if item.aborted}<p class="meta">Stopped.</p>{/if}
 			</div>
 		{:else if item.kind === "tool"}
-			<details class="row">
-				<summary class="mono" class:failed={item.ok === false}>
-					{item.ok === false ? "Failed" : "Ran"}
-					{item.name}<span class="faint">: {item.summary}</span>
+			<details class="row tool">
+				<summary class:failed={item.ok === false} title={item.summary}>
+					<span class="verb">{item.ok === false ? "Failed" : "Ran"} {item.name}</span>
+					<span class="arg mono">{item.summary}</span>
 				</summary>
 				{#if item.detail}<pre>{item.detail}</pre>{/if}
 			</details>
@@ -81,11 +81,15 @@
 		margin: auto;
 		color: var(--faint);
 	}
+	/* What you said: a filled bubble on the right, no outline. */
 	.user {
 		align-self: flex-end;
 		max-width: 85%;
-		padding: 7px 0 7px 12px;
-		border-left: 2px solid var(--line-strong);
+		display: grid;
+		gap: 2px;
+		padding: 7px 12px;
+		border-radius: 14px;
+		background: rgb(255 255 255 / 0.07);
 	}
 	.user p {
 		margin: 0;
@@ -108,15 +112,35 @@
 		white-space: normal;
 		overflow-wrap: anywhere;
 	}
-	.row summary.mono {
-		font-size: 11px;
+	/* A tool call: what it did, then the command in a mono chip (ReplyView has the same). */
+	.tool summary {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		list-style: none;
 	}
-	.row summary.failed {
+	.tool summary::-webkit-details-marker {
+		display: none;
+	}
+	.verb {
+		flex: none;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.failed .verb {
 		color: var(--error);
 	}
-	.faint {
-		color: var(--faint);
+	.arg {
+		min-width: 0;
+		padding: 2px 7px;
+		border-radius: 6px;
+		background: rgb(255 255 255 / 0.06);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
+
 	.row pre {
 		margin: 6px 0 0;
 		padding: 8px 10px;
@@ -124,8 +148,7 @@
 		overflow: auto;
 		font-family: var(--mono);
 		font-size: 11px;
-		background: #07080c;
-		border: 1px solid var(--line);
+		background: rgb(0 0 0 / 0.32);
 		border-radius: 8px;
 		color: var(--muted);
 	}

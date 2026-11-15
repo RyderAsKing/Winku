@@ -579,6 +579,7 @@ test("a scheduled, spoken run can show a visual: no permission ask, say blocks h
 	expect(said.join(" ")).not.toContain("secret-chart-words");
 	expect(end.text).not.toContain("secret-chart-words");
 	await engine.shutdown();
+}, T);
 
 type VisualRow = Extract<TranscriptItem, { kind: "visual" }>;
 const visualRows = (items: TranscriptItem[]) => items.filter((t): t is VisualRow => t.kind === "visual");

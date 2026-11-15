@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BUBBLE_RADIUS, bubbleLinger, CHIP_H, dimsFor, GAP, SIZES, STRIP, shapesFor, stageSize } from "../src/main/stage.ts";
+import { BUBBLE_RADIUS, barWidth, bubbleLinger, CHIP_H, dimsFor, GAP, SIZES, STRIP, shapesFor, stageSize, wideReasons } from "../src/main/stage.ts";
 
 const small = SIZES.small;
 const rightBelow = { alignRight: true, above: false };
@@ -51,4 +51,12 @@ test("a bubble under the resting pill lingers longer for longer replies, within 
 	expect(bubbleLinger("")).toBe(8000);
 	expect(bubbleLinger("one two three")).toBe(8360);
 	expect(bubbleLinger("word ".repeat(1000))).toBe(30_000);
+});
+
+test("the bar and bubble are Wide only while there is a reason", () => {
+	const d = dimsFor("medium", 1920);
+	expect(wideReasons({ browsing: false })).toEqual([]);
+	expect(barWidth(d, wideReasons({ browsing: false }))).toBe(d.barW);
+	expect(wideReasons({ browsing: true })).toEqual(["browsing"]);
+	expect(barWidth(d, wideReasons({ browsing: true }))).toBe(d.wideW);
 });

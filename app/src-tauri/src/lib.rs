@@ -100,6 +100,7 @@ pub fn run() {
             commands::hotkeys_status,
             commands::hotkeys_altgr,
             commands::open_external,
+            commands::open_visual,
             commands::open_data_path,
             commands::speak,
             commands::stop_speaking,

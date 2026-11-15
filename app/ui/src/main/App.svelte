@@ -14,6 +14,8 @@
 	import { barWidth, GAP, headHeight, STRIP, stageSize, wideReasons } from "./stage.ts";
 	import { MainState } from "./state.svelte.ts";
 	import TranscriptList from "./TranscriptList.svelte";
+	import Visual from "./Visual.svelte";
+	import { winkuKey } from "./visuals.ts";
 
 	const app = new MainState();
 	void app.init();
@@ -25,6 +27,8 @@
 	const stage = $derived(stageSize(d));
 	const open = $derived(app.mode !== "pill");
 	const transcript = $derived(app.mode === "transcript");
+	/** A visual opened larger, in the transcript-height bubble. */
+	const large = $derived(open && app.largeVisual !== null);
 	// While talking over the resting pill the bar is drawn open, though the window stays a pill.
 	const barOpen = $derived(open || app.peek);
 	// A long message makes the bar taller; the bubble gives up that much room.
@@ -44,7 +48,7 @@
 	let stripW = $state(0);
 	/** The chips' rows (they wrap when crowded). */
 	let chipsH = $state(0);
-	const showBubble = $derived((open && (app.needsConnect || transcript)) || showReply || app.toast !== null || showChips);
+	const showBubble = $derived((open && (app.needsConnect || transcript || large)) || showReply || app.toast !== null || showChips);
 	const above = $derived(app.layout.above);
 	// Scrolled back through the conversation over the reply bubble: the bar and bubble widen to
 	// read it, and narrow again back at the end.
@@ -52,13 +56,13 @@
 	$effect(() => {
 		if (!showReply || transcript) browsing = false;
 	});
-	// A bubble holding a visual is Wide too, until it closes; so is the transcript while it holds one.
+	// A bubble holding a visual is Wide too, until it closes; so is a visual opened larger, and the transcript while it holds one.
 	const barW = $derived(
 		barWidth(
 			d,
 			wideReasons({
 				browsing: browsing && showReply && !transcript,
-				visual: showReply && !transcript && app.holdsVisual,
+				visual: (showReply && !transcript && app.holdsVisual) || large,
 				transcriptVisual: transcript && (app.holdsVisual || app.transcript.some((item) => item.kind === "visual")),
 			}),
 		),
@@ -115,12 +119,10 @@
 	});
 
 	function onkeydown(event: KeyboardEvent) {
-		if (event.key === "Escape") {
+		const press = { key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey };
+		if (winkuKey(press)) {
 			event.preventDefault();
-			void app.escape();
-		} else if (event.key.toLowerCase() === "j" && event.ctrlKey && !event.altKey && !event.shiftKey) {
-			event.preventDefault();
-			void app.toggleTranscript();
+			void app.key(press);
 		}
 	}
 
@@ -179,6 +181,8 @@
 				{/if}
 				{#if open && app.needsConnect}
 					<div class="bubble pad scroll"><Connect {app} /></div>
+				{:else if large && app.largeVisual}
+					<div class="bubble transcript large-visual"><Visual {app} visual={app.largeVisual} large /></div>
 				{:else if transcript}
 					<div class="bubble transcript"><TranscriptList {app} items={app.transcript} /></div>
 				{:else if showReply && app.reply}
@@ -330,6 +334,10 @@
 	}
 	.resting {
 		cursor: pointer;
+	}
+	.large-visual {
+		overflow-y: auto;
+		padding: 8px 14px;
 	}
 	.transcript {
 		height: var(--bubble-max);

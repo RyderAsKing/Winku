@@ -42,7 +42,7 @@
 				{#if item.detail}<pre>{item.detail}</pre>{/if}
 			</details>
 		{:else if item.kind === "visual"}
-			<Visual visual={{ requestId: "", id: item.visualId, title: item.title, at: 0, answered: true }} />
+			<Visual {app} visual={{ requestId: "", id: item.visualId, title: item.title, at: 0, answered: true }} />
 		{:else if item.kind === "compaction"}
 			<details class="row">
 				<summary>Earlier conversation summarized</summary>

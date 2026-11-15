@@ -25,7 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
-import { placeVisual, type ReplyVisual } from "./visuals.ts";
+import { isWebLink, type KeyPress, placeVisual, type ReplyVisual, winkuKey } from "./visuals.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
@@ -108,6 +108,8 @@ export class MainState {
 	ready: ReadyInfo | null = $state(null);
 	contextPercent: number | null = $state(null);
 	reply: Reply | null = $state(null);
+	/** A visual opened larger: alone in the transcript-height bubble, Wide (SPEC §3). */
+	largeVisual: ReplyVisual | null = $state(null);
 	busy = $state(false);
 	transcript: TranscriptItem[] = $state([]);
 	transcriptLoading = $state(false);
@@ -224,6 +226,7 @@ export class MainState {
 
 	async hide() {
 		this.#endDictation();
+		this.largeVisual = null;
 		this.bubbleOpen = false;
 		clearTimeout(this.#bubbleTimer);
 		await this.#setMode("pill");
@@ -264,6 +267,7 @@ export class MainState {
 	}
 
 	async toggleTranscript() {
+		this.largeVisual = null;
 		if (this.mode === "transcript") {
 			await this.#setMode("bar");
 		} else {
@@ -280,6 +284,11 @@ export class MainState {
 
 	/** Esc: first press stops the reply or the speech, a second press hides the bar (SPEC §5). */
 	async escape() {
+		// Esc over a visual opened larger steps back to the reply.
+		if (this.largeVisual) {
+			this.largeVisual = null;
+			return;
+		}
 		if (this.busy || this.speaking) {
 			if (this.busy) await shell.send({ type: "abort" });
 			await this.stopSpeaking();
@@ -384,6 +393,31 @@ export class MainState {
 		if (visual.answered) return;
 		visual.answered = true;
 		await shell.respond({ type: "response", id: visual.requestId, ok: true, data: { height, errors } }).catch(() => {});
+	}
+
+	/** Winku's keys, pressed in the bar or in a visual's frame. */
+	async key(press: KeyPress): Promise<boolean> {
+		const action = winkuKey(press);
+		if (action === "escape") await this.escape();
+		else if (action === "transcript") await this.toggleTranscript();
+		return action !== null;
+	}
+
+	/** A link clicked in a visual: http(s) opens in the default browser, anything else is ignored. */
+	async visualLink(href: string) {
+		if (isWebLink(href)) await shell.openExternal(href).catch(() => {});
+	}
+
+	/** Clicking a visual opens it larger, opening the bar first if it was resting. */
+	async openLarger(visual: ReplyVisual) {
+		if (this.mode === "pill") await this.summon();
+		if (this.mode === "transcript") await this.#setMode("bar");
+		this.largeVisual = visual;
+	}
+
+	/** "Open in browser": the visual's saved file, in the default browser. */
+	async openVisualInBrowser(visual: ReplyVisual) {
+		await shell.openVisual(visual.id).catch(() => this.showToast("Couldn't open the visual"));
 	}
 
 	/** The bar is open and Winku lost focus to a click elsewhere: a bubble holding a visual goes. */

@@ -109,10 +109,17 @@
 </figure>
 
 <style>
+	/* A recessed well, like a code block in a reply: darker than the bubble, no border or shadow.
+	   It is as wide as a page's column (560 px in visual-style.css, plus this padding) and centred,
+	   so in the Wide bubble the visual and the text under it sit together in the middle. */
 	.visual {
 		position: relative;
-		margin: 4px 0;
+		margin: 6px auto 8px;
+		max-width: 588px;
 		min-width: 0;
+		padding: 10px 14px;
+		border-radius: 12px;
+		background: rgb(0 0 0 / 0.32);
 	}
 	/* Nothing shows until the page has loaded: the finished visual arrives in one step. */
 	.visual:not(.loaded) {

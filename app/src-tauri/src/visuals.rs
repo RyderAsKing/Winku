@@ -282,7 +282,10 @@ mod style_tests {
             assert!(STYLE.contains(var), "{var}");
         }
         assert!(STYLE.contains("html,body{background:transparent}"));
-        assert!(STYLE.contains("body{margin:4px}"));
+        // A centred column, so a page in the Wide bubble does not stretch to its edges.
+        assert!(STYLE.contains("body{margin:4px auto;max-width:560px}"));
+        assert!(STYLE.contains(".w-chart{margin:0 auto;width:fit-content"));
+        assert!(!STYLE.contains("space-between"));
         // Styles come before the page's own, and before the bridge's first measurement.
         let page = with_bridge("<head><style>p{color:red}</style></head>");
         let at = |needle: &str| page.find(needle).unwrap();

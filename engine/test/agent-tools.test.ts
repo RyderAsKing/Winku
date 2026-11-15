@@ -492,3 +492,29 @@ test("show saves the page as its own file, asks the shell to show it and returns
 	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
 	await engine.shutdown();
 }, T);
+
+test("while show is being written, drawing events carry its title before the tool runs", async () => {
+	const engine = start();
+	engine.onRequest = (request) => (request.method === "visual_show" ? { ok: true, data: { height: 200, errors: [] } } : { ok: true, data: {} });
+	await engine.configure({
+		faux: {
+			tokensPerSecond: 400,
+			replies: [call("show", { title: "Build times, last 7 days", html: `<p>${"x".repeat(400)}</p>` }), { text: "done" }],
+		},
+	});
+	const { records } = await engine.prompt("chart my build times");
+	const drawing = records.filter((r) => r.type === "drawing");
+	expect(drawing.length).toBeGreaterThan(0);
+	expect(drawing.at(-1)).toMatchObject({ title: "Build times, last 7 days" });
+	// Titles only grow toward the full one, and no event repeats the one before it.
+	const titles = drawing.map((r) => (r.type === "drawing" ? r.title : ""));
+	for (let i = 1; i < titles.length; i++) expect(titles[i]).not.toBe(titles[i - 1]);
+	for (const t of titles) expect("Build times, last 7 days".startsWith(t)).toBe(true);
+	// It comes before the tool runs, and names the same tool call.
+	const firstDrawing = records.findIndex((r) => r.type === "drawing");
+	const toolStart = records.findIndex((r) => r.type === "tool_start");
+	expect(firstDrawing).toBeLessThan(toolStart);
+	const start_ = records[toolStart];
+	expect(drawing[0]).toMatchObject({ toolCallId: start_?.type === "tool_start" ? start_.toolCallId : "?" });
+	await engine.shutdown();
+}, T);

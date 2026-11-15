@@ -2,7 +2,7 @@
 	// The dot field behind the pill's face (dots.ts says what lights up). One small canvas, drawn
 	// only while something is playing: at idle it is cleared and no frame runs.
 	import { untrack } from "svelte";
-	import { alphaFor, baseField, BURST_MS, burstColour, burstField, DOT, type DotBurst, dotBurstFor, dotLoopFor, type Field, loopField, PITCH, quiet } from "./dots.ts";
+	import { alphaFor, baseField, BURST_MS, burstColour, burstField, DOT, type DotBurst, dotBurstFor, type DotLoop, dotLoopFor, type Field, LOOP_FADE_MS, loopField, PITCH, quiet, quietFor } from "./dots.ts";
 	import type { EyeState } from "./look.ts";
 
 	interface Props {
@@ -36,6 +36,12 @@
 	let bursts: Running[] = [];
 	let frame = 0;
 	let started = 0;
+	/** The loop that was playing before this one, fading out over LOOP_FADE_MS in its own colour. */
+	let fading: { kind: DotLoop; start: number; colour: string } | null = null;
+	/** When the current loop took over: it fades in from here. 0 = it was the first. */
+	let switchedAt = 0;
+	let shownLoop: DotLoop | null = null;
+	let shownColour = "";
 
 	const loop = $derived(animate && !reduceMotion ? dotLoopFor(expression) : null);
 
@@ -83,25 +89,40 @@
 		ctx.clearRect(0, 0, w, h);
 
 		bursts = bursts.filter((b) => now - b.start < BURST_MS[b.kind]);
-		if (!loop && bursts.length === 0) {
+		// A new loop cross-fades with the one before it (into and out of Drawing, SPEC §4).
+		if (loop !== shownLoop) {
+			fading = shownLoop ? { kind: shownLoop, start: started, colour: shownColour } : null;
+			switchedAt = shownLoop ? now : 0;
+			started = loop ? now : 0;
+			shownLoop = loop;
+		}
+		shownColour = colour;
+		const fadeIn = switchedAt ? Math.min(1, (now - switchedAt) / LOOP_FADE_MS) : 1;
+		if (fading && fadeIn >= 1) fading = null;
+		if (!loop && !fading && bursts.length === 0) {
 			started = 0;
 			return;
 		}
-		if (loop && !started) started = now;
 
 		const ex = alignRight ? w - pillW / 2 : pillW / 2;
 		const ey = above ? h - pillH / 2 : pillH / 2;
-		const field: Field = { length: Math.max(w - pillW / 2, 1), half: h / 2, level, strength: 1 };
+		const field: Field = { length: Math.max(w - pillW / 2, 1), half: h / 2, level, strength: 1, eyes: pillW / 2 };
 		const cols = Math.floor(w / PITCH);
 		const rows = Math.floor(h / PITCH);
 		const ox = (w - (cols - 1) * PITCH) / 2;
 		const oy = (h - (rows - 1) * PITCH) / 2;
 
-		const layers: { colour: string; at: (ax: number, ay: number) => number; base?: boolean }[] = [];
+		const layers: { colour: string; at: (ax: number, ay: number) => number; base?: boolean; loop?: DotLoop }[] = [];
+		if (fading) {
+			const old = fading;
+			const t = (now - old.start) / 1000;
+			const weight = 1 - fadeIn;
+			layers.push({ colour: old.colour, at: (ax, ay) => loopField(old.kind, ax, ay, t, field) * weight, loop: old.kind });
+		}
 		if (loop) {
 			const t = (now - started) / 1000;
 			const kind = loop;
-			layers.push({ colour, at: (ax, ay) => loopField(kind, ax, ay, t, field), base: true });
+			layers.push({ colour, at: (ax, ay) => loopField(kind, ax, ay, t, field) * fadeIn, base: true, loop: kind });
 		}
 		for (const b of bursts) {
 			const p = (now - b.start) / BURST_MS[b.kind];
@@ -121,7 +142,7 @@
 				const ax = alignRight ? ex - x : x - ex;
 				for (let j = 0; j < rows; j++) {
 					const y = oy + j * PITCH;
-					const b = layer.at(ax, y - ey) * quiet(ax, pillW / 2);
+					const b = layer.at(ax, y - ey) * quietFor(layer.loop ?? null, ax, y - ey, pillW / 2);
 					if (b < 0.04) {
 						if (layer.base) unlit[Math.min(STEPS - 1, Math.floor(baseField(ax, field) * quiet(ax, pillW / 2) * STEPS))]?.push(x, y);
 						continue;

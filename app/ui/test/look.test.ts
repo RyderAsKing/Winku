@@ -53,12 +53,13 @@ describe("lidFor", () => {
 });
 
 describe("lookFor", () => {
-	const states: EyeState[] = ["idle", "listening", "thinking", "speaking", "happy", "hearts", "sad", "surprised", "pondering", "error", "cleared", "sleeping"];
+	const states: EyeState[] = ["idle", "listening", "thinking", "speaking", "happy", "hearts", "sad", "surprised", "pondering", "error", "cleared", "sleeping", "drawing"];
 	test("state colours from the spec take over from the tint", () => {
 		expect(lookFor("listening", TINTS.max).colour).toBe("#4CFFE3");
 		expect(lookFor("thinking", TINTS.max).colour).toBe("#FFD56A");
 		expect(lookFor("speaking", TINTS.max).colour).toBe("#C9B8FF");
 		expect(lookFor("error", TINTS.max).colour).toBe("#FF8B82");
+		expect(lookFor("drawing", TINTS.max).colour).toBe("#C8F27A");
 	});
 	test("idle and moods keep the resting tint", () => {
 		for (const s of ["idle", "happy", "hearts", "sad", "surprised", "pondering"] as const) expect(lookFor(s, TINTS.high).colour).toBe(TINTS.high);
@@ -66,11 +67,17 @@ describe("lookFor", () => {
 	test("medium is the spec's cyan", () => {
 		expect(TINTS.medium).toBe("#5EF6F0");
 	});
-	test("only listening and speaking loop", () => {
+	test("only listening, speaking and drawing loop", () => {
 		for (const s of states) {
 			const loop = lookFor(s, TINTS.medium).loop;
-			expect(loop === "none").toBe(s !== "listening" && s !== "speaking");
+			expect(loop === "none").toBe(s !== "listening" && s !== "speaking" && s !== "drawing");
 		}
+	});
+	test("drawing: one eye grows like a magnifier and the pair plots", () => {
+		const look = lookFor("drawing", TINTS.medium);
+		expect(look.loop).toBe("plot");
+		const [left, right] = look.scales ?? [1, 1];
+		expect(right).toBeGreaterThan(left);
 	});
 	test("every state looks different", () => {
 		const keys = states.map((s) => JSON.stringify(lookFor(s, TINTS.medium)));

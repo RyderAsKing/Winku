@@ -56,6 +56,8 @@ export interface Reply {
 	permissions?: PermissionAsk[];
 	/** Visuals the model drew into the reply with `show`, in the order it drew them. */
 	visuals?: ReplyVisual[];
+	/** A visual being written right now (SPEC §3): its title so far. Gone once it lands. */
+	drawing?: { toolCallId: string; title: string };
 }
 
 /** "Ask before running": a tool call waiting for the user (SPEC §7). */
@@ -704,14 +706,32 @@ export class MainState {
 			case "say":
 				this.#say(message.id, message.text);
 				break;
+			case "drawing":
+				if (reply?.id !== message.id) break;
+				reply.drawing = { toolCallId: message.toolCallId, title: message.title };
+				this.eyes.setActivity("drawing");
+				break;
 			case "tool_start":
-				// A memory save shows as its own "Saved to memory" row instead.
+				// A memory save shows as its own "Saved to memory" row instead; a visual shows as
+				// "Drawing", then as itself.
 				if (message.name === "memory_save") break;
+				if (message.name === "show") {
+					if (reply?.id === message.id && !reply.drawing) reply.drawing = { toolCallId: message.toolCallId, title: message.summary };
+					this.eyes.setActivity("drawing");
+					break;
+				}
 				if (reply && reply.id !== message.id) break;
 				reply?.tools.push({ toolCallId: message.toolCallId, name: message.name, summary: message.summary, ok: null });
 				this.eyes.setActivity("thinking");
 				break;
 			case "tool_end": {
+				if (reply?.drawing?.toolCallId === message.toolCallId) {
+					reply.drawing = undefined;
+					if (this.eyes.activity === "drawing") this.eyes.setActivity("thinking");
+					// A visual that couldn't be shown leaves a row saying so.
+					if (!message.ok) reply.tools.push({ toolCallId: message.toolCallId, name: "show", summary: message.summary, ok: false });
+					break;
+				}
 				const tool = reply?.tools.find((t) => t.toolCallId === message.toolCallId);
 				if (tool) {
 					tool.ok = message.ok;
@@ -811,7 +831,10 @@ export class MainState {
 					const params = message.params;
 					const target = reply && (!params.replyId || params.replyId === reply.id) ? reply : null;
 					const visual: ReplyVisual = { requestId: message.id, id: params.visualId, title: params.title, at: target?.text.length ?? 0 };
-					if (target) target.visuals = [...(target.visuals ?? []), visual];
+					if (target) {
+						target.visuals = [...(target.visuals ?? []), visual];
+						target.drawing = undefined;
+					}
 					else this.reply = { id: params.replyId ?? newId("visual"), kind: "prompt", text: "", done: false, aborted: false, tools: [], visuals: [visual] };
 					this.#surface();
 				}

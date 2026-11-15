@@ -41,9 +41,14 @@
 	{:else if !reply.done && !reply.error}
 		{#if asking}
 			<p class="waiting">Waiting for you</p>
-		{:else if !reply.tools.some((tool) => tool.ok === null)}
+		{:else if !reply.drawing && !reply.tools.some((tool) => tool.ok === null)}
 			<Working label="Thinking" since={reply.startedAt} />
 		{/if}
+	{/if}
+
+	{#if reply.drawing && !reply.done}
+		<!-- A visual being written: one line, no empty frame (SPEC §3). -->
+		<p class="drawing" role="status"><span class="shimmer">Drawing</span>{#if reply.drawing.title}<span class="what">{reply.drawing.title}</span>{/if}</p>
 	{/if}
 
 	{#if reply.aborted}
@@ -104,6 +109,19 @@
 </div>
 
 <style>
+	.drawing {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		margin: 0;
+		font-size: 13px;
+	}
+	.drawing .what {
+		overflow: hidden;
+		color: var(--faint);
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
 	.ask {
 		display: grid;
 		gap: 8px;

@@ -13,6 +13,8 @@
     "tauri": "tauri",
     "screenshots": "node scripts/screenshots.mjs",
     "motion-check": "node scripts/motion-check.mjs",
+    "brand": "node scripts/brand.mjs",
+    "readme-media": "node scripts/readme-media.mjs",
     "test": "bun test ui/test",
     "ui-audit": "node scripts/ui-audit.mjs"
   },

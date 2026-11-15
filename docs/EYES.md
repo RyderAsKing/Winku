@@ -1,9 +1,9 @@
 # The eyes
 
-The eyes show what Winku is doing. They turn teal while you talk, amber while the model thinks, and lavender while it answers. They close into happy arcs when a reply lands, and slowly fall asleep when nothing has happened for a while.
+The eyes show what Winku is doing. They turn teal while you talk, amber while the model thinks, lavender while it answers, and lime while it draws a visual. They close into happy arcs when a reply lands, and slowly fall asleep when nothing has happened for a while.
 
 <p align="center">
-  <img src="media/eyes.png" alt="Twelve eye states: idle, listening, thinking, speaking, happy, hearts, sad, surprised, pondering, error, cleared and sleeping." width="720">
+  <img src="media/eyes.png" alt="Thirteen eye states: idle, listening, thinking, speaking, happy, hearts, sad, surprised, pondering, error, cleared, sleeping and drawing." width="720">
 </p>
 
 - **Context.** The lids droop a little as the conversation fills the model's context, so you can tell when it's time to clear it.

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_IMAGE_BYTES, MAX_PAGE_BYTES, inlineLocalImages } from "../src/tools/visual-images.ts";
+import { MAX_IMAGE_BYTES, MAX_INLINE_IMAGE_BYTES, inlineLocalImages } from "../src/tools/visual-images.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "winku-images-"));
 // A 1x1 PNG.
@@ -41,7 +41,7 @@ test("an image over the per-image limit is refused with advice to use smaller im
 
 test("images that together push the page over its limit are refused with advice to use smaller images", () => {
 	const big = Buffer.concat([PNG, Buffer.alloc(MAX_IMAGE_BYTES - PNG.length - 1)]);
-	const count = Math.ceil(MAX_PAGE_BYTES / MAX_IMAGE_BYTES) + 1;
+	const count = Math.ceil(MAX_INLINE_IMAGE_BYTES / MAX_IMAGE_BYTES) + 1;
 	const html = Array.from({ length: count }, (_, i) => `<img src="${file(`part${i}.png`, big)}">`).join("");
 	expect(() => inlineLocalImages(html)).toThrow(/smaller images/);
 });

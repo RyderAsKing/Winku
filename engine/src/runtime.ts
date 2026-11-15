@@ -125,6 +125,12 @@ export function resolveModel(runtime: ModelRuntime, provider: ProviderConfig, mo
 	return model;
 }
 
+/** The model with its context window capped at `limit`, so compaction and the meter work to the cap. */
+export function capContextWindow(model: Model<Api>, limit: number | undefined): Model<Api> {
+	if (!limit || limit <= 0 || limit >= model.contextWindow) return model;
+	return { ...model, contextWindow: limit, maxTokens: Math.min(model.maxTokens, limit) };
+}
+
 export function thinkingLevels(model: Model<Api>): ThinkingLevel[] {
 	const levels = getSupportedThinkingLevels(model) as ThinkingLevel[];
 	return levels.includes("off") ? levels : ["off", ...levels];

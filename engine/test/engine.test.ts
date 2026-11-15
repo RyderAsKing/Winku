@@ -456,6 +456,27 @@ test("compaction emits start/end, a context event and a transcript row", async (
 	await engine.shutdown();
 }, T);
 
+test("contextLimit caps the model's window, and compaction works to the cap", async () => {
+	const engine = start();
+	await engine.configure({ contextLimit: 500_000 });
+	expect(engine.records.findLast((r) => r.type === "ready")).toMatchObject({ contextWindow: 200_000 });
+	const long = "lorem ipsum dolor sit amet ".repeat(120);
+	let from = engine.records.length;
+	await engine.configure({
+		contextLimit: 3000,
+		compactionReserveTokens: 1000,
+		faux: { keepRecentTokens: 500, tokensPerSecond: 1_000_000, replies: [{ text: long }, { text: long }, { text: long }, { text: "Summary of the chat." }, { text: "short" }] },
+	});
+	expect(await engine.waitFor((r) => r.type === "ready", from)).toMatchObject({ contextWindow: 3000 });
+	from = engine.records.length;
+	await engine.prompt("one");
+	await engine.prompt("two");
+	await engine.prompt("three");
+	await engine.prompt("four");
+	expect(await engine.waitFor((r) => r.type === "compaction_start", from)).toMatchObject({ reason: "threshold" });
+	await engine.shutdown();
+}, T);
+
 test("list_providers, list_models and test_connection for the catalog", async () => {
 	const engine = start();
 	const providers = await engine.callOk<ProviderInfo[]>({ type: "list_providers" });

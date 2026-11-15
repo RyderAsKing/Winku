@@ -233,6 +233,8 @@ export interface ConfigureCommand {
 	main: ModelChoice;
 	/** Absent = follow main, with thinking "off". */
 	quick?: ModelChoice;
+	/** Cap on the Main model's context window, in tokens. A smaller window is used as is; absent = no cap. */
+	contextLimit?: number;
 	/** Compaction starts when context exceeds window - reserveTokens. */
 	compactionReserveTokens?: number;
 	askBeforeRunning: boolean;

@@ -586,6 +586,24 @@
 				<div class="group">
 					<div class="row">
 						<div class="label">
+							<span class="title">Context size</span>
+							<span class="desc">The most tokens the conversation can use. A model with a smaller window uses its own.</span>
+						</div>
+						<input
+							type="number"
+							min="16384"
+							step="10000"
+							class="short"
+							aria-label="Context size"
+							value={settings.contextLimit}
+							oninput={(e) => {
+								const value = Number(e.currentTarget.value);
+								if (value >= 16384) save({ contextLimit: Math.round(value) }, 500);
+							}}
+						/>
+					</div>
+					<div class="row">
+						<div class="label">
 							<span class="title">Compaction</span>
 							<span class="desc">Summarize earlier messages when this many tokens of room are left.</span>
 						</div>

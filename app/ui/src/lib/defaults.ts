@@ -8,6 +8,7 @@ export function defaultSettings(): Settings {
 		provider: null,
 		main: null,
 		quick: null,
+		contextLimit: 250_000,
 		compactionReserveTokens: null,
 		askBeforeRunning: false,
 		alwaysAllow: [],

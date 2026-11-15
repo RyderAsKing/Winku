@@ -262,6 +262,7 @@ export class Engine {
 	private tools() {
 		this.agentToolList = agentTools({
 			home: homedir(),
+			dataDir: () => this.config.dataDir,
 			shells: localShells(),
 			ripgrep: hasRipgrep(),
 			policy: () => this.policy,

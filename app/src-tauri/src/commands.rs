@@ -149,15 +149,17 @@ pub fn window_mode(app: AppHandle, mode: Mode) -> Result<(), String> {
     window::set_mode(&app, mode)
 }
 
-/// The UI's stage size and the shapes it draws, logical px; returns which way things grow.
+/// The UI's stage size, the strip on the far side of the pill (`inset`) and the shapes it
+/// draws, logical px; returns which way things grow.
 #[tauri::command]
 pub fn window_shape(
     app: AppHandle,
     width: f64,
     height: f64,
+    inset: Option<f64>,
     shapes: Vec<window::Shape>,
 ) -> Result<window::Layout, String> {
-    window::set_shape(&app, (width, height), &shapes)
+    window::set_shape(&app, (width, height), inset.unwrap_or(0.0), &shapes)
 }
 
 /// Drag the main window by the eyes until the mouse button comes up.

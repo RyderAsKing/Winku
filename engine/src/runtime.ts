@@ -219,7 +219,12 @@ async function tinyRequest(runtime: ModelRuntime, model: Model<Api>, withImage: 
 			: "Reply with the word ok.",
 		timestamp: Date.now(),
 	};
-	return runtime.completeSimple(model, { messages: [message] }, { maxTokens: 16, signal: AbortSignal.timeout(30_000) });
+	return runtime.completeSimple(model, { messages: [message] }, {
+		maxTokens: 16,
+		signal: AbortSignal.timeout(30_000),
+		// Session-routed providers (OpenCode Go) reject requests without one.
+		sessionId: crypto.randomUUID(),
+	});
 }
 
 export interface TestConnectionResult {

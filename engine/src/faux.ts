@@ -31,6 +31,8 @@ export interface FauxStep {
 	echoThread?: boolean;
 	/** Reply with "<model id> reasoning=<level>" of the request (which model and thinking level was used). */
 	echoModel?: boolean;
+	/** Reply with "session=<id>", the sessionId of the request (pi sends it as x-opencode-session). */
+	echoSession?: boolean;
 	/** Reply with "tools: a,b,c", the tool names sent with the request, sorted. */
 	echoTools?: boolean;
 	/** Reply with "images:<n> removed:<m>": image blocks and "[screenshot removed]" notes across the whole request. */
@@ -78,6 +80,7 @@ export function createFauxProvider(modelIds: string[], options: FauxOptions = {}
 			if (step.echoSystemPrompt) return fauxAssistantMessage(getCurrentSystemPrompt(context.messages));
 			if (step.echoThread) return fauxAssistantMessage(context.messages.filter((m) => m.role === "user").map((m) => userText(m).text).join("\n---\n"));
 			if (step.echoModel) return fauxAssistantMessage(`${model.id} reasoning=${options?.reasoning ?? "off"}`);
+			if (step.echoSession) return fauxAssistantMessage(`session=${options?.sessionId ?? ""}`);
 			if (step.echoTools) {
 				const names = getCurrentTools(context.messages).map((t) => t.name).sort();
 				return fauxAssistantMessage(`tools: ${names.join(",")}`);

@@ -692,6 +692,13 @@ test("actions use the Quick model and its thinking level, else Main", async () =
 	await plain.shutdown();
 }, T);
 
+test("each action request carries its own session id", async () => {
+	const engine = start();
+	await engine.configure({ faux: { replies: [{ echoSession: true }] } });
+	expect((await action(engine, "action-12")).end.text).toBe("session=action-12");
+	await engine.shutdown();
+}, T);
+
 test("the mood tag is stripped from action output", async () => {
 	const engine = start();
 	await engine.configure({ faux: { replies: [{ text: "the cat <mood:happy>" }] } });

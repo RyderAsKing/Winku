@@ -111,6 +111,9 @@ export class Actions {
 			};
 			const stream = setup.runtime.streamSimple(setup.model, request, {
 				signal: controller.signal,
+				// The action is its own one-call session. Providers that route by session need it
+				// (pi sends it as x-opencode-session; OpenCode Go rejects requests without it).
+				sessionId: id,
 				...(setup.thinking !== "off" ? { reasoning: setup.thinking } : {}),
 			});
 			for await (const event of stream) {

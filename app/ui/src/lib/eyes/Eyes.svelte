@@ -154,6 +154,34 @@
 		play([glancer], [{ transform: "rotate(0deg)" }, { transform: "rotate(-5deg)", offset: 0.5 }, { transform: "rotate(0deg)" }], 1400);
 	}
 
+	/**
+	 * A new thinking level. Up a level the eyes perk up: a crouch, a hop with a stretch, a squashy
+	 * landing, bigger for higher levels (`strength` 0…1), while the colour moves to the new tint.
+	 * Back to the bottom they settle instead, with a slow half blink.
+	 */
+	export function perk(strength: number, calm = false) {
+		if (reduceMotion || !glancer) return;
+		if (calm) {
+			play(blinkers, [{ transform: "scaleY(1)" }, { transform: "scaleY(0.5)", offset: 0.45 }, { transform: "scaleY(1)" }], 560);
+			glancer.animate([{ translate: "0 0" }, { translate: "0 5%", offset: 0.45 }, { translate: "0 0" }], { duration: 560, easing: "ease-in-out" });
+			return;
+		}
+		const s = Math.min(Math.max(strength, 0), 1);
+		const amp = 0.06 + 0.08 * s;
+		const lift = 7 + 9 * s;
+		const r = (n: number) => Math.round(n * 1000) / 1000;
+		glancer.animate(
+			[
+				{ scale: "1 1", translate: "0 0" },
+				{ scale: `${r(1 + amp * 0.6)} ${r(1 - amp)}`, translate: "0 3%", offset: 0.18 },
+				{ scale: `${r(1 - amp * 0.5)} ${r(1 + amp * 1.4)}`, translate: `0 -${lift}%`, offset: 0.45 },
+				{ scale: `${r(1 + amp * 0.4)} ${r(1 - amp * 0.6)}`, translate: "0 1%", offset: 0.72 },
+				{ scale: "1 1", translate: "0 0" },
+			],
+			{ duration: 560, easing: "cubic-bezier(0.3, 0.7, 0.4, 1)" },
+		);
+	}
+
 	export function glance() {
 		const dx = (Math.random() < 0.5 ? -1 : 1) * eyeSize * 0.16;
 		const dy = eyeSize * (Math.random() * 0.1 - 0.05);

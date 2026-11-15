@@ -15,6 +15,7 @@ mod settings;
 mod tasks;
 mod update;
 mod voice;
+mod visuals;
 mod window;
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -32,6 +33,12 @@ pub fn run() {
                 .with_handler(hotkeys::handle)
                 .build(),
         )
+        .register_uri_scheme_protocol(visuals::SCHEME, |ctx, request| {
+            match ctx.app_handle().path().data_dir() {
+                Ok(dir) => visuals::serve(&dir.join("winku"), &request),
+                Err(_) => visuals::serve(std::path::Path::new(""), &request),
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().data_dir()?.join("winku");
             // Jobs load before the engine is ready; their notices wait for its `ready`.

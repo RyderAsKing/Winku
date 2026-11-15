@@ -423,9 +423,30 @@ export type Request =
 	| { type: "request"; id: string; method: "task_list"; params: Record<string, never> }
 	/** cancel_task. Response data: TaskInfo of the cancelled job. */
 	| { type: "request"; id: string; method: "task_cancel"; params: { id: string; from?: string } }
+	/** show: put a visual in the reply. The engine has saved the page as visuals\<visualId>.html in
+	 *  the data folder; the shell forwards this to the main window, which places the frame in reply
+	 *  `replyId` at the end of its text so far, loads it from the visual's own URL scheme and answers
+	 *  once the page has loaded and reported its height. Response data: VisualShown. */
+	| { type: "request"; id: string; method: "visual_show"; params: VisualShowParams }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
 	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
+
+export interface VisualShowParams {
+	/** The reply the visual belongs to. */
+	replyId?: string;
+	/** 16 lower-case hex characters; the file is visuals\<visualId>.html. */
+	visualId: string;
+	title: string;
+}
+
+/** What the real frame measured once the page loaded. */
+export interface VisualShown {
+	/** The page's height in CSS px, as the page reported it. */
+	height: number;
+	/** Uncaught script errors and failed loads, one line each, in order. */
+	errors: string[];
+}
 
 export interface ScreenCapture {
 	app?: string;

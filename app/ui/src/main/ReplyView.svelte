@@ -1,6 +1,9 @@
 <script lang="ts">
-	// The current reply under the bar: tools, streamed markdown, errors, memory saves.
+	// The current reply under the bar: tools, streamed markdown with any visuals in it, errors,
+	// memory saves.
 	import Markdown from "../lib/Markdown.svelte";
+	import Visual from "./Visual.svelte";
+	import { replyParts } from "./visuals.ts";
 	import Working from "./Working.svelte";
 	import type { MainState, Reply } from "./state.svelte.ts";
 
@@ -25,7 +28,15 @@
 		</details>
 	{/each}
 
-	{#if reply.text}
+	{#if reply.visuals?.length}
+		{#each replyParts(reply.text, reply.visuals) as part, i (part.kind === "visual" ? part.visual.requestId : `text-${i}`)}
+			{#if part.kind === "visual"}
+				<Visual visual={part.visual} onshown={(visual, height, errors) => app.visualShown(visual, height, errors)} />
+			{:else}
+				<Markdown text={part.text} />
+			{/if}
+		{/each}
+	{:else if reply.text}
 		<Markdown text={reply.text} />
 	{:else if !reply.done && !reply.error}
 		{#if asking}

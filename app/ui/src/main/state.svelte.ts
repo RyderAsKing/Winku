@@ -25,6 +25,7 @@ import {
 } from "../lib/shell.ts";
 import { shouldSpeak, speakable } from "../lib/speech.ts";
 import type { Layout } from "../lib/shell.ts";
+import type { ReplyVisual } from "./visuals.ts";
 import { bubbleLinger, DEFAULT_LAYOUT, type Dims, type Drawn, dimsFor, STRIP, shapesFor, stageSize } from "./stage.ts";
 
 export interface LiveTool {
@@ -53,6 +54,8 @@ export interface Reply {
 	saved?: { saveId: string; title: string; undone: boolean }[];
 	proposals?: VoiceProposal[];
 	permissions?: PermissionAsk[];
+	/** Visuals the model drew into the reply with `show`, in the order it drew them. */
+	visuals?: ReplyVisual[];
 }
 
 /** "Ask before running": a tool call waiting for the user (SPEC §7). */
@@ -151,6 +154,8 @@ export class MainState {
 				!this.settings.main ||
 				(this.settings.provider.kind === "catalog" && !this.hasKey)),
 	);
+	/** The current reply holds a visual: its bubble is Wide and stays until dismissed (SPEC §3). */
+	readonly holdsVisual: boolean = $derived((this.reply?.visuals?.length ?? 0) > 0);
 	readonly thinking: ThinkingLevel = $derived(this.ready?.thinking ?? this.settings?.main?.thinking ?? "medium");
 	readonly tint: string = $derived(TINTS[this.thinking]);
 	readonly lid: number = $derived(lidFor(this.contextPercent));
@@ -249,9 +254,11 @@ export class MainState {
 	#armBubble() {
 		clearTimeout(this.#bubbleTimer);
 		if (this.mode !== "pill" || !this.bubbleOpen || this.busy || this.speaking || this.#bubbleHeld) return;
+		const linger = bubbleLinger(this.reply?.text ?? "", { visual: this.holdsVisual });
+		if (linger === null) return;
 		this.#bubbleTimer = setTimeout(() => {
 			this.bubbleOpen = false;
-		}, bubbleLinger(this.reply?.text ?? ""));
+		}, linger);
 	}
 
 	async toggleTranscript() {
@@ -368,6 +375,19 @@ export class MainState {
 		if (decision === "always" && this.settings && !this.settings.alwaysAllow.includes(ask.allowKey)) {
 			this.settings = await shell.settingsSet({ ...this.settings, alwaysAllow: [...this.settings.alwaysAllow, ask.allowKey] });
 		}
+	}
+
+	/** A visual's frame loaded (or gave up): answer its visual_show Request, once. */
+	async visualShown(visual: ReplyVisual, height: number, errors: string[]) {
+		if (visual.answered) return;
+		visual.answered = true;
+		await shell.respond({ type: "response", id: visual.requestId, ok: true, data: { height, errors } }).catch(() => {});
+	}
+
+	/** The bar is open and Winku lost focus to a click elsewhere: a bubble holding a visual goes. */
+	async focusLost() {
+		if (this.mode === "pill" || !this.holdsVisual) return;
+		await this.hide();
 	}
 
 	/** Accept or dismiss a proposed change to a voice profile (SPEC §9). */
@@ -751,6 +771,14 @@ export class MainState {
 					else {
 						this.reply = { id: message.params.replyId ?? newId("ask"), kind: "prompt", text: "", done: false, aborted: false, tools: [], permissions: [ask] };
 					}
+					this.#surface();
+				} else if (message.method === "visual_show") {
+					// The model drew a visual: it goes in the reply where the text has got to.
+					const params = message.params;
+					const target = reply && (!params.replyId || params.replyId === reply.id) ? reply : null;
+					const visual: ReplyVisual = { requestId: message.id, id: params.visualId, title: params.title, at: target?.text.length ?? 0 };
+					if (target) target.visuals = [...(target.visuals ?? []), visual];
+					else this.reply = { id: params.replyId ?? newId("visual"), kind: "prompt", text: "", done: false, aborted: false, tools: [], visuals: [visual] };
 					this.#surface();
 				}
 				break;

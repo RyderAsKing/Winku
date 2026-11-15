@@ -20,6 +20,7 @@ import { type Launcher, launchDetached, openTool } from "./open.ts";
 import { gated, type PermissionPolicy } from "./permission.ts";
 import { lookAtScreenTool } from "./screen.ts";
 import type { ShellChoice } from "./shell.ts";
+import { showTool } from "./show.ts";
 import { taskTools } from "./tasks.ts";
 import { defaultWebDeps, type WebDeps, webFetchTool, webSearchTool } from "./web.ts";
 
@@ -29,6 +30,8 @@ export type AnyTool = ToolDefinition<any, any, any>;
 export interface AgentToolDeps {
 	/** The user's home folder: where the tools run. */
 	home: string;
+	/** Winku's data folder (visuals are saved in it). */
+	dataDir: () => string;
 	shells: ShellChoice;
 	/** ripgrep is on PATH: pi's grep needs it (the engine never downloads it). */
 	ripgrep: boolean;
@@ -80,6 +83,7 @@ export function agentTools(deps: AgentToolDeps): AnyTool[] {
 		...(clipboardTools(deps.requests, deps.supportsImages) as AnyTool[]),
 		...(taskTools({ requests: deps.requests, scheduledRun: deps.scheduledRun, spoken: deps.spoken, shells, ...(deps.platform ? { platform: deps.platform } : {}) }) as AnyTool[]),
 		...((desktop?.tools ?? []) as AnyTool[]),
+		showTool({ requests: deps.requests, dataDir: deps.dataDir, replyId: deps.replyId }) as AnyTool,
 	);
 	const gate = {
 		policy: deps.policy,

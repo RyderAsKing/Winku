@@ -52,7 +52,8 @@
 	$effect(() => {
 		if (!showReply || transcript) browsing = false;
 	});
-	const barW = $derived(barWidth(d, wideReasons({ browsing: browsing && showReply && !transcript })));
+	// A bubble holding a visual is Wide too, until it closes.
+	const barW = $derived(barWidth(d, wideReasons({ browsing: browsing && showReply && !transcript, visual: showReply && !transcript && app.holdsVisual })));
 
 	// Loops (pulse, bounce) run while anything is showing or happening, not on the idle pill.
 	$effect(() => {
@@ -114,6 +115,13 @@
 		}
 	}
 
+	// Focus moving into a visual's frame blurs the window too; only a click outside Winku counts.
+	function onblur() {
+		setTimeout(() => {
+			if (!document.hasFocus()) void app.focusLost();
+		}, 0);
+	}
+
 	// A click on the bubble under the resting pill opens the bar, unless it hit a control.
 	function onBubbleClick(event: MouseEvent) {
 		if (open) return;
@@ -122,7 +130,7 @@
 	}
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onblur} />
 
 <div class="root" class:framed>
 	<div

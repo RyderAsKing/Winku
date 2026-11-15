@@ -1,0 +1,171 @@
+//! Visuals (SPEC §3): pages the assistant draws into a reply. The engine saves each one as
+//! `visuals\<id>.html` in the data folder; this serves them from Winku's own URL scheme,
+//! `winku-visual` (`http://winku-visual.localhost/<id>.html` on Windows), with a CSP of their own
+//! (docs/adr/0001-visuals-load-from-the-web.md). The main window shows them in sandboxed frames
+//! (`allow-scripts` only, so an opaque origin): the page can't reach the app, the disk, the engine
+//! or the thread. The only way out is `postMessage` to the frame's parent, which the bridge uses
+//! to report the page's height and its script errors.
+
+use std::borrow::Cow;
+use std::path::Path;
+
+use tauri::http::{header, Request, Response, StatusCode};
+
+pub const SCHEME: &str = "winku-visual";
+
+/// A visual's own policy: inline and remote (https) scripts, styles, pictures and fonts, and
+/// nothing else. No fetch, no forms, no nested frames, no navigation away.
+pub const CSP: &str = "default-src 'none'; \
+     script-src 'unsafe-inline' 'unsafe-eval' https:; \
+     style-src 'unsafe-inline' https:; \
+     img-src https: data: blob:; \
+     font-src https: data:; \
+     media-src https: data: blob:; \
+     connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'";
+
+/// Runs first in every page. It reports the page's height whenever it changes, uncaught errors
+/// and failed loads, and `loaded` once the page has loaded. The page never scrolls by itself.
+/// Keep the message shape in step with app/ui/src/main/Visual.svelte.
+pub const BRIDGE: &str = r#"<script>(()=>{const post=(m)=>parent.postMessage(Object.assign({winku:"visual"},m),"*");
+addEventListener("error",(e)=>{if(e instanceof ErrorEvent){post({kind:"error",message:(e.message||"Script error")+(e.lineno?" (line "+e.lineno+")":"")});return}const t=e.target;if(t&&t!==window)post({kind:"error",message:"Couldn't load "+(t.src||t.href||t.tagName)})},true);
+addEventListener("unhandledrejection",(e)=>post({kind:"error",message:"Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason)}));
+const root=document.documentElement;root.style.overflow="hidden";root.style.background="transparent";root.style.colorScheme="dark";
+let last=-1;const measure=()=>{const b=document.body;const h=Math.ceil(Math.max(root.getBoundingClientRect().height,b?b.getBoundingClientRect().bottom+parseFloat(getComputedStyle(b).marginBottom||"0"):0));if(h!==last){last=h;post({kind:"height",height:h})}};
+new ResizeObserver(measure).observe(root);
+addEventListener("load",()=>{measure();post({kind:"loaded",height:last})});})();</script>"#;
+
+/// The visual id in a request path, `/<16 hex>.html`; anything else is not a visual.
+pub fn visual_id(path: &str) -> Option<&str> {
+    let id = path.strip_prefix('/')?.strip_suffix(".html")?;
+    (id.len() == 16 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .then_some(id)
+}
+
+/// The page with the bridge as the first thing in it: just inside `<head>`, else just inside
+/// `<html>`, else after the doctype, else at the very start. The file itself stays as written.
+pub fn with_bridge(page: &str) -> String {
+    let lower = page.to_ascii_lowercase();
+    let after_tag = |name: &str| -> Option<usize> {
+        let mut from = 0;
+        while let Some(at) = lower[from..].find(name) {
+            let start = from + at;
+            let next = lower.as_bytes().get(start + name.len()).copied();
+            if matches!(next, Some(b'>' | b' ' | b'\t' | b'\n' | b'\r' | b'/')) {
+                return lower[start..].find('>').map(|end| start + end + 1);
+            }
+            from = start + name.len();
+        }
+        None
+    };
+    let at = after_tag("<head")
+        .or_else(|| after_tag("<html"))
+        .or_else(|| after_tag("<!doctype"))
+        .unwrap_or(0);
+    let mut out = String::with_capacity(page.len() + BRIDGE.len());
+    out.push_str(&page[..at]);
+    out.push_str(BRIDGE);
+    out.push_str(&page[at..]);
+    out
+}
+
+/// Answers a `winku-visual` request from `data_dir\visuals`.
+pub fn serve(data_dir: &Path, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    let plain = |status: StatusCode, text: &'static str| {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header("Content-Security-Policy", CSP)
+            .body(Cow::Borrowed(text.as_bytes()))
+            .expect("static response")
+    };
+    if request.method() != "GET" {
+        return plain(StatusCode::METHOD_NOT_ALLOWED, "Not allowed");
+    }
+    let Some(id) = visual_id(request.uri().path()) else {
+        return plain(StatusCode::NOT_FOUND, "No such visual");
+    };
+    let Ok(page) = std::fs::read_to_string(data_dir.join("visuals").join(format!("{id}.html")))
+    else {
+        return plain(StatusCode::NOT_FOUND, "No such visual");
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header("Content-Security-Policy", CSP)
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Cache-Control", "no-store")
+        .body(Cow::Owned(with_bridge(&page).into_bytes()))
+        .expect("visual response")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_visual_files_are_served() {
+        assert_eq!(
+            visual_id("/0123456789abcdef.html"),
+            Some("0123456789abcdef")
+        );
+        for path in [
+            "/0123456789ABCDEF.html",
+            "/0123456789abcde.html",
+            "/../settings.json",
+            "/..%2f0123456789abcdef.html",
+            "/sub/0123456789abcdef.html",
+            "/0123456789abcdef.htm",
+            "0123456789abcdef.html",
+        ] {
+            assert_eq!(visual_id(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn the_bridge_runs_before_the_page() {
+        let page = "<!doctype html><html lang=en><head><title>x</title></head><body>hi</body></html>";
+        assert_eq!(
+            with_bridge(page),
+            format!("<!doctype html><html lang=en><head>{BRIDGE}<title>x</title></head><body>hi</body></html>")
+        );
+        assert_eq!(
+            with_bridge("<HTML><Body>x</Body></HTML>"),
+            format!("<HTML>{BRIDGE}<Body>x</Body></HTML>")
+        );
+        assert_eq!(
+            with_bridge("<!DOCTYPE html><p>x</p>"),
+            format!("<!DOCTYPE html>{BRIDGE}<p>x</p>")
+        );
+        assert_eq!(with_bridge("<p>x</p>"), format!("{BRIDGE}<p>x</p>"));
+        // <header> is not <head>.
+        assert_eq!(
+            with_bridge("<header>h</header>"),
+            format!("{BRIDGE}<header>h</header>")
+        );
+    }
+
+    #[test]
+    fn serves_the_saved_page_with_its_own_policy() {
+        let dir = std::env::temp_dir().join(format!("winku-visuals-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("visuals")).unwrap();
+        std::fs::write(dir.join("visuals").join("00000000000000aa.html"), "<p>chart</p>").unwrap();
+        let get = |uri: &str| serve(&dir, &Request::get(uri).body(Vec::new()).unwrap());
+
+        let ok = get("http://winku-visual.localhost/00000000000000aa.html");
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(ok.headers()["Content-Security-Policy"], CSP);
+        assert_eq!(
+            String::from_utf8(ok.body().to_vec()).unwrap(),
+            format!("{BRIDGE}<p>chart</p>")
+        );
+        assert_eq!(
+            get("winku-visual://localhost/00000000000000bb.html").status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get("winku-visual://localhost/settings.json").status(),
+            StatusCode::NOT_FOUND
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

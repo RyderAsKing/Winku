@@ -22,7 +22,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 
 - Shell → engine: **Commands** `{type, id?, …}`. With an `id`, the engine answers with a **Result** `{type:"result", id, ok, data|error}`.
 - Engine → shell: **Events** (`text_delta`, `reply_end`, `context`, `thread_changed`, …), fire-and-forget.
-- Engine → shell: **Requests** `{type:"request", id, method, params}` for things only the shell can do (`screen_capture`, `screen_target`, `clipboard_read`, `clipboard_write`) or only the user can decide (`permission`). The shell answers with a **Response**.
+- Engine → shell: **Requests** `{type:"request", id, method, params}` for things only the shell can do (`screen_capture`, `screen_target`, `clipboard_read`, `clipboard_write`), only the main window can do (`visual_show`) or only the user can decide (`permission`). The shell answers with a **Response**.
 - Prompt ids and action ids are chosen by the sender and echoed on every event of that reply.
 - `reply_end` is sent on `agent_settled`, not `agent_end`, so retries and compaction finish first.
 - A `prompt` while a reply runs steers it (pi `streamingBehavior: "steer"`, `steeringMode: "all"`), and its Result is `{ steered: true }`. pi delivers it when the current step ends (the tool calls have returned, or the streamed text finished). When its user message starts, the running reply gets `reply_end` (its text so far, not aborted) and the steered prompt's id carries the rest of the run. `abort` drops steers not yet delivered; every pending id gets `reply_end` with `aborted: true`.
@@ -38,7 +38,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 |---|---|---|
 | `engine_send` | `{ message: Command }` → `()` | 2 |
 | `engine_call` | `{ message: Command }` (shell assigns `id`) → Result `data`, or rejects with the error | 2 |
-| `engine_respond` | `{ response: Response }` → `()` (answers a `permission` Request) | 6 |
+| `engine_respond` | `{ response: Response }` → `()` (answers a `permission` or `visual_show` Request) | 6 |
 | `settings_get` | `()` → `Settings` | 2 |
 | `settings_set` | `{ settings: Settings }` → `Settings`. Saves, re-registers hotkeys, sends `configure` if anything the engine uses changed. | 2 |
 | `secret_set` | `{ apiKey, account? }` → `()`. `account` is `"api-key"` (default, the provider key) or `"search-api-key"` (Brave Search). Stored in Credential Manager, then `configure` is re-sent. | 2, 6 |
@@ -71,7 +71,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 
 | Event | Payload |
 |---|---|
-| `engine` | Every engine Event, plus `permission` Requests |
+| `engine` | Every engine Event, plus `permission` and `visual_show` Requests |
 | `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_partial", text }` (while recording: the transcription of the whole recording so far, sent only when it changed; never after that recording's `talk_end`), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot), `{ kind: "layout", alignRight, above, room }` (the pill was moved across the screen's middle, or onto or off the edge the strip is on), `{ kind: "bring", phase: "start", dx, dy }` (the "Bring Winku here" key started or retargeted a glide; `dx`, `dy` are the logical px still to travel) and `{ kind: "bring", phase: "end" }` (it arrived or a drag cancelled it), `{ kind: "hotkey_hint", show }` (the hotkey prefix, `Ctrl+Alt` or the leader key, has been held alone for 450 ms: `show: true`; `show: false` when it is released or another key goes down; never sent while a fullscreen app has focus. Read through Raw Input on a dedicated thread, no keyboard hook; elevated windows don't deliver raw input to Winku, so no hints there), `{ kind: "scheduled_started", id, name, taskKind, speak? }` (a scheduled run's prompt went out; #43) |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
@@ -161,6 +161,7 @@ engine\sessions\*.jsonl     pi session files, one per thread (current and archiv
 engine\current.json         { "sessionFile": "…" }: which thread is current
 engine\actions.jsonl        one line per replace/show action, for History
 engine\memory-undo.jsonl    one line per memory save (files before/after) and per undo, so Undo works after a restart
+visuals\<id>.html           one file per visual, the page exactly as the model wrote it (id: 16 hex characters)
 ```
 
 ## Agent tools
@@ -182,6 +183,7 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 | `desktop_observe`, `desktop_windows`, `desktop_wait` | computer use: read a window's controls, list windows, wait for something to appear (see "Computer use") | no |
 | `desktop_act`, `desktop_press`, `desktop_window` | computer use: act on a control, press keys, focus/launch/minimize/maximize/restore a window | yes; allowKey `desktop:<app>` |
 | `memory_save`, `memory_read`, `voice_propose` | see "Memory and voice profiles" | no |
+| `show` | `{ title, html }`: a visual in the reply (see "Visuals" below) | never |
 
 - Tools run in the user's home folder (not the data folder). pi's session keeps the data folder as its cwd (isolation); each tool call sees the home folder as its cwd instead.
 - **`open`** only opens http(s) URLs (every other scheme, such as `file:`, `javascript:` or `ms-settings:`, is refused), paths that exist (UNC and device paths are refused), and app names made of letters, digits, spaces and `. _ - ( ) +`. On Windows a URL goes to `rundll32 url.dll,FileProtocolHandler`, a path to `explorer.exe`, an app name to `cmd /d /c start "" "<name>"`; macOS uses `open` (`open -a` for apps), Linux `xdg-open` (an app name is started directly). Nothing goes through a shell except the restricted app name.
@@ -197,6 +199,7 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 - **Now line:** when the bar is summoned (hotkey or pill click), the shell notes the foreground app (process name), its window title, its selection (UI Automation only, never a simulated copy; skipped in Chromium windows for the reason above, so there is no selection chip there) and a clipboard note (`clipboard` on `NowLine`, for example `text, 640 characters`, `image, 800×600`, `files, 3 files` or `private`). The note comes from formats and data sizes (and an image's header) only, never the contents; it is left out when the clipboard is empty. The engine writes it as `clipboard="…"` on the now line. `now_line` returns that snapshot; the UI sends it with each prompt and the engine appends it to the user message.
 - **Screenshot hotkey** (`Ctrl+Alt+S`): the shell captures the foreground window (downscaled like `screen_capture`) and emits `ui` `attach_screenshot`; the UI shows it as a chip and sends it with the next prompt.
 - **Compaction drops screenshots:** images in the kept part of the thread are replaced by "[screenshot removed]" when the thread is compacted. This happens in what is sent to the model (a context transform on the session's agent): the session file keeps the images, so the transcript still counts them, and images sent after the compaction are untouched.
+- **Visuals** (`show`, SPEC §3 and §7). The engine saves the page as `visuals\<id>.html` and sends `visual_show { replyId, visualId, title }`, which the shell forwards to the main window. The UI puts a frame in that reply at the end of its text so far (`Reply.visuals`, each with the text length `at` when it came; `replyParts` cuts the text there), and the bar and bubble go Wide (`wideReasons` `visual`); a bubble holding a visual has no linger timeout (`bubbleLinger` returns `null`) and goes with `Esc`, or when the bar is open and Winku loses focus to a click elsewhere. The frame is `<iframe sandbox="allow-scripts">` (an opaque origin) loading `winku-visual://localhost/<id>.html` (`http://winku-visual.localhost/<id>.html` on Windows), which `visuals.rs` serves from the data folder with its own CSP: inline and https scripts, styles, pictures and fonts, no `connect-src`, frames or forms (docs/adr/0001). The main window's CSP allows only that scheme in `frame-src`. Serving puts a small bridge script first in the page (the file stays as written): it posts `{ winku: "visual", kind: "height" | "loaded" | "error" }` to the parent, measures the page's height with a ResizeObserver and hides its overflow, so the frame grows to the page and never scrolls. The UI answers the Request 300 ms after `loaded` with `VisualShown { height, errors }` (or after 10 s, or when the frame goes away, with a note in `errors`); the engine waits up to 20 s and otherwise tells the model the height is unknown. The tool result's `details` are `{ visual: { id, title } }`, all the thread needs to find the file again; the model's own tool call still carries the HTML until compaction (#57).
 - **Tool events** carry a short summary without the tool name (the UI shows `name: summary`): the command's first line for shells, the file name for `read`/`write`/`edit`, the URL, query or target for the web tools and `open`, the action and ref (`set value @s1:e2`), keys, window or wait text for the desktop tools.
 
 ## Scheduled tasks
@@ -357,7 +360,7 @@ engine/src/
   voice.ts       voice profiles, proposals, voice_propose tool              (step 5)
   requests.ts    engine → shell Requests, correlated with their Responses (timeouts, abort)
   tools/         agent tools: index (assembly), shell (PowerShell/bash choice), find (glob backend),
-                 open, web (web_fetch, web_search), screen (look_at_screen), clipboard (clipboard_*), permission (gate),
+                 open, web (web_fetch, web_search), screen (look_at_screen), clipboard (clipboard_*), show (visuals), permission (gate),
                  images (compaction drops screenshots)                        (step 6)
     desktop/     computer use: cli (agent-desktop runner), render (outlines, errors), index (desktop_* tools)
 
@@ -375,6 +378,7 @@ app/src-tauri/src/
   clipboard_history.rs  the last 20 text copies in memory, Winku's own changes skipped by sequence number
   tasks.rs       scheduled jobs: rules, tasks.json, jitter, expiry, restart pass, watch line buffer (pure)
   scheduler.rs   1 s tick, idle tracking (Activity), runs, task_* Requests, notices, watch processes
+  visuals.rs     the winku-visual URL scheme: saved visuals with their own CSP and the height/error bridge
   platform/      foreground app, selection, paste, screenshot, UI Automation (windows.rs + fallback.rs)
   voice/         hold to talk, models, speech                                (step 7)
     mod.rs       sessions, pending transcription, downloads, speak/stop, idle unload

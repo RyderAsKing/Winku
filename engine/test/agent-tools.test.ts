@@ -445,3 +445,50 @@ test("ask before running: clipboard write and edit ask first, read does not", as
 	expect(clip.writes).toBe(0);
 	await engine.shutdown();
 }, T);
+
+// ───────────────────────────── visuals ─────────────────────────────
+
+type ShowRequest = Extract<Request, { method: "visual_show" }>;
+const showRequests = (records: OutboundMessage[]) => records.filter((r): r is ShowRequest => r.type === "request" && r.method === "visual_show");
+
+test("show saves the page as its own file, asks the shell to show it and returns the frame's height and errors", async () => {
+	const engine = start();
+	const answers = [
+		{ ok: true, data: { height: 312, errors: [] } },
+		{ ok: true, data: { height: 40, errors: ["ReferenceError: Chart is not defined (line 3)"] } },
+	];
+	engine.onRequest = (request) => (request.method === "visual_show" ? answers.shift() : { ok: true, data: { decision: "deny" } });
+	const page = "<!doctype html><html><body><p>Hello</p></body></html>";
+	await engine.configure({
+		askBeforeRunning: true,
+		faux: {
+			replies: [
+				{ text: "Here it is.", toolCalls: [{ name: "show", arguments: { title: "Sales by month", html: page } }] },
+				call("show", { title: "Broken", html: "<script>new Chart()</script>" }),
+				{ text: "done" },
+			],
+		},
+	});
+	const { end, records } = await engine.prompt("chart my sales");
+	expect(end).toMatchObject({ aborted: false });
+
+	// Never asks, even with "Ask before running" on.
+	expect(permissionRequests(engine.records)).toHaveLength(0);
+
+	const shown = showRequests(engine.records);
+	expect(shown.map((r) => r.params.title)).toEqual(["Sales by month", "Broken"]);
+	expect(shown[0]?.params.replyId).toBe(end.id);
+	const [first, second] = shown.map((r) => r.params.visualId);
+	expect(first).toMatch(/^[0-9a-f]{16}$/);
+	expect(second).not.toBe(first);
+	// Each visual is its own file under visuals\ in the data folder, the page exactly as written.
+	expect(readFileSync(join(engine.dataDir, "visuals", `${first}.html`), "utf8")).toBe(page);
+	expect(readdirSync(join(engine.dataDir, "visuals")).sort()).toEqual([`${first}.html`, `${second}.html`].sort());
+
+	expect(records.filter((r) => r.type === "tool_start").map((r) => (r.type === "tool_start" ? r.summary : ""))).toEqual(["Sales by month", "Broken"]);
+	const rows = await toolRows(engine);
+	expect(rows[0]?.detail).toContain("312 px");
+	expect(rows[0]?.detail).toContain("No script errors");
+	expect(rows[1]?.detail).toContain("ReferenceError: Chart is not defined (line 3)");
+	await engine.shutdown();
+}, T);

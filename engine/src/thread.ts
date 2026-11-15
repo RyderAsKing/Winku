@@ -314,6 +314,7 @@ export function toolSummary(name: string, args: unknown): string {
 		case "desktop_wait":
 			return clip(str("text") || str("role") || (typeof a.ms === "number" ? `${a.ms} ms` : "")) || name;
 		case "memory_save":
+		case "show":
 			return clip(str("title")) || name;
 		case "memory_read":
 			return clip(str("topic")) || name;

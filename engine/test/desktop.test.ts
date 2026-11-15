@@ -71,6 +71,7 @@ function rig(): Rig {
 	});
 	const list = agentTools({
 		home: dir,
+		dataDir: () => dir,
 		shells: { powershell: false, bash: undefined },
 		ripgrep: false,
 		policy: () => policyFrom(r.askBeforeRunning, []),
@@ -129,6 +130,7 @@ test("desktop tools are offered only with agent-desktop, and the acting ones are
 	]);
 	const without = agentTools({
 		home: r.dir,
+		dataDir: () => r.dir,
 		shells: { powershell: false, bash: undefined },
 		ripgrep: false,
 		policy: () => policyFrom(false, []),

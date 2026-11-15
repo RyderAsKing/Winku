@@ -82,7 +82,7 @@ pub async fn engine_call(engine: State<'_, Engine>, message: Value) -> Result<Va
     engine.call(message).await
 }
 
-/// Answers a `permission` Request (step 6; the plumbing is trivial so it's here already).
+/// Answers a Request the main window handles: `permission` (step 6) or `visual_show`.
 #[tauri::command]
 pub fn engine_respond(engine: State<'_, Engine>, mut response: Value) -> Result<(), String> {
     response["type"] = Value::String("response".into());

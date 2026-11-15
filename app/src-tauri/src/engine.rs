@@ -1,7 +1,8 @@
 //! Runs winku-engine as a child process and bridges its JSON-lines protocol
 //! (engine/src/protocol.ts) to the webview.
 //!
-//! - Events and `permission` Requests go to the main window as the `engine` event.
+//! - Events, `permission` and `visual_show` Requests go to the main window as the `engine` event;
+//!   it answers them with `engine_respond`.
 //!   `action_end` for a replace action also pastes the result (actions.rs).
 //! - Results are matched to `engine_call`s by id.
 //! - `screen_capture` and `screen_target` Requests are answered by the shell (capture.rs) on a
@@ -24,7 +25,7 @@ use tokio::sync::oneshot;
 
 use crate::{secrets, settings};
 
-/// Webview event that carries engine Events and `permission` Requests.
+/// Webview event that carries engine Events and `permission` and `visual_show` Requests.
 pub const ENGINE_EVENT: &str = "engine";
 /// How long `engine_call` waits for a Result. Generous because test_connection and
 /// list_models go over the network.
@@ -278,7 +279,8 @@ fn route(record: &Value) -> Route {
         Some("request") => {
             let id = record["id"].as_str().unwrap_or_default().to_string();
             match record["method"].as_str() {
-                Some("permission") => Route::Forward,
+                // The main window asks the user, or shows the visual and measures it.
+                Some("permission" | "visual_show") => Route::Forward,
                 Some("screen_capture") => Route::ScreenCapture {
                     id,
                     include_image: record["params"]["includeImage"].as_bool() == Some(true),
@@ -499,6 +501,12 @@ mod tests {
         );
         assert_eq!(
             route(&json!({ "type": "request", "id": "r1", "method": "permission", "params": {} })),
+            Route::Forward
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r9", "method": "visual_show", "params": { "visualId": "0123456789abcdef", "title": "t" } })
+            ),
             Route::Forward
         );
         assert_eq!(

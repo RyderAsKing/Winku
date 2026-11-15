@@ -176,6 +176,7 @@ export function createMockShell(): ShellImpl {
 		if (message.type === "prompt") {
 			if (/\bremember\b/i.test(message.text)) memoryReply(message.id);
 			else if (/\bclean up\b/i.test(message.text)) askReply(message.id);
+			else if (/\bchart\b/i.test(message.text)) drawReply(message.id);
 			else stream(message.id, Boolean(message.speak));
 		}
 		if (message.type === "abort" && streaming) {
@@ -241,6 +242,30 @@ export function createMockShell(): ShellImpl {
 				emit("engine", { type: "text_delta", id, delta: text });
 				emit("engine", { type: "reply_end", id, text, aborted: false, mood: "happy" });
 			}, 600),
+		);
+	};
+
+	/** A reply that draws a visual ("chart" prompts): the title streams in, then the call ends. The
+	 * browser has no visual scheme, so it ends with text instead of a visual. */
+	const drawReply = (id: string) => {
+		emit("engine", { type: "thinking", id });
+		const toolCallId = "t-draw";
+		const title = "Sales by region, last quarter";
+		let t = 500;
+		for (let i = 6; i <= title.length; i += 6) {
+			const partial = title.slice(0, i);
+			timers.push(setTimeout(() => emit("engine", { type: "drawing", id, toolCallId, title: partial }), t));
+			t += 120;
+		}
+		timers.push(setTimeout(() => emit("engine", { type: "drawing", id, toolCallId, title }), t));
+		timers.push(setTimeout(() => emit("engine", { type: "tool_start", id, toolCallId, name: "show", summary: title }), t + 3500));
+		timers.push(
+			setTimeout(() => {
+				emit("engine", { type: "tool_end", id, toolCallId, ok: true, summary: title });
+				const text = "The north region grew fastest, up 18%.";
+				emit("engine", { type: "text_delta", id, delta: text });
+				emit("engine", { type: "reply_end", id, text, aborted: false, mood: "happy" });
+			}, t + 3700),
 		);
 	};
 

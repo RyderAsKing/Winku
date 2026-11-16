@@ -9,6 +9,7 @@ mod hint;
 mod hotkeys;
 mod menu;
 mod platform;
+mod recall;
 mod scheduler;
 mod secrets;
 mod settings;
@@ -50,6 +51,7 @@ pub fn run() {
             app.manage(actions::Actions::default());
             app.manage(capture::NowState::default());
             app.manage(voice::Voice::default());
+            app.manage(recall::Recall::default());
             app.manage(update::Updates::default());
 
             let handle = app.handle();
@@ -108,6 +110,9 @@ pub fn run() {
             commands::voice_models,
             commands::voice_model_download,
             commands::voice_model_remove,
+            commands::memory_model_status,
+            commands::memory_model_download,
+            commands::memory_model_remove,
             commands::update_status,
             commands::update_check,
             commands::update_restart,

@@ -32,6 +32,13 @@ tokio = { version = "1", features = ["time", "sync"] }
 tauri-plugin-opener = "2"
 cpal = "0.18"
 sherpa-onnx = { version = "=2.0.1", default-features = false, features = ["static"] }
+# Memory search (recall::embedder) runs on the ONNX Runtime sherpa-onnx already links in:
+# `alternative-backend` stops ort from linking or downloading one of its own, and the embedder
+# hands it that runtime's API table. api-24 is the newest table ORT 1.24+ serves; sherpa's is 1.28.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "alternative-backend", "api-24"] }
+# BERT WordPiece tokenisation for the embedder (recall::wordpiece).
+unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 sha2 = "0.10"
 bzip2 = "0.6"
 tar = { version = "0.4", default-features = false }

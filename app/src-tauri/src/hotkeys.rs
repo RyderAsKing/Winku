@@ -457,6 +457,8 @@ fn summon(app: &AppHandle, pressed: bool) {
                 .unwrap_or_else(|e| e.into_inner())
                 .hold_due(generation, Instant::now());
             if due && !listening_paused(&app) {
+                // The spoken message may search memory as soon as it is transcribed.
+                crate::recall::warm(&app);
                 app.state::<HotkeyState>()
                     .talking
                     .store(true, Ordering::SeqCst);
@@ -480,6 +482,8 @@ fn summon(app: &AppHandle, pressed: bool) {
                 emit_ui(app, json!({ "kind": "hide" }));
                 return;
             }
+            // Load memory search while the user types (a background thread; returns at once).
+            crate::recall::warm(app);
             let window = crate::platform::foreground_window();
             let Some(note) = crate::capture::begin_hotkey_note(app, window) else {
                 emit_ui(app, json!({ "kind": "summon" }));

@@ -40,6 +40,7 @@ pub struct Settings {
     pub leader_key: Option<String>,
     pub eyes: Eyes,
     pub voice: Voice,
+    pub memory: Memory,
     pub updates: String,
     pub launch_at_login: bool,
     #[serde(flatten)]
@@ -153,6 +154,28 @@ pub struct Voice {
     pub extra: Extra,
 }
 
+/// The user's memory notes (the engine keeps them; the shell runs the search model).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Memory {
+    /// Notes relevant to a message are looked up (semantic search) and given to the model.
+    pub recall: bool,
+    /// The engine tidies the notes now and then (merges duplicates, drops stale ones).
+    pub tidy: bool,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+impl Default for Memory {
+    fn default() -> Self {
+        Self {
+            recall: true,
+            tidy: true,
+            extra: Extra::new(),
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -171,6 +194,7 @@ impl Default for Settings {
             leader_key: None,
             eyes: Eyes::default(),
             voice: Voice::default(),
+            memory: Memory::default(),
             updates: "auto".into(),
             launch_at_login: true,
             extra: Extra::new(),
@@ -371,6 +395,8 @@ impl Settings {
             "alwaysAllow": self.always_allow,
             "assistantStyle": self.assistant_style,
             "defaultVoiceProfile": self.voice_profiles.default,
+            "memoryRecall": self.memory.recall,
+            "memoryTidy": self.memory.tidy,
         });
         if let Some(key) = api_key {
             message["apiKey"] = json!(key);
@@ -594,6 +620,7 @@ mod tests {
         assert_eq!(value["voice"]["listeningPaused"], false);
         assert_eq!(value["updates"], "auto");
         assert_eq!(value["launchAtLogin"], true);
+        assert_eq!(value["memory"], json!({ "recall": true, "tidy": true }));
         let names: Vec<_> = value["actions"]
             .as_array()
             .unwrap()
@@ -616,6 +643,14 @@ mod tests {
         assert!(settings.ask_before_running);
         assert_eq!(settings.actions.len(), 5);
         assert_eq!(settings.hotkeys, Hotkeys::default());
+        assert_eq!(
+            settings.memory,
+            Memory::default(),
+            "files from before memory"
+        );
+        let partial: Settings = serde_json::from_str(r#"{"memory": {"tidy": false}}"#).unwrap();
+        assert!(partial.memory.recall);
+        assert!(!partial.memory.tidy);
     }
 
     #[test]
@@ -742,6 +777,13 @@ mod tests {
         assert_eq!(message["contextLimit"], 250_000);
         assert!(message.get("quick").is_none());
         assert_eq!(message["defaultVoiceProfile"], "casual");
+        assert_eq!(message["memoryRecall"], true);
+        assert_eq!(message["memoryTidy"], true);
+        settings.memory.recall = false;
+        let off = settings
+            .configure_command(Path::new("/d"), None, None)
+            .unwrap();
+        assert_eq!(off["memoryRecall"], false);
     }
 
     #[test]

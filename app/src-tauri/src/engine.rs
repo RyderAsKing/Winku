@@ -7,6 +7,7 @@
 //! - Results are matched to `engine_call`s by id.
 //! - `screen_capture` and `screen_target` Requests are answered by the shell (capture.rs) on a
 //!   worker thread, and so are `clipboard_read` and `clipboard_write` (clipboard.rs).
+//! - `embed` Requests (memory search) are answered by recall/ on a worker thread.
 //! - `task_*` Requests are answered by the scheduler (scheduler.rs), which also sees every
 //!   Event; `activity` follows what goes out and comes in, so it knows when Winku is idle.
 //! - If the engine exits unexpectedly it is restarted with backoff and configured again.
@@ -260,6 +261,8 @@ enum Route {
     ClipboardRead { id: String, params: Value },
     /// Answer a `clipboard_write` Request ourselves.
     ClipboardWrite { id: String, params: Value },
+    /// Answer an `embed` Request ourselves (memory search, recall/).
+    Embed { id: String, params: Value },
     /// A scheduled-task Request (`task_schedule`, `task_wakeup`, `task_list`, `task_cancel`),
     /// answered by the scheduler.
     Task {
@@ -271,6 +274,14 @@ enum Route {
     Refuse { id: String, error: String },
     /// Forward to the main window.
     Forward,
+}
+
+/// Events the Settings window follows too: its memory page reloads on them.
+fn for_settings(record: &Value) -> bool {
+    matches!(
+        record["type"].as_str(),
+        Some("memory_changed" | "memory_tidy" | "memory_saved")
+    )
 }
 
 fn route(record: &Value) -> Route {
@@ -291,6 +302,10 @@ fn route(record: &Value) -> Route {
                     params: record["params"].clone(),
                 },
                 Some("clipboard_write") => Route::ClipboardWrite {
+                    id,
+                    params: record["params"].clone(),
+                },
+                Some("embed") => Route::Embed {
                     id,
                     params: record["params"].clone(),
                 },
@@ -386,6 +401,16 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                         .send(&crate::capture::response_with(&id, outcome));
                 });
             }
+            Route::Embed { id, params } => {
+                // Loading the model and running it take a while; keep reading.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let outcome = crate::recall::embed_request(&app, &params);
+                    let _ = app
+                        .state::<Engine>()
+                        .send(&crate::capture::response_with(&id, outcome));
+                });
+            }
             Route::Task { id, method, params } => {
                 let outcome = crate::scheduler::request(&app, &method, &params);
                 let _ = engine.send(&crate::capture::response_with(&id, outcome));
@@ -398,6 +423,9 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout, started: Instant
                 crate::actions::on_engine_record(&app, &record);
                 crate::scheduler::on_engine_record(&app, &record);
                 let _ = app.emit_to("main", ENGINE_EVENT, &record);
+                if for_settings(&record) {
+                    let _ = app.emit_to("settings", ENGINE_EVENT, &record);
+                }
                 if smoke.enabled && !smoke.stay {
                     match record["type"].as_str() {
                         Some("reply_end") => app.exit(0),
@@ -490,6 +518,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_hears_memory_events() {
+        for kind in ["memory_changed", "memory_tidy", "memory_saved"] {
+            assert!(for_settings(&json!({ "type": kind })), "{kind}");
+        }
+        for kind in ["text_delta", "reply_end", "context"] {
+            assert!(!for_settings(&json!({ "type": kind })), "{kind}");
+        }
+    }
+
+    #[test]
     fn routes_records() {
         assert_eq!(
             route(&json!({ "type": "result", "id": "shell-1", "ok": true })),
@@ -549,6 +587,15 @@ mod tests {
             Route::ClipboardWrite {
                 id: "r7".into(),
                 params: json!({ "text": "hi" })
+            }
+        );
+        assert_eq!(
+            route(
+                &json!({ "type": "request", "id": "r10", "method": "embed", "params": { "texts": ["hi"], "query": true } })
+            ),
+            Route::Embed {
+                id: "r10".into(),
+                params: json!({ "texts": ["hi"], "query": true })
             }
         );
         for method in ["task_schedule", "task_wakeup", "task_list", "task_cancel"] {

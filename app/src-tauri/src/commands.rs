@@ -34,6 +34,9 @@ pub fn apply_settings(app: &AppHandle, old: &Settings, new: &Settings) {
     if old.eyes.size != new.eyes.size {
         window::on_size_changed(app);
     }
+    if old.memory.recall && !new.memory.recall {
+        crate::recall::unload(app);
+    }
     let _ = app.emit(SETTINGS_CHANGED, new);
 }
 
@@ -280,6 +283,27 @@ pub fn voice_model_download(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn voice_model_remove(app: AppHandle, id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::voice::remove_model(&app, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The memory search model (not listed with the voice models).
+#[tauri::command]
+pub fn memory_model_status(app: AppHandle) -> crate::recall::ModelStatus {
+    crate::recall::status(&app)
+}
+
+/// Starts the memory search model's download and returns at once; progress arrives as
+/// `download_progress` with `what: "embed"`.
+#[tauri::command]
+pub fn memory_model_download(app: AppHandle) {
+    crate::recall::ensure_download(&app);
+}
+
+/// Async and off the runtime threads: it may wait for a search run to finish.
+#[tauri::command]
+pub async fn memory_model_remove(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::recall::remove(&app))
         .await
         .map_err(|e| e.to_string())?
 }

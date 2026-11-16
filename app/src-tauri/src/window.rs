@@ -733,6 +733,8 @@ pub fn set_mode(app: &AppHandle, mode: Mode) -> Result<(), String> {
             if previous == Mode::Pill {
                 // Pill click, or any other path to the bar: note what was in front first.
                 crate::capture::note_summon(app);
+                // Pill click: load memory search while the user types (returns at once).
+                crate::recall::warm(app);
             }
             let _ = window.set_focusable(true);
             window.show().map_err(|e| e.to_string())?;

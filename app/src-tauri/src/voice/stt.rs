@@ -1,5 +1,5 @@
 //! Speech-to-text with the sherpa-onnx offline recogniser, plus the load-on-first-use,
-//! unload-when-idle slot that STT and the reading voice share.
+//! unload-when-idle slot that STT, the reading voice and the memory search model share.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -38,12 +38,22 @@ impl<T> Slot<T> {
         now: Instant,
         load: impl FnOnce() -> Result<T, String>,
     ) -> Result<&T, String> {
+        self.get_or_load_mut(id, now, load).map(|loaded| &*loaded)
+    }
+
+    /// `get_or_load` for a model whose runs need it mutably (an `ort` session).
+    pub fn get_or_load_mut(
+        &mut self,
+        id: &str,
+        now: Instant,
+        load: impl FnOnce() -> Result<T, String>,
+    ) -> Result<&mut T, String> {
         if self.loaded.as_ref().is_none_or(|(loaded, _)| loaded != id) {
             self.loaded = None; // free the old one before loading the new
             self.loaded = Some((id.to_string(), load()?));
         }
         self.last_used = Some(now);
-        Ok(&self.loaded.as_ref().expect("just loaded").1)
+        Ok(&mut self.loaded.as_mut().expect("just loaded").1)
     }
 
     /// Marks the model as used at `now` (call again when a long job finishes).
@@ -134,7 +144,7 @@ pub fn load(model: &Model, dir: &Path) -> Result<OfflineRecognizer, String> {
             };
             mc.tokens = path(dir, tokens);
         }
-        Recipe::Supertonic { .. } => {
+        Recipe::Supertonic { .. } | Recipe::Embedder { .. } => {
             return Err(format!("{} is not a speech-to-text model", model.id))
         }
     }

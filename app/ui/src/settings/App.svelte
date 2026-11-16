@@ -5,7 +5,9 @@
 	import type {
 		ActionSpec,
 		MemoryCore,
+		MemoryLink,
 		MemoryOverview,
+		MemoryPreview,
 		ModelInfo,
 		ProviderInfo,
 		TaskInfo,
@@ -23,6 +25,7 @@
 		testConnection,
 	} from "../lib/connect.ts";
 	import HotkeyField from "../lib/HotkeyField.svelte";
+	import MemoryMap, { type Picked } from "./MemoryMap.svelte";
 	import Switch from "../lib/Switch.svelte";
 	import { duplicates } from "../lib/hotkey.ts";
 	import "../lib/theme.css";
@@ -40,6 +43,7 @@
 		onSettingsChanged,
 		onTasksChanged,
 		onUi,
+		isTauri,
 		type OsVoice,
 		shell,
 		type VoiceModel,
@@ -95,6 +99,15 @@
 	let allNotes = $state(false);
 	const NOTES_SHOWN = 6;
 	const notesShown = $derived(memory ? (allNotes ? memory.notes : memory.notes.slice(0, NOTES_SHOWN)) : []);
+	/** Notes as a list, or as a map of topics with notes that mean similar things linked. */
+	let notesView = $state<"list" | "map">("list");
+	let memoryLinks = $state<MemoryLink[]>([]);
+	let picked = $state<Picked | null>(null);
+	let map = $state<ReturnType<typeof MemoryMap>>();
+	/** Try a message: what Winku would add to it, without sending it. */
+	let tryText = $state("");
+	let preview = $state<MemoryPreview | null>(null);
+	let previewing = $state(false);
 
 	// Model group draft
 	let providerId = $state("");
@@ -421,11 +434,56 @@
 		memoryModel = model;
 		if (model?.downloading && memoryDownload === null) memoryDownload = 0;
 		if (!overview) return;
+		if (notesView === "map") await loadLinks();
 		memory = overview;
 		tidying = overview.tidying;
 		for (const which of ["profile", "goals", "recap"] as const) {
 			if (editingCore !== which && coreTimers[which] === undefined) cores[which] = overview[which];
 		}
+	}
+
+	async function previewMessage() {
+		const text = tryText.trim();
+		if (!text) return;
+		previewing = true;
+		memoryError = "";
+		try {
+			preview = await shell.call<MemoryPreview>({ type: "memory_preview", text });
+		} catch (e) {
+			memoryError = String(e);
+		} finally {
+			previewing = false;
+		}
+	}
+
+	function previewLine(p: MemoryPreview): string {
+		const t = p.trace;
+		if (!p.recallOn) return "Bringing up related notes is off, so messages carry only what's always in the prompt.";
+		if (t.why === "no notes") return "There are no notes to search yet.";
+		// The browser preview's engine is a stand-in that scores shared words, not the search model.
+		const mock = isTauri ? "" : " This is the browser preview: its scores are made up from shared words, not the app's search model.";
+		if (t.why === "the message has no words worth searching for") return `Nothing to search for: the message has no words worth looking up, so no notes are added.${mock}`;
+		const took = `${t.ms} ms`;
+		if (t.byMeaning) return `Searched your notes by meaning and keywords in ${took}. Nothing was sent to the model.${mock}`;
+		return `Searched by keywords only in ${took}: ${t.why ?? "no search model"}. Nothing was sent to the model.${mock}`;
+	}
+
+	function hitMeta(hit: MemoryPreview["trace"]["considered"][number]): string {
+		const parts = [];
+		if (hit.similarity !== undefined) parts.push(`similarity ${hit.similarity.toFixed(2)}`);
+		if (hit.keyword) parts.push("keyword match");
+		if (hit.namedTopic) parts.push("topic named in the message");
+		return parts.length ? ` · ${parts.join(", ")}` : "";
+	}
+
+	async function loadLinks() {
+		const result = await shell.call<{ links: MemoryLink[] }>({ type: "memory_map" }).catch(() => null);
+		memoryLinks = result?.links ?? [];
+	}
+
+	async function showNotesAs(view: "list" | "map") {
+		if (view === "map") await loadLinks();
+		notesView = view;
 	}
 
 	function saveMemory(patch: Partial<Settings["memory"]>) {
@@ -1022,9 +1080,55 @@
 							></textarea>
 						</div>
 					</div>
-					<h3>Notes{memory.notes.length ? ` (${memory.notes.length})` : ""}</h3>
+					<div class="section-head">
+						<h3>Notes{memory.notes.length ? ` (${memory.notes.length})` : ""}</h3>
+						{#if memory.notes.length > 0}
+							<div class="views" role="group" aria-label="Show notes as">
+								<button type="button" aria-pressed={notesView === "list"} onclick={() => showNotesAs("list")}>List</button>
+								<button type="button" aria-pressed={notesView === "map"} onclick={() => showNotesAs("map")}>Map</button>
+							</div>
+						{/if}
+					</div>
 					{#if memory.notes.length === 0}
 						<p class="empty">No notes yet. Winku saves one when you tell it something worth keeping, and when it tidies.</p>
+					{:else if notesView === "map"}
+						<div class="group">
+							<MemoryMap bind:this={map} bind:picked notes={memory.notes} links={memoryLinks} />
+							<div class="row foot">
+								<p class="status">
+									{memory.indexed.embedded === 0
+										? "Each note joins its topic. With the search model, dotted lines also join related notes across topics."
+										: "Dotted lines join related notes across topics. Scroll to zoom, drag to move."}
+								</p>
+								<button type="button" class="btn ghost" onclick={() => map?.fit()}>Fit</button>
+							</div>
+							{#if picked?.note}
+								{@const note = picked.note}
+								<div class="row note">
+									<div class="label">
+										<span class="title">{note.title}</span>
+										<span class="desc meta">{note.topic} · {noteDay(note.date)}{note.important ? " · important" : ""}</span>
+										{#if note.preview && note.preview !== note.title}
+											<span class="desc preview">{note.preview}</span>
+										{/if}
+										{#if picked.related.length}
+											<span class="desc related">
+												Related:
+												{#each picked.related as other, i (other.key)}<button type="button" class="link" onclick={() => map?.select(other.key)}>{other.label}</button>{i < picked.related.length - 1 ? ", " : ""}{/each}
+											</span>
+										{/if}
+									</div>
+									<button type="button" class="btn ghost" aria-label="Delete {note.title}" onclick={() => deleteNote(note.topic, note.id)}>Delete</button>
+								</div>
+							{:else if picked}
+								<div class="row note">
+									<div class="label">
+										<span class="title">{picked.label}</span>
+										<span class="desc meta">{picked.size === 1 ? "1 note" : `${picked.size} notes`}</span>
+									</div>
+								</div>
+							{/if}
+						</div>
 					{:else}
 						<div class="group">
 							{#each notesShown as note (note.topic + note.id)}
@@ -1047,6 +1151,62 @@
 							{/if}
 						</div>
 					{/if}
+					<h3>Try a message</h3>
+					<div class="group">
+						<form class="row try" onsubmit={(e) => (e.preventDefault(), previewMessage())}>
+							<input aria-label="Message to try" placeholder="Type something you might ask, like: what should I cook tonight?" spellcheck="false" bind:value={tryText} />
+							<button type="submit" class="btn" disabled={!tryText.trim() || previewing}>See what's added</button>
+						</form>
+						{#if preview}
+							{@const trace = preview.trace}
+							{@const left = trace.considered.filter((c) => c.reason)}
+							<div class="row">
+								<p class="status">{previewLine(preview)}</p>
+							</div>
+							<div class="row stack">
+								<div class="label">
+									<span class="title">Added to the message</span>
+									<span class="desc">{trace.sent.length ? `${trace.sent.length === 1 ? "1 note" : `${trace.sent.length} notes`}, ${preview.recalled.length.toLocaleString()} characters after your text.` : preview.recallOn ? "No note was close enough, so nothing is added." : "Nothing: bringing up related notes is off."}</span>
+								</div>
+								{#if trace.sent.length}
+									<ul class="hits">
+										{#each trace.considered.filter((c) => !c.reason) as hit (hit.id)}
+											<li>
+												<span class="hit-title">{hit.title}</span>
+												<span class="hit-meta">{hit.topic}{hitMeta(hit)}</span>
+											</li>
+										{/each}
+									</ul>
+								{/if}
+							</div>
+							{#if left.length}
+								<div class="row stack">
+									<div class="label"><span class="title">Close, but left out</span></div>
+									<ul class="hits">
+										{#each left as hit (hit.id)}
+											<li>
+												<span class="hit-title">{hit.title}</span>
+												<span class="hit-meta">{hit.topic}{hitMeta(hit)} · {hit.reason}</span>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
+							<div class="row stack">
+								<div class="label">
+									<span class="title">Always in the prompt</span>
+									<span class="desc">{preview.stale ? "New conversations start with this. The current one started with an older copy, and keeps it until you clear it." : "Every conversation starts with this in its instructions."} {preview.block.length.toLocaleString()} characters.</span>
+								</div>
+								<pre class="sent">{preview.block}</pre>
+							</div>
+							{#if preview.recalled}
+								<div class="row stack">
+									<div class="label"><span class="title">Added after your text, exactly</span></div>
+									<pre class="sent">{preview.recalled.trim()}</pre>
+								</div>
+							{/if}
+						{/if}
+					</div>
 				{/if}
 				<div class="group spaced">
 					<div class="row">
@@ -1433,6 +1593,91 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+	.row.try > input {
+		flex: 1 1 auto;
+	}
+	.hits {
+		display: grid;
+		gap: 8px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.hits li {
+		display: grid;
+		gap: 2px;
+		min-width: 0;
+	}
+	.hit-title {
+		font-size: 13px;
+		overflow-wrap: anywhere;
+	}
+	.hit-meta {
+		color: var(--muted);
+		font-size: 11px;
+		text-wrap: pretty;
+	}
+	pre.sent {
+		margin: 0;
+		max-height: 220px;
+		overflow: auto;
+		color: var(--muted);
+		font-family: var(--mono);
+		font-size: 11.5px;
+		line-height: 1.5;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.section-head {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 12px;
+	}
+	.views {
+		display: inline-flex;
+		margin: 0 0 6px;
+		padding: 2px;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+	}
+	.views button {
+		height: 24px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: 6px;
+		background: none;
+		color: var(--muted);
+		font-size: 12px;
+		cursor: pointer;
+	}
+	.views button:hover {
+		color: var(--text);
+	}
+	.views button[aria-pressed="true"] {
+		background: var(--panel-raised);
+		color: var(--text);
+	}
+	.views button:focus-visible,
+	.link:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 1px;
+	}
+	.related {
+		text-wrap: pretty;
+	}
+	.link {
+		padding: 0;
+		border: 0;
+		border-radius: 2px;
+		background: none;
+		color: var(--accent);
+		font: inherit;
+		cursor: pointer;
+	}
+	.link:hover {
+		text-decoration: underline;
 	}
 	.message {
 		margin: 10px 2px 0;

@@ -454,7 +454,10 @@ const cases = [
 		size: SETTINGS,
 		ready: "text=Release checklist",
 		prepare: async (page) => {
-			await page.getByRole("heading", { name: /^Notes/ }).evaluate((h) => h.scrollIntoView({ block: "start" }));
+			await page.getByRole("heading", { name: /^Notes/ }).evaluate((h) => {
+				h.scrollIntoView({ block: "start" });
+				h.closest("main")?.scrollBy(0, -16);
+			});
 		},
 	},
 	{
@@ -464,6 +467,62 @@ const cases = [
 		ready: "text=Forget everything?",
 		prepare: async (page) => {
 			await page.getByRole("button", { name: "Forget everything" }).click();
+		},
+	},
+	{
+		name: "settings-memory-map",
+		path: "/settings.html#memory",
+		size: SETTINGS,
+		ready: "text=Dotted lines join related notes",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Map", exact: true }).click();
+			await page.getByRole("heading", { name: /^Notes/ }).evaluate((h) => {
+				h.scrollIntoView({ block: "start" });
+				h.closest("main")?.scrollBy(0, -16);
+			});
+		},
+	},
+	{
+		name: "settings-memory-map-note",
+		path: "/settings.html#memory",
+		size: SETTINGS,
+		ready: "text=Related:",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Map", exact: true }).click();
+			await page.getByRole("heading", { name: /^Notes/ }).evaluate((h) => {
+				h.scrollIntoView({ block: "start" });
+				h.closest("main")?.scrollBy(0, -16);
+			});
+			// Click the first note found from the middle outwards that has links, so its row shows.
+			const map = page.getByRole("img", { name: /^Map of/ }).locator("canvas");
+			const box = await map.boundingBox();
+			if (!box) return;
+			for (let r = 0; r < Math.min(box.width, box.height) / 2; r += 6) {
+				const steps = Math.max(1, Math.round((2 * Math.PI * r) / 6));
+				for (let i = 0; i < steps; i++) {
+					const x = box.x + box.width / 2 + r * Math.cos((i / steps) * 2 * Math.PI);
+					const y = box.y + box.height / 2 + r * Math.sin((i / steps) * 2 * Math.PI);
+					await page.mouse.move(x, y);
+					if (!(await map.evaluate((c) => c.classList.contains("grab")))) continue;
+					await page.mouse.click(x, y);
+					if (await page.getByText(/^Related:/).count()) return;
+				}
+			}
+		},
+	},
+	{
+		name: "settings-memory-try",
+		path: "/settings.html#memory",
+		size: SETTINGS,
+		ready: "text=Added to the message",
+		prepare: async (page) => {
+			await page.getByRole("textbox", { name: "Message to try" }).fill("how should I train for the half marathon this week?");
+			await page.getByRole("button", { name: "See what's added" }).click();
+			await page.getByText("Added to the message").waitFor();
+			await page.getByRole("heading", { name: "Try a message" }).evaluate((h) => {
+				h.scrollIntoView({ block: "start" });
+				h.closest("main")?.scrollBy(0, -16);
+			});
 		},
 	},
 	{ name: "settings-memory-empty", path: "/settings.html?nomemory&nomodel#memory", size: SETTINGS, ready: "text=No notes yet" },

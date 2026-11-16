@@ -90,7 +90,8 @@ export interface ShellImpl {
 	listen<T>(event: string, handler: (payload: T) => void): Promise<Unlisten>;
 }
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/** Running inside the app, not the browser preview with its mock engine (ui/src/lib/mock.ts). */
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const impl: Promise<ShellImpl> = isTauri
 	? Promise.all([import("@tauri-apps/api/core"), import("@tauri-apps/api/event")]).then(([core, event]) => ({

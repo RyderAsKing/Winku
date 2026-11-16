@@ -10,7 +10,7 @@
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
 //   ?tasks=1       three scheduled tasks, and a scheduled run and a notice in the transcript
-import type { Command, HistoryEntry, MemoryOverview, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
+import type { Command, HistoryEntry, MemoryOverview, MemoryPreview, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
 import type { ShellImpl } from "./shell.ts";
@@ -221,6 +221,10 @@ export function createMockShell(): ShellImpl {
 				return { removed: 4 };
 			case "memory_overview":
 				return structuredClone(memory);
+			case "memory_preview":
+				return previewMemory(memory, message.text, !params.has("nomodel"));
+			case "memory_map":
+				return { links: MAP_LINKS.filter((l) => memory.notes.some((n) => n.id === l.a) && memory.notes.some((n) => n.id === l.b)) };
 			case "memory_core_set":
 				memory[message.which] = message.text.trim();
 				return undefined;
@@ -359,8 +363,9 @@ export function createMockShell(): ShellImpl {
 					{ id: "n3", topic: "food", title: "Coffee", date: now - 9 * day, preview: "Oat milk, no sugar. Decaf after four.", important: false },
 					{ id: "n4", topic: "threads", title: "Fixing the AltGr hotkeys", date: now - 12 * day, preview: "Worked out why Ctrl+Alt keys type characters on Polish layouts and moved the defaults.", important: false },
 					{ id: "n5", topic: "travel", title: "Porto in December", date: now - 20 * day, preview: "Train from Lisbon on the 12th, back on the 15th. Wants a quiet place near the river.", important: false },
+					...mapNotes(now, day),
 				],
-				indexed: { notes: 5, embedded: 5 },
+				indexed: { notes: 5 + MAP_NOTES.length, embedded: 5 + MAP_NOTES.length },
 				lastTidy: now - 12 * 60_000,
 				tidying: false,
 			};
@@ -564,5 +569,96 @@ export function createMockShell(): ShellImpl {
 			if (event === "engine") setTimeout(ready, 30);
 			return () => set.delete(handler as Handler);
 		},
+	};
+}
+
+/** More notes for the memory map: a few topics with a handful each, and links across them. */
+const MAP_NOTES: [topic: string, title: string, preview: string][] = [
+	["work", "Winku 0.2 scope", "Memory first: profile, goals and recap in every prompt, notes recalled by meaning."],
+	["work", "Code review on Thursdays", "Reviews the week's PRs on Thursday mornings, before standup."],
+	["work", "Prefers small PRs", "One change per PR, with screenshots for anything visible."],
+	["rust", "Tauri window flags", "Transparent windows on Windows need the shadow turned off or a border shows."],
+	["rust", "ONNX Runtime linking", "Links ORT statically from the sherpa build so there is one copy of the library."],
+	["rust", "Clippy before pushing", "Runs cargo clippy with warnings as errors before every push."],
+	["running", "Half marathon in March", "Lisbon half on March 15. Long run on Sundays, up to 18 km by February."],
+	["running", "Knee after long runs", "Left knee aches after anything over 15 km; ices it and skips hills the next day."],
+	["running", "Morning runs before work", "Runs at 7, before the first call, along the river."],
+	["food", "Pastel de nata", "Buys them from the bakery on the corner on Saturday mornings."],
+	["food", "No coffee after four", "Caffeine late keeps them up; switches to decaf after 4pm."],
+	["pets", "Biscuit's walk at six", "The dog needs a walk at 6pm; the river path is the usual route."],
+	["pets", "Biscuit's vet in January", "Annual checkup and vaccines due in the second week of January."],
+	["travel", "Window seat on trains", "Books a window seat facing forward on the Lisbon to Porto train."],
+	["screenshots", "Before and after in PRs", "PRs that change UI get before and after screenshots at desktop and mobile sizes."],
+];
+
+function mapNotes(now: number, day: number): MemoryOverview["notes"] {
+	return MAP_NOTES.map(([topic, title, preview], i) => ({ id: `m${i + 1}`, topic, title, date: now - (25 + i * 3) * day, preview, important: i === 6 }));
+}
+
+/** Links between notes in different topics, as memory_map returns them. */
+const MAP_LINKS = [
+	{ a: "m1", b: "m4", similarity: 0.34 },
+	{ a: "m3", b: "m15", similarity: 0.54 },
+	{ a: "m2", b: "m15", similarity: 0.36 },
+	{ a: "n2", b: "m3", similarity: 0.39 },
+	{ a: "m5", b: "m1", similarity: 0.35 },
+	{ a: "m6", b: "m3", similarity: 0.37 },
+	{ a: "m9", b: "m12", similarity: 0.42 },
+	{ a: "m7", b: "n5", similarity: 0.34 },
+	{ a: "m11", b: "n3", similarity: 0.56 },
+	{ a: "m10", b: "n3", similarity: 0.36 },
+	{ a: "m14", b: "n5", similarity: 0.47 },
+	{ a: "m8", b: "m13", similarity: 0.35 },
+	{ a: "m4", b: "n4", similarity: 0.33 },
+];
+
+/**
+ * A stand-in for the engine's memory_preview: word overlap plays the part of similarity, with
+ * the engine's gates and limits, so the tester shows notes sent and notes left out.
+ */
+function previewMemory(memory: MemoryOverview, text: string, byMeaning: boolean): MemoryPreview {
+	const filler = new Set("the and for this that with what how should can you your are was were have has had from into about this week day today then than when where which who will would could just like".split(" "));
+	const tokens = (t: string) => (t.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((w) => !filler.has(w));
+	const words = new Set(tokens(text));
+	const scored = memory.notes
+		.map((n) => {
+			const hay = new Set(tokens(`${n.title} ${n.preview} ${n.topic}`));
+			const hits = [...words].filter((w) => hay.has(w) || hay.has(`${w}s`) || (w.endsWith("s") && hay.has(w.slice(0, -1)))).length;
+			return { n, hits, similarity: Math.round(Math.min(0.6, hits * 0.16 + (n.title.length % 7) / 100) * 1000) / 1000 };
+		})
+		.sort((a, b) => b.similarity - a.similarity);
+	const best = scored[0]?.similarity ?? 0;
+	const considered = (words.size ? scored : []).filter((x) => x.hits > 0 || x.similarity >= 0.1).slice(0, 10).map(({ n, hits, similarity }, i) => {
+		const reason = !byMeaning
+			? hits === 0
+				? "no keyword match"
+				: hits < 2
+					? "only one word matched"
+					: undefined
+			: similarity < (hits ? 0.12 : 0.2)
+				? `similarity under ${hits ? 0.12 : 0.2}`
+				: similarity < best - 0.3
+					? "much weaker than the best match"
+					: i >= 4
+						? "past the limit of 4 notes"
+						: undefined;
+		return { id: n.id, topic: n.topic, title: n.title, ...(byMeaning ? { similarity } : {}), keyword: hits > 0, ...(reason ? { reason } : {}) };
+	});
+	const sent = considered.filter((c) => !c.reason).map((c) => {
+		const n = memory.notes.find((x) => x.id === c.id) as MemoryOverview["notes"][number];
+		return { id: n.id, topic: n.topic, title: n.title, date: n.date, body: n.preview, ...(c.similarity !== undefined ? { similarity: c.similarity } : {}) };
+	});
+	const section = (name: string, body: string) => (body.trim() ? `<${name}>\n${body.trim()}\n</${name}>` : "");
+	const topics = [...new Set(memory.notes.map((n) => n.topic))].sort();
+	const parts = [section("profile", memory.profile), section("goals", memory.goals), section("recap", memory.recap), section("note_topics", topics.join(", "))].filter(Boolean);
+	const recalled = sent.length
+		? `\n\n<recalled_memories>\n${sent.map((n) => `<note id="${n.id}" topic="${n.topic}" date="${new Date(n.date).toISOString().slice(0, 10)}">\n${n.title}\n${n.body}\n</note>`).join("\n")}\n</recalled_memories>`
+		: "";
+	return {
+		block: parts.length ? `<winku_memory>\n${parts.join("\n")}\n</winku_memory>` : "<winku_memory>\n(nothing yet)\n</winku_memory>",
+		stale: false,
+		recallOn: true,
+		recalled,
+		trace: { byMeaning: byMeaning && words.size > 0, ...(!words.size ? { why: "the message has no words worth searching for" } : byMeaning ? {} : { why: "no search model" }), ms: byMeaning ? 6 : 1, sent, considered: [...considered.filter((c) => !c.reason), ...considered.filter((c) => c.reason)] },
 	};
 }

@@ -6,6 +6,7 @@ import { type SessionEntry, SessionManager } from "@earendil-works/pi-coding-age
 import { stripMood } from "./mood.ts";
 import { splitSay } from "./say.ts";
 import { parseNow } from "./nowline.ts";
+import { recalledIds, stripRecalled } from "./recall.ts";
 import { parseScheduled } from "./scheduled.ts";
 import type { HistoryEntry, TranscriptItem } from "./protocol.ts";
 import { classifyError, EngineError } from "./runtime.ts";
@@ -77,13 +78,13 @@ export class Thread {
 	}
 
 	/** Archive the current thread (its file stays) and start a new one. */
-	clear(): { undoToken: string } {
+	clear(): { undoToken: string; archivedFile?: string } {
 		const archivedFile = this.manager.getSessionFile();
 		this.manager = this.create();
 		this.writePointer();
 		const token = randomUUID();
 		this.undo = archivedFile ? { token, archivedFile, newManager: this.manager } : undefined;
-		return { undoToken: token };
+		return { undoToken: token, ...(archivedFile ? { archivedFile } : {}) };
 	}
 
 	/** Drop the new thread if it is still empty and switch back to the archived one. */
@@ -131,7 +132,7 @@ export class Thread {
 			entries.push({
 				id: s.id,
 				kind: "thread",
-				title: titleOf(parseNow(s.firstMessage).text),
+				title: titleOf(stripRecalled(parseNow(s.firstMessage).text)),
 				startedAt: s.created.getTime(),
 				updatedAt: s.modified.getTime(),
 				messageCount: countMessages(s.path),
@@ -196,6 +197,31 @@ export class Thread {
 			if (typeof sections?.preamble === "string") preamble = sections.preamble;
 		}
 		return preamble;
+	}
+
+	/** Notes recalled into user messages the model still has in full (since the last compaction's kept part). */
+	recalledInContext(): Set<string> {
+		const branch = this.manager.getBranch();
+		let from = 0;
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry?.type !== "compaction") continue;
+			const kept = branch.findIndex((e) => e.id === entry.firstKeptEntryId);
+			from = kept >= 0 ? kept : i;
+			break;
+		}
+		const ids = new Set<string>();
+		for (const entry of branch.slice(from)) {
+			if (entry.type !== "message" || entry.message.role !== "user") continue;
+			for (const id of recalledIds(textOf(entry.message.content))) ids.add(id);
+		}
+		return ids;
+	}
+
+	/** Entries of a session file, for tidy: the current thread's, or an archived one by path. */
+	entries(path?: string): SessionEntry[] {
+		if (!path || path === this.manager.getSessionFile()) return this.manager.getBranch();
+		return SessionManager.open(path, this.sessionDir, this.dataDir).getBranch();
 	}
 
 	transcript(): TranscriptItem[] {
@@ -276,7 +302,7 @@ function actionTranscript(action: ActionLogLine): TranscriptItem[] {
 
 type Block = { type: string; text?: string; id?: string; name?: string; arguments?: unknown };
 
-function textOf(content: unknown): string {
+export function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return (content as Block[]).map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
@@ -381,7 +407,7 @@ export function transcriptItems(entries: SessionEntry[], undoneSaves: ReadonlySe
 		if (message.role === "user") {
 			const parsed = parseNow(textOf(message.content));
 			const { now, spoken } = parsed;
-			const { text, scheduled } = parseScheduled(parsed.text);
+			const { text, scheduled } = parseScheduled(stripRecalled(parsed.text));
 			const images = Array.isArray(message.content)
 				? (message.content as Block[]).filter((b) => b.type === "image").length
 				: 0;

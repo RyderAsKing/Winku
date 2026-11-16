@@ -48,7 +48,11 @@ When you spoke, Winku reads the reply aloud in a natural offline voice (Superton
 
 ## Memory
 
-Winku saves things worth remembering as plain markdown files, and each reply shows what it saved, with an Undo. Settings > Memory and voice opens the folder, the "About me" file and your writing voice profiles.
+Winku remembers you between conversations. It keeps a short profile of lasting facts about you, your current goals and a recap of where you left off, and it always has them in front of it, so you don't have to repeat yourself. Things worth keeping go into notes, and before each message Winku looks through them and brings along the ones that relate. That search runs on your computer, with a 34 MB model downloaded the first time it's needed.
+
+Winku saves on its own and when you say "remember…", and each reply shows what it saved, with an Undo. After a conversation goes quiet or you clear it, Winku also tidies up: it updates the profile and goals, adds notes worth keeping and writes the recap.
+
+It's all plain markdown. Settings > Memory and voice lets you edit the profile, goals and recap, delete notes, run a tidy, open the folder and the "About me" file, and pick your writing voice profiles. Both the search and the tidying can be turned off there.
 
 ## The right-click menu
 

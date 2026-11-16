@@ -20,7 +20,7 @@ test("holds the instructions, style and mood instruction, and nothing time-varyi
 	expect(buildSystemPrompt({ assistantStyle: "  " })).not.toContain("assistant_style");
 });
 
-test("has slots for about-me, voice profiles and the memory index", () => {
+test("has the memory block (about-me, profile, goals, recap, topics) and voice profiles", () => {
 	const prompt = buildSystemPrompt({
 		assistantStyle: "",
 		aboutMe: "I live in Berlin.",
@@ -28,12 +28,19 @@ test("has slots for about-me, voice profiles and the memory index", () => {
 			{ name: "work", content: "Formal." },
 			{ name: "casual", content: "Loose." },
 		],
-		memoryIndex: "- likes tea",
+		profile: "- Likes tea",
+		goals: "- Ship 0.2 by Friday",
+		recap: "Talked about the release.",
+		noteTopics: ["food", "work"],
 	});
-	expect(prompt).toContain("<about_me>\nI live in Berlin.\n</about_me>");
+	expect(prompt).toContain(
+		"<winku_memory>\n<about_me>\nI live in Berlin.\n</about_me>\n<profile>\n- Likes tea\n</profile>\n<goals>\n- Ship 0.2 by Friday\n</goals>\n<recap>\nTalked about the release.\n</recap>\n<note_topics>\nfood, work\n</note_topics>\n</winku_memory>",
+	);
 	expect(prompt.indexOf('name="casual"')).toBeLessThan(prompt.indexOf('name="work"'));
-	expect(prompt).toContain("<memory_index>\n- likes tea\n</memory_index>");
+	expect(prompt).toContain("Never say you don't know or can't remember".replace("Never", "never"));
+	expect(prompt).toContain("<recalled_memories>");
 	expect(prompt.trimEnd().endsWith("Never mention it.")).toBe(true);
+	expect(buildSystemPrompt({ assistantStyle: "" })).toContain("<winku_memory>\n(nothing yet)\n</winku_memory>");
 });
 
 test("now line round-trips", () => {

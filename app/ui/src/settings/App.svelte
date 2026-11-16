@@ -2,7 +2,16 @@
 	// Settings: a list of sections on the left, one section's grouped rows on the right (SPEC §3).
 	// The Model section applies with an explicit Save after a connection test; everything else
 	// saves as you change it. The URL hash names the open section (settings.html#speech).
-	import type { ActionSpec, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, VoiceProfileInfo } from "../../../../engine/src/protocol.ts";
+	import type {
+		ActionSpec,
+		MemoryCore,
+		MemoryOverview,
+		ModelInfo,
+		ProviderInfo,
+		TaskInfo,
+		ThinkingLevel,
+		VoiceProfileInfo,
+	} from "../../../../engine/src/protocol.ts";
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
@@ -22,7 +31,9 @@
 	import {
 		type AltGrReport,
 		type HotkeysStatus,
+		type MemoryModel,
 		onDownloadProgress,
+		onEngine,
 		onUpdateStatus,
 		type UpdateStatus,
 		onHotkeysStatus,
@@ -68,6 +79,22 @@
 	let forgetResult: string | null = $state(null);
 	let altGr = $state<AltGrReport | null>(null);
 	let tasks: TaskInfo[] = $state([]);
+
+	// Memory page
+	let memory = $state<MemoryOverview | null>(null);
+	let memoryModel = $state<MemoryModel | null>(null);
+	/** The search model's download, 0…1, while it runs. */
+	let memoryDownload = $state<number | null>(null);
+	let memoryError = $state("");
+	/** Profile, goals and recap as edited; a field being typed in isn't overwritten by a reload. */
+	let cores: Record<MemoryCore, string> = $state({ profile: "", goals: "", recap: "" });
+	let editingCore = $state<MemoryCore | null>(null);
+	const coreTimers: Partial<Record<MemoryCore, ReturnType<typeof setTimeout>>> = {};
+	let tidying = $state(false);
+	let tidyNote = $state("");
+	let allNotes = $state(false);
+	const NOTES_SHOWN = 6;
+	const notesShown = $derived(memory ? (allNotes ? memory.notes : memory.notes.slice(0, NOTES_SHOWN)) : []);
 
 	// Model group draft
 	let providerId = $state("");
@@ -129,7 +156,27 @@
 		const unlistenUi = onUi((e) => {
 			if (e.kind === "settings_section") go(e.section);
 		});
+		void loadMemory();
+		const unlistenEngine = onEngine((m) => {
+			if (m.type === "memory_changed" || m.type === "memory_saved") void loadMemory();
+			else if (m.type === "memory_tidy") {
+				tidying = m.state === "running";
+				if (m.state === "failed") tidyNote = m.message ? `The last tidy failed: ${m.message}` : "The last tidy failed.";
+				if (m.state === "done") void loadMemory();
+			}
+		});
+		// Notes saved in a conversation while this window was in the background.
+		const onFocus = () => void loadMemory();
+		window.addEventListener("focus", onFocus);
 		const unlistenDownloads = onDownloadProgress((p) => {
+			if (p.what === "embed") {
+				if (p.fraction >= 1 || p.fraction < 0) {
+					memoryDownload = null;
+					if (p.fraction < 0) memoryError = "The download failed. Check your connection and try again.";
+					void loadMemory();
+				} else memoryDownload = p.fraction;
+				return;
+			}
 			if (p.fraction >= 1 || p.fraction < 0) {
 				delete downloads[p.model];
 				if (p.fraction < 0) voiceError = "The download failed. Check your connection and try again.";
@@ -143,6 +190,9 @@
 			void unlistenUpdates.then((u) => u());
 			void unlistenTasks.then((u) => u());
 			void unlistenUi.then((u) => u());
+			void unlistenEngine.then((u) => u());
+			window.removeEventListener("focus", onFocus);
+			for (const timer of Object.values(coreTimers)) clearTimeout(timer);
 		};
 	});
 
@@ -359,6 +409,114 @@
 		const { removed } = await shell.call<{ removed: number }>({ type: "memory_forget_all" });
 		confirmForget = false;
 		forgetResult = removed === 1 ? "Forgot 1 file." : `Forgot ${removed} files.`;
+		tidyNote = "";
+		await loadMemory();
+	}
+
+	async function loadMemory() {
+		const [overview, model] = await Promise.all([
+			shell.call<MemoryOverview>({ type: "memory_overview" }).catch(() => null),
+			shell.memoryModelStatus().catch(() => null),
+		]);
+		memoryModel = model;
+		if (model?.downloading && memoryDownload === null) memoryDownload = 0;
+		if (!overview) return;
+		memory = overview;
+		tidying = overview.tidying;
+		for (const which of ["profile", "goals", "recap"] as const) {
+			if (editingCore !== which && coreTimers[which] === undefined) cores[which] = overview[which];
+		}
+	}
+
+	function saveMemory(patch: Partial<Settings["memory"]>) {
+		if (!settings) return;
+		save({ memory: { ...settings.memory, ...patch } });
+	}
+
+	/** Profile, goals or recap: written a moment after typing stops, and when the field loses focus. */
+	function editCore(which: MemoryCore, text: string, delay = 600) {
+		cores[which] = text;
+		clearTimeout(coreTimers[which]);
+		coreTimers[which] = setTimeout(() => {
+			coreTimers[which] = undefined;
+			memoryError = "";
+			shell.call({ type: "memory_core_set", which, text }).catch((e) => (memoryError = String(e)));
+		}, delay);
+	}
+
+	function flushCore(which: MemoryCore) {
+		editingCore = null;
+		if (coreTimers[which] !== undefined) editCore(which, cores[which], 0);
+	}
+
+	async function deleteNote(topic: string, noteId: string) {
+		memoryError = "";
+		await shell.call({ type: "memory_note_delete", topic, noteId }).catch((e) => (memoryError = String(e)));
+		await loadMemory();
+	}
+
+	async function tidyNow() {
+		tidying = true;
+		tidyNote = "";
+		try {
+			const { changed } = await shell.call<{ changed: boolean }>({ type: "memory_tidy" });
+			tidyNote = changed ? "Updated just now." : "Nothing new worth keeping.";
+		} catch (e) {
+			tidyNote = `The tidy failed: ${String(e)}`;
+		} finally {
+			tidying = false;
+			await loadMemory();
+		}
+	}
+
+	async function downloadMemoryModel() {
+		memoryError = "";
+		memoryDownload = 0;
+		await shell.memoryModelDownload().catch((e) => {
+			memoryDownload = null;
+			memoryError = String(e);
+		});
+	}
+
+	async function removeMemoryModel() {
+		await shell.memoryModelRemove().catch((e) => (memoryError = String(e)));
+		await loadMemory();
+	}
+
+	function modelLine(model: MemoryModel): string {
+		if (memoryDownload !== null) return `Downloading, ${Math.round(memoryDownload * 100)}%. Until it finishes, notes are matched by their words.`;
+		if (model.installed) return `Downloaded, ${model.sizeMb} MB. Finds notes by meaning, on this computer.`;
+		return `Finds notes by meaning, on this computer. A ${model.sizeMb} MB download; until then notes are matched by their words.`;
+	}
+
+	function tidyLine(): string {
+		if (tidying) return "Tidying now…";
+		if (tidyNote) return tidyNote;
+		const last = memory?.lastTidy;
+		const when = last ? ` Last done ${ago(last)}.` : "";
+		return `When a conversation goes quiet or is cleared, the Quick actions model updates your profile, goals and recap.${when}`;
+	}
+
+	/** Notes are dated by the day: "today", "yesterday", "3 days ago", or a date. */
+	function noteDay(at: number): string {
+		const days = Math.round((new Date().setHours(12, 0, 0, 0) - new Date(at).setHours(12, 0, 0, 0)) / 86_400_000);
+		if (days <= 0) return "today";
+		if (days === 1) return "yesterday";
+		if (days < 14) return `${days} days ago`;
+		return new Date(at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+	}
+
+	/** "just now", "12 minutes ago", "yesterday", "3 days ago", or a date. */
+	function ago(at: number): string {
+		const minutes = Math.round((Date.now() - at) / 60_000);
+		if (minutes < 1) return "just now";
+		if (minutes < 60) return minutes === 1 ? "a minute ago" : `${minutes} minutes ago`;
+		const hours = Math.round(minutes / 60);
+		if (hours < 24) return hours === 1 ? "an hour ago" : `${hours} hours ago`;
+		const days = Math.round(hours / 24);
+		if (days === 1) return "yesterday";
+		if (days < 14) return `${days} days ago`;
+		return new Date(at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
 	}
 
 	function setAction(index: number, patch: Partial<ActionSpec>, debounce = 0) {
@@ -787,11 +945,112 @@
 			{:else if page === "memory"}
 				<div class="group">
 					<div class="row">
-						<div class="label"><span class="title">About me</span><span class="desc">What Winku should know about you. It only reads this.</span></div>
+						<div class="label"><span class="title">About me</span><span class="desc">What Winku should know about you, in your words. Winku only reads it.</span></div>
 						<button type="button" class="btn" onclick={() => shell.openDataPath("about_me")}>Open in editor</button>
 					</div>
 					<div class="row">
-						<div class="label"><span class="title">Memory</span><span class="desc">{forgetResult ?? "What Winku has saved from your conversations."}</span></div>
+						<div class="label">
+							<span class="title">Bring up related notes</span>
+							<span class="desc">Before each message, Winku looks through its notes and brings along the ones that relate.</span>
+						</div>
+						<Switch label="Bring up related notes" checked={settings.memory.recall} onchange={(v) => saveMemory({ recall: v })} />
+					</div>
+					{#if settings.memory.recall && memoryModel}
+						<div class="row">
+							<div class="label"><span class="title">Search model</span><span class="desc">{modelLine(memoryModel)}</span></div>
+							{#if memoryDownload === null}
+								{#if memoryModel.installed}
+									<button type="button" class="btn" onclick={removeMemoryModel}>Remove</button>
+								{:else}
+									<button type="button" class="btn" onclick={downloadMemoryModel}>Download</button>
+								{/if}
+							{/if}
+						</div>
+					{/if}
+					<div class="row">
+						<div class="label"><span class="title">Keep memory up to date</span><span class="desc">{tidyLine()}</span></div>
+						<div class="inline end">
+							{#if settings.memory.tidy}
+								<button type="button" class="btn" disabled={tidying || !memory} onclick={tidyNow}>Tidy now</button>
+							{/if}
+							<Switch label="Keep memory up to date" checked={settings.memory.tidy} onchange={(v) => saveMemory({ tidy: v })} />
+						</div>
+					</div>
+				</div>
+				{#if memoryError}
+					<p class="message bad" role="alert">{memoryError}</p>
+				{/if}
+				{#if memory}
+					<h3>Always known</h3>
+					<div class="group">
+						<div class="row stack">
+							<div class="label"><span class="title">Profile</span><span class="desc">Lasting facts about you, one per line.</span></div>
+							<textarea
+								rows="3"
+								aria-label="Profile"
+								spellcheck="false"
+								placeholder="Nothing yet. Winku adds facts as you talk, or write your own."
+								value={cores.profile}
+								onfocus={() => (editingCore = "profile")}
+								onblur={() => flushCore("profile")}
+								oninput={(e) => editCore("profile", e.currentTarget.value)}
+							></textarea>
+						</div>
+						<div class="row stack">
+							<div class="label"><span class="title">Goals</span><span class="desc">What you're working toward right now.</span></div>
+							<textarea
+								rows="2"
+								aria-label="Goals"
+								spellcheck="false"
+								placeholder="Nothing yet."
+								value={cores.goals}
+								onfocus={() => (editingCore = "goals")}
+								onblur={() => flushCore("goals")}
+								oninput={(e) => editCore("goals", e.currentTarget.value)}
+							></textarea>
+						</div>
+						<div class="row stack">
+							<div class="label"><span class="title">Recap</span><span class="desc">Where your last conversation left off.</span></div>
+							<textarea
+								rows="2"
+								aria-label="Recap"
+								placeholder="Nothing yet."
+								value={cores.recap}
+								onfocus={() => (editingCore = "recap")}
+								onblur={() => flushCore("recap")}
+								oninput={(e) => editCore("recap", e.currentTarget.value)}
+							></textarea>
+						</div>
+					</div>
+					<h3>Notes{memory.notes.length ? ` (${memory.notes.length})` : ""}</h3>
+					{#if memory.notes.length === 0}
+						<p class="empty">No notes yet. Winku saves one when you tell it something worth keeping, and when it tidies.</p>
+					{:else}
+						<div class="group">
+							{#each notesShown as note (note.topic + note.id)}
+								<div class="row note">
+									<div class="label">
+										<span class="title">{note.title}</span>
+										<span class="desc meta">{note.topic} · {noteDay(note.date)}{note.important ? " · important" : ""}</span>
+										{#if note.preview && note.preview !== note.title}
+											<span class="desc preview">{note.preview}</span>
+										{/if}
+									</div>
+									<button type="button" class="btn ghost" aria-label="Delete {note.title}" onclick={() => deleteNote(note.topic, note.id)}>Delete</button>
+								</div>
+							{/each}
+							{#if memory.notes.length > NOTES_SHOWN}
+								<div class="row foot">
+									<p class="status">{allNotes ? `All ${memory.notes.length} notes` : `${NOTES_SHOWN} of ${memory.notes.length}, newest first`}</p>
+									<button type="button" class="btn ghost" onclick={() => (allNotes = !allNotes)}>{allNotes ? "Show fewer" : "Show all"}</button>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				{/if}
+				<div class="group spaced">
+					<div class="row">
+						<div class="label"><span class="title">Memory files</span><span class="desc">{forgetResult ?? "Plain markdown. Edit them in any editor; Winku picks up the changes."}</span></div>
 						<div class="inline end">
 							<button type="button" class="btn" onclick={() => shell.openDataPath("memory")}>Open folder</button>
 							{#if !confirmForget}
@@ -801,7 +1060,7 @@
 					</div>
 					{#if confirmForget}
 						<div class="row confirm">
-							<div class="label"><span class="title bad">Forget everything?</span><span class="desc">This deletes everything Winku remembers. About me and your voice stay.</span></div>
+							<div class="label"><span class="title bad">Forget everything?</span><span class="desc">This deletes everything Winku remembers: profile, goals, recap and notes. About me and your voice stay.</span></div>
 							<div class="inline end">
 								<button type="button" class="btn" onclick={() => (confirmForget = false)}>Cancel</button>
 								<button type="button" class="btn danger" onclick={forgetEverything}>Forget everything</button>
@@ -1155,6 +1414,25 @@
 	}
 	.confirm {
 		background: rgb(255 139 130 / 0.06);
+	}
+	.group.spaced {
+		margin-top: 24px;
+	}
+	.note .label {
+		gap: 3px;
+	}
+	.note .title {
+		overflow-wrap: anywhere;
+	}
+	.note .meta {
+		font-size: 11px;
+	}
+	.note .preview {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 	.message {
 		margin: 10px 2px 0;

@@ -26,6 +26,9 @@ const echo = { echoSystemPrompt: true };
 const save = (title: string, topic: string, content: string) => ({
 	toolCalls: [{ name: "memory_save", arguments: { title, topic, content } }],
 });
+const profileSave = (title: string, content: string, replaces?: string) => ({
+	toolCalls: [{ name: "memory_save", arguments: { kind: "profile", title, content, ...(replaces ? { replaces } : {}) } }],
+});
 const read = (path: string) => readFileSync(path, "utf8");
 
 // ───────────────────────────── pure parts ─────────────────────────────
@@ -33,7 +36,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 test("topic slugs, and path traversal is rejected", () => {
 	expect(topicSlug("Project Atlas")).toBe("project-atlas");
 	expect(topicSlug("food.md")).toBe("food");
-	for (const bad of ["../etc", "a/b", "a\\b", "..", "", "  ", "MEMORY", "memory.md", "!!!"]) expect(() => topicSlug(bad)).toThrow();
+	for (const bad of ["../etc", "a/b", "a\\b", "..", "", "  ", "MEMORY", "memory.md", "!!!", "Profile", "goals", "RECAP.md"]) expect(() => topicSlug(bad)).toThrow();
 	expect(() => profileName("../x")).toThrow();
 	expect(() => profileName("a/b")).toThrow();
 	expect(profileName("work.md")).toBe("work");
@@ -193,24 +196,24 @@ test("memory_forget_all wipes memory and keeps about-me and voice", async () => 
 	await engine.shutdown();
 }, T);
 
-test("the system prompt snapshots about-me, voice and the index; frozen mid-thread, refreshed on clear", async () => {
+test("the system prompt snapshots about-me, voice and the core memory; frozen mid-thread, refreshed on clear", async () => {
 	const engine = start();
 	await engine.configure();
 	writeFileSync(join(engine.dataDir, "about-me.md"), "I live in Lisbon.\n");
-	writeFileSync(join(engine.dataDir, "memory", "MEMORY.md"), "- [Old](old.md): an old fact\n");
+	writeFileSync(join(engine.dataDir, "memory", "PROFILE.md"), "# Profile\n\n- Has a cat called Miso\n");
+	writeFileSync(join(engine.dataDir, "memory", "old.md"), "# old\n\n## 2026-01-01: Old\n\nan old fact\n");
 	await engine.callOk({ type: "clear" });
-	await engine.configure({ faux: { replies: [echo, save("Likes tea", "food", "Green tea."), { text: "ok" }, echo, echo] } });
+	await engine.configure({ faux: { replies: [echo, profileSave("Likes tea", "Drinks green tea"), { text: "ok" }, echo, echo] } });
 	const first = (await engine.prompt("p1")).end.text;
-	expect(first).toContain("<about_me>\nI live in Lisbon.\n</about_me>");
+	expect(first).toContain("<winku_memory>\n<about_me>\nI live in Lisbon.\n</about_me>\n<profile>\n- Has a cat called Miso\n</profile>\n<note_topics>\nold\n</note_topics>\n</winku_memory>");
 	expect(first).toContain('<voice_profile name="casual">');
 	expect(first).toContain('<voice_profile name="work">');
-	expect(first).toContain("<memory_index>\n- [Old](old.md): an old fact\n</memory_index>");
 	expect(first).toContain("memory_save");
 	await engine.prompt("remember tea");
 	expect((await engine.prompt("p3")).end.text).toBe(first);
 	await engine.callOk({ type: "clear" });
 	const fresh = (await engine.prompt("p4")).end.text;
-	expect(fresh).toContain("- [Likes tea](food.md): Green tea.");
+	expect(fresh).toContain("<profile>\n- Has a cat called Miso\n- Drinks green tea\n</profile>");
 	await engine.shutdown();
 }, T);
 
@@ -225,7 +228,7 @@ test("compaction refreshes the system prompt snapshot", async () => {
 	const engine = start();
 	await engine.configure({
 		compactionReserveTokens: 1000,
-		faux: { contextWindow: 3000, keepRecentTokens: 500, tokensPerSecond: 1_000_000, replies: [save("Likes tea", "food", "Green tea."), ...Array(20).fill(echo)] },
+		faux: { contextWindow: 3000, keepRecentTokens: 500, tokensPerSecond: 1_000_000, replies: [profileSave("Likes tea", "Drinks green tea"), ...Array(20).fill(echo)] },
 	});
 	const first = (await engine.prompt("one")).end.text;
 	expect(first).toStartWith("You are Winku");
@@ -234,7 +237,7 @@ test("compaction refreshes the system prompt snapshot", async () => {
 	for (let i = 0; i < 6 && !engine.records.some((r) => r.type === "compaction_end"); i++) await engine.prompt(`more ${i}`);
 	expect(engine.records.find((r) => r.type === "compaction_end")).toMatchObject({ ok: true });
 	const after = (await engine.prompt("after")).end.text;
-	expect(after).toContain("- [Likes tea](food.md): Green tea.");
+	expect(after).toContain("<profile>\n- Drinks green tea\n</profile>");
 	expect((await engine.shutdown()).stderr).toBe("");
 }, T);
 

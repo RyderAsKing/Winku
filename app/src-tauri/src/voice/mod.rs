@@ -356,6 +356,8 @@ pub fn remove_model(app: &AppHandle, id: &str) -> Result<(), String> {
             stop_speaking(app);
             lock(&voice.tts).unload(id);
         }
+        // Not in the voice table (see `recall`).
+        Kind::Embed => {}
     }
     let dir = model.dir(&models_dir(app));
     if dir.exists() {

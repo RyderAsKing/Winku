@@ -10,7 +10,7 @@
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
 //   ?tasks=1       three scheduled tasks, and a scheduled run and a notice in the transcript
-import type { Command, HistoryEntry, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
+import type { Command, HistoryEntry, MemoryOverview, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
 import type { ShellImpl } from "./shell.ts";
@@ -217,7 +217,23 @@ export function createMockShell(): ShellImpl {
 					{ name: "work", summary: "Work: clear, polite, no slang" },
 				];
 			case "memory_forget_all":
+				Object.assign(memory, { profile: "", goals: "", recap: "", notes: [], indexed: { notes: 0, embedded: 0 }, lastTidy: null });
 				return { removed: 4 };
+			case "memory_overview":
+				return structuredClone(memory);
+			case "memory_core_set":
+				memory[message.which] = message.text.trim();
+				return undefined;
+			case "memory_note_delete":
+				memory.notes = memory.notes.filter((n) => n.id !== message.noteId);
+				return undefined;
+			case "memory_tidy":
+				return new Promise((resolve) =>
+					setTimeout(() => {
+						memory.lastTidy = Date.now();
+						resolve({ changed: false });
+					}, 1500),
+				);
 			case "voice_proposal_decision":
 				return { written: message.accept };
 			default:
@@ -328,9 +344,29 @@ export function createMockShell(): ShellImpl {
 		{ id: "parakeet", kind: "stt", name: "Parakeet TDT 0.6B v2 (English)", sizeMb: 482, installed: false },
 		{ id: "supertonic", kind: "tts", name: "Supertonic (English)", sizeMb: 85, installed: false },
 	];
+	// Memory: what Settings shows, its search model, and a tidy that takes a moment.
+	const memoryModel = { id: "bge-small-en-v1.5", kind: "embed", name: "bge-small-en-v1.5", sizeMb: 34, installed: !params.has("nomodel") };
+	const day = 86_400_000;
+	const memory: MemoryOverview = params.has("nomemory")
+		? { profile: "", goals: "", recap: "", notes: [], indexed: { notes: 0, embedded: 0 }, lastTidy: null, tidying: false }
+		: {
+				profile: "- Lives in Lisbon, works from home\n- Has a dog called Biscuit who needs a walk at six\n- Writes TypeScript and Rust; prefers Bun\n- Likes short answers with the command first",
+				goals: "- Ship Winku 0.2 with memory by Friday\n- Run a half marathon in March",
+				recap: "Planned the 0.2 release: memory is the main item, the settings page needs a notes list, screenshots still to do.",
+				notes: [
+					{ id: "n1", topic: "work", title: "Release checklist", date: now - 2 * day, preview: "Bump versions in three places, tag, then let the release workflow sign and upload the installers.", important: true },
+					{ id: "n2", topic: "screenshots", title: "Prefers WebP at quality 82", date: now - 5 * day, preview: "Screenshots for the blog go out as WebP at quality 82, 1600 px wide.", important: false },
+					{ id: "n3", topic: "food", title: "Coffee", date: now - 9 * day, preview: "Oat milk, no sugar. Decaf after four.", important: false },
+					{ id: "n4", topic: "threads", title: "Fixing the AltGr hotkeys", date: now - 12 * day, preview: "Worked out why Ctrl+Alt keys type characters on Polish layouts and moved the defaults.", important: false },
+					{ id: "n5", topic: "travel", title: "Porto in December", date: now - 20 * day, preview: "Train from Lisbon on the 12th, back on the 15th. Wants a quiet place near the river.", important: false },
+				],
+				indexed: { notes: 5, embedded: 5 },
+				lastTidy: now - 12 * 60_000,
+				tidying: false,
+			};
 	const downloading = new Set<string>();
 	const download = (id: string) => {
-		const model = models.find((m) => m.id === id);
+		const model = models.find((m) => m.id === id) ?? (id === memoryModel.id ? memoryModel : undefined);
 		if (!model || model.installed || downloading.has(id)) return;
 		downloading.add(id);
 		const what = model.kind;
@@ -474,6 +510,14 @@ export function createMockShell(): ShellImpl {
 					] as T;
 				case "voice_model_download":
 					download(String(args?.id));
+					return undefined as T;
+				case "memory_model_status":
+					return { ...memoryModel, downloading: downloading.has(memoryModel.id) } as T;
+				case "memory_model_download":
+					download(memoryModel.id);
+					return undefined as T;
+				case "memory_model_remove":
+					memoryModel.installed = false;
 					return undefined as T;
 				case "voice_model_remove": {
 					const model = models.find((m) => m.id === args?.id);

@@ -22,7 +22,7 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 
 - Shell → engine: **Commands** `{type, id?, …}`. With an `id`, the engine answers with a **Result** `{type:"result", id, ok, data|error}`.
 - Engine → shell: **Events** (`text_delta`, `reply_end`, `context`, `thread_changed`, …), fire-and-forget.
-- Engine → shell: **Requests** `{type:"request", id, method, params}` for things only the shell can do (`screen_capture`, `screen_target`, `clipboard_read`, `clipboard_write`), only the main window can do (`visual_show`) or only the user can decide (`permission`). The shell answers with a **Response**.
+- Engine → shell: **Requests** `{type:"request", id, method, params}` for things only the shell can do (`screen_capture`, `screen_target`, `clipboard_read`, `clipboard_write`, `embed`), only the main window can do (`visual_show`) or only the user can decide (`permission`). The shell answers with a **Response**.
 - Prompt ids and action ids are chosen by the sender and echoed on every event of that reply.
 - `reply_end` is sent on `agent_settled`, not `agent_end`, so retries and compaction finish first.
 - A `prompt` while a reply runs steers it (pi `streamingBehavior: "steer"`, `steeringMode: "all"`), and its Result is `{ steered: true }`. pi delivers it when the current step ends (the tool calls have returned, or the streamed text finished). When its user message starts, the running reply gets `reply_end` (its text so far, not aborted) and the steered prompt's id carries the rest of the run. `abort` drops steers not yet delivered; every pending id gets `reply_end` with `aborted: true`.
@@ -66,18 +66,20 @@ Defined in [`engine/src/protocol.ts`](../engine/src/protocol.ts), which is the s
 | `task_cancel` | `{ id }` → `()`; cancels like `cancel_task` | 9 |
 | `draft_state` | `{ draft: boolean }` → `()`: the bar's message box has text (due jobs wait) | 9 |
 | `voice_model_download` / `voice_model_remove` | `{ id }` → `()`. Download returns at once; progress comes as `download_progress` | 7 |
+| `memory_model_status` | `()` → `{ id, name, sizeMb, installed, downloading }`: the memory search model (see "Memory and voice profiles") | 5 |
+| `memory_model_download` / `memory_model_remove` | `()` → `()`. Download returns at once; progress comes as `download_progress` with `what: "embed"` | 5 |
 
 ### Events (`listen`)
 
 | Event | Payload |
 |---|---|
-| `engine` | Every engine Event, plus `permission` and `visual_show` Requests |
+| `engine` | Every engine Event, plus `permission` and `visual_show` Requests. The Settings window also gets `memory_changed` and `memory_tidy`. |
 | `ui` | `{ kind: "summon" }`, `{ kind: "hide" }`, `{ kind: "toggle_transcript" }`, `{ kind: "ask_selection", text }`, `{ kind: "attach_screenshot", image }`, `{ kind: "clear" }`, `{ kind: "cycle_thinking" }`, `{ kind: "action_started", id, slot, name, output }`, `{ kind: "action_error", id?, slot, name, message }`, `{ kind: "talk_start" }`, `{ kind: "talk_level", level }` (0–1, at most 15 a second), `{ kind: "talk_partial", text }` (while recording: the transcription of the whole recording so far, sent only when it changed; never after that recording's `talk_end`), `{ kind: "talk_end", text }` (`""` when nothing was heard), `{ kind: "speech", playing }` (text-to-speech started or finished), `{ kind: "voice_error", message }`, `{ kind: "menu", item }`, `{ kind: "update_ready", version }` (an update is downloaded, or available in `notify` mode: the eyes show a small dot), `{ kind: "layout", alignRight, above, room }` (the pill was moved across the screen's middle, or onto or off the edge the strip is on), `{ kind: "bring", phase: "start", dx, dy }` (the "Bring Winku here" key started or retargeted a glide; `dx`, `dy` are the logical px still to travel) and `{ kind: "bring", phase: "end" }` (it arrived or a drag cancelled it), `{ kind: "hotkey_hint", show }` (the hotkey prefix, `Ctrl+Alt` or the leader key, has been held alone for 450 ms: `show: true`; `show: false` when it is released or another key goes down; never sent while a fullscreen app has focus. Read through Raw Input on a dedicated thread, no keyboard hook; elevated windows don't deliver raw input to Winku, so no hints there), `{ kind: "scheduled_started", id, name, taskKind, speak? }` (a scheduled run's prompt went out; #43) |
 | `settings_changed` | `Settings`, to every window after any change (Settings window, menu, tray, a saved pill position) |
 | `hotkeys_status` | Same payload as the `hotkeys_status` command, after every (re-)registration |
 | `update_status` | `UpdateStatus`, whenever it changes |
 | `tasks_changed` | `TaskInfo[]`, to every window whenever a job is added, runs, changes status or ends |
-| `download_progress` | `{ what: "stt" \| "tts", model, fraction }` while a voice model downloads; `fraction: 1` when it is installed. A failure sends `ui` `voice_error` and `{ ..., fraction: -1 }`. |
+| `download_progress` | `{ what: "stt" \| "tts" \| "embed", model, fraction }` while a voice model or the memory search model downloads; `fraction: 1` when it is installed. A failure sends `{ ..., fraction: -1 }`, and for a voice model also `ui` `voice_error`. The main window ignores `embed`. |
 
 Global hotkeys are handled in the shell, which does the OS-side work (capture the selection before the bar takes focus, take the screenshot) and then emits a `ui` event. The UI does the rest. `Esc` and `Ctrl+J` are ordinary in-window keys.
 
@@ -146,6 +148,7 @@ Owned by the shell (`app/src-tauri/src/settings.rs`); the TypeScript mirror is `
   "leaderKey": null,                      // e.g. "F13"; replaces Ctrl+Alt in every binding
   "eyes": { "hidden": false, "size": "small", "positions": {} },   // size: small | medium | large; positions keyed by monitor-layout signature
   "voice": { "stt": "moonshine-base", "tts": "supertonic", "ttsVoice": 5, "ttsSteps": 8, "ttsSpeed": 1.05, "osVoice": null, "reply": "mirror", "say": "enough", "listeningPaused": false },
+  "memory": { "recall": true, "tidy": true },   // sent to the engine as memoryRecall / memoryTidy
   "updates": "auto",                      // "auto" | "notify" | "off"
   "launchAtLogin": true
 }
@@ -162,6 +165,10 @@ engine\sessions\*.jsonl     pi session files, one per thread (current and archiv
 engine\current.json         { "sessionFile": "…" }: which thread is current
 engine\actions.jsonl        one line per replace/show action, for History
 engine\memory-undo.jsonl    one line per memory save (files before/after) and per undo, so Undo works after a restart
+engine\memory-index.sqlite  the recall index: notes, an FTS5 table and their vectors; rebuilt from memory\ whenever it is missing or stale
+engine\memory-tidy.json     tidy state: the last tidy, and how far each thread has been read
+engine\memory-tidy.jsonl    one line per tidy pass and what it changed
+models\bge-small-en-v1.5\   the memory search model (model_quantized.onnx, vocab.txt)
 visuals\<id>.html           one file per visual, the page exactly as the model wrote it (id: 16 hex characters)
 ```
 
@@ -183,7 +190,7 @@ SPEC §7. Registered by the engine for the main thread (and agent actions); one-
 | `clipboard_write`, `clipboard_edit` | replace the clipboard with text; replace one exact part of the clipboard text | yes; allowKey `clipboard_write` / `clipboard_edit` |
 | `desktop_observe`, `desktop_windows`, `desktop_wait` | computer use: read a window's controls, list windows, wait for something to appear (see "Computer use") | no |
 | `desktop_act`, `desktop_press`, `desktop_window` | computer use: act on a control, press keys, focus/launch/minimize/maximize/restore a window | yes; allowKey `desktop:<app>` |
-| `memory_save`, `memory_read`, `voice_propose` | see "Memory and voice profiles" | no |
+| `memory_save`, `memory_read`, `memory_search`, `voice_propose` | see "Memory and voice profiles" | no |
 | `show` | `{ title, html, replaces? }`: a visual in the reply (see "Visuals" below) | never |
 
 - Tools run in the user's home folder (not the data folder). pi's session keeps the data folder as its cwd (isolation); each tool call sees the home folder as its cwd instead.
@@ -284,18 +291,55 @@ SPEC §7. The agent operates desktop apps through their accessibility tree with 
 
 ## Memory and voice profiles
 
-SPEC §9. All plain markdown, editable in any editor; the engine re-reads the files when it builds a system prompt, so outside edits are picked up at the next clear or compaction.
+SPEC §9. All plain markdown, editable in any editor. Every other memory file (the search index, the tidy state) is derived and can be deleted. The reasons for this design are in [ADR 0002](adr/0002-memory-is-injected-not-looked-up.md).
 
-- **Starter files.** On `configure`, if missing, the engine creates `about-me.md` (a short commented template), `voice\casual.md` and `voice\work.md` (a few starter rules each) and an empty `memory\MEMORY.md`. It never overwrites existing files.
+- **Starter files.** On `configure`, if missing, the engine creates `about-me.md` (a short commented template), `voice\casual.md` and `voice\work.md` (a few starter rules each) and an empty `memory\MEMORY.md`. It never overwrites existing files. Topic files from before 0.2 named `profile.md`, `goals.md` or `recap.md` are renamed to `<name>-notes.md` (index line too), because those names are now reserved for the core files.
 - **About me** is read-only for the assistant: no tool writes it.
+- **Core files.** `PROFILE.md` and `GOALS.md` are a `# Profile` / `# Goals` heading and one `- ` line per fact or goal; `RECAP.md` is a `# Recap` heading and a paragraph. Any non-empty line other than a heading or a comment counts, bullet or not. In the system prompt each is cut to whole lines within a budget (profile 2,400 characters, goals and recap 1,200 each).
+- **Notes.** `memory\<topic>.md` holds dated sections `## YYYY-MM-DD: <title>`, with `<!-- important -->` at the end of the heading for notes the model marked important. Text before the first section is a note too (titled with the file's `# ` heading or the topic). A note's id is the first 12 hex characters of the SHA-1 of topic, heading and body, so it follows the text: an edited note is a new note. `threads.md` holds one section per tidied thread, with `<!-- thread:<sessionId> -->` under the heading so a later tidy of the same thread replaces it.
+- **System prompt.** `prompt.ts` adds a `<winku_memory>` block after the assistant's style and before the voice profiles: `<about_me>`, `<profile>`, `<goals>`, `<recap>` and `<note_topics>` (topic names, up to 400 characters), each only when it has text, or `(nothing yet)` when all are empty. The instructions tell the model to treat it as things it already knows.
+- **Recall** (`recall.ts`). `prompt` first runs `RecallIndex.search` on the message text (plus the first 500 characters of the selection) and appends what it finds to the user message, between the text and the now line:
+
+  ```
+  <recalled_memories>
+  <note id="3f2a9c01b4de" topic="food" date="2026-10-02">
+  Oat milk
+  Prefers oat milk in coffee, no sugar.
+  </note>
+  </recalled_memories>
+  ```
+
+  - The index (`engine\memory-index.sqlite`, bun:sqlite) mirrors the notes. Before each search it compares a stamp of the topic files (names, sizes, modification times) and re-parses them if anything changed, so hand edits are seen at once. FTS5 uses `porter unicode61 remove_diacritics 2`, ranked by `bm25` with title, body and topic weighted 2, 1 and 0.5. Vectors are 384 float32s stored as blobs, keyed by note id, so an unchanged note keeps its vector. New notes are embedded in the background, eight at a time. The index is warmed (synced, embedding started) on `configure`, after a save and after a tidy.
+  - Search: up to 20 keyword hits and the 20 nearest notes by cosine (a brute-force dot product over every vector, about a millisecond for thousands of notes) are merged by reciprocal-rank fusion (k = 60). Each score is multiplied by `1 + 0.3 × 0.5^(age in days / 60)` and by 1.3 for important notes. With vectors, a note needs a similarity of at least 0.53 (0.48 with a keyword hit) and within 0.12 of the best match. Without vectors, a note needs at least two of the message's keywords (one, for a one-word message). At most 4 notes and 2,400 characters go in, each note cut to 700.
+  - Notes recalled since the last compaction's first kept entry are not recalled again (`Thread.recalledInContext` reads the ids back from the stored user messages). The transcript, History titles and tidy strip the block the same way they strip the now line.
+  - Speed: the query vector waits at most 350 ms; past that the search goes on with keywords alone. When the shell says the embedder isn't ready (`embedder_not_ready`, the model still downloading) or recall is off, the engine doesn't ask again for a minute. Recall never fails a prompt. `thinking` goes out before the search, and an `abort` during it ends the prompt with `reply_end` (`aborted: true`) before anything reaches the model.
+  - `settings.memory.recall` off (`memoryRecall: false`): no search and no `embed` Requests; the shell unloads the model.
+- **`embed` Request** (engine → shell): `{ texts: string[], query: boolean }` → `{ model, dims: 384, vectors: string[] }`, each vector base64 of little-endian float32s, L2-normalised. With `query`, the shell prefixes each text with bge's instruction (`Represent this sentence for searching relevant passages: `). Errors: `embedder_not_ready` (the shell starts the download) and `recall_off`.
+- **Embedder** (shell, `recall/`). bge-small-en-v1.5, the int8 ONNX export from `Xenova/bge-small-en-v1.5` at a pinned commit (34 MB plus a 231 KB `vocab.txt`, both SHA-256 pinned), downloaded into `models\bge-small-en-v1.5\` with the voice models' downloader. It runs on the ONNX Runtime that sherpa-onnx links statically: the `ort` crate with `alternative-backend` is pointed at that runtime's `OrtGetApiBase`, so no second runtime ships. `wordpiece.rs` is a BERT uncased WordPiece tokenizer (lower-casing, accent stripping, punctuation and CJK splitting), checked token for token against the Hugging Face tokenizer; texts are cut to 256 tokens and run in batches of 32. The sentence vector is the `[CLS]` output, L2-normalised; the int8 model scales over the batch, so the same text can come out very slightly different (cosine 0.997) and vectors are never compared for equality. A query takes a few milliseconds and a load about 150-200 ms. `ort` builds its environment once per process: it refuses a second one, so reloading after an idle unload reuses it. It loads on summon and on hold to talk (so it is ready for the message), and unloads after 3 idle minutes like the voice models.
 - **Memory tools** (engine `customTools`):
-  - `memory_save { title, topic, content }`: appends a dated section to `memory\<topic>.md` (topic is a slug; created if new; names with `/`, `\` or `..`, and `memory` itself, are rejected) and adds or updates one index line in `MEMORY.md`: `- [<title>](<topic>.md): <one-line hook>`. The index is kept to about 150 lines (oldest lines drop off; their topic files stay). Emits `memory_saved { id, saveId, title }`; the eyes do the "noted" blink and the reply shows "Saved to memory: … Undo".
-  - `memory_read { topic }`: returns `memory\<topic>.md`, for when the index points to it.
-  - Undo (`memory_undo`) restores `MEMORY.md` and the topic file to their contents before that save (if they haven't changed since; otherwise it removes just that section and line). It works for saves in the current thread, across restarts (`engine\memory-undo.jsonl`); a save from another thread is refused. When it falls back to removing just that save and the topic file ends up empty, the file and its index line go.
+  - `memory_save { kind?, title, content, topic?, replaces?, important? }`. `kind` is `note` (the default), `profile` or `goal`.
+    - A note appends a dated section to `memory\<topic>.md` (topic is a slug and required for notes; created if new; names with `/`, `\` or `..`, and `memory`, `profile`, `goals` and `recap`, are rejected) and adds or updates one index line in `MEMORY.md`: `- [<title>](<topic>.md): <one-line hook>`. The index is kept to about 150 lines (oldest lines drop off; their topic files stay); it is for browsing the files, and the prompt lists topics instead.
+    - A profile line or goal is added to `PROFILE.md` / `GOALS.md`. With `replaces` (the old line's text, compared without its bullet, case or a trailing full stop) it replaces that line, or with empty `content` removes it; a `replaces` that matches nothing is an error. A line that is already there isn't added twice.
+    - Emits `memory_saved { id, saveId, title }`; the eyes do the "noted" blink and the reply shows "Saved to memory: … Undo".
+  - `memory_read { topic }`: returns `memory\<topic>.md`.
+  - `memory_search { query }`: the recall search with a lower bar (any keyword hit, or similarity 0.45), up to 8 notes and 6,000 characters, waiting up to 2 s for the query vector. For when the user asks what Winku remembers about something.
+  - Undo (`memory_undo`) restores the files to their contents before that save if they haven't changed since. Otherwise it removes just that note and index line, or for a profile or goal save puts back the line it replaced and removes the line it added. It works for saves in the current thread, across restarts (`engine\memory-undo.jsonl`); a save from another thread is refused. When it falls back to removing just that save and the topic file ends up empty, the file and its index line go.
   - The transcript shows each save as a `memory_saved` row, with `undone` set after Undo. A failed save (bad topic) stays an ordinary `tool` row.
-- **Caching rule.** The system prompt (instructions, About me, every voice profile, the `MEMORY.md` index) is a snapshot taken when the thread starts and again after a compaction. New memory reaches it only then; until then the `memory_saved` tool result in the conversation is how the model knows. A threshold compaction happens inside a run, and pi can't reload mid-run, so the new snapshot is applied once the run settles (from the next prompt). `about-me.md` that is only the starter comment is left out.
+- **Tidy** (`tidy.ts`). One pass reads a thread's conversation since its last pass (user and assistant text, and the memory saves as `[saved to memory as …]` lines; tool results, recalled notes and now lines left out; the last 24,000 characters), shows the Quick actions model the current profile and goals with line numbers and asks for one JSON object:
+
+  ```json
+  { "profile": [{ "op": "add", "text": "…" }, { "op": "replace", "line": 2, "text": "…" }, { "op": "remove", "line": 3 }],
+    "goals": [], "notes": [{ "topic": "work", "title": "…", "content": "…" }], "recap": { "title": "…", "summary": "…" } }
+  ```
+
+  - The ops are applied by the text of the line the model was shown, not its number, so a line saved while it was thinking survives. At most 5 notes; the recap goes to `RECAP.md` and to `threads.md` under the thread's id. A reply that isn't such an object fails the pass and changes nothing.
+  - When: after `clear` (on the thread just archived), after 10 idle minutes once a reply settles (any new prompt cancels the timer), and from Settings (`memory_tidy`, the current thread, even a short one). A clear or idle pass with under 40 characters of new user text marks the thread read without a model call. Passes run one at a time.
+  - Events: `memory_tidy { state: "running" | "done" | "failed", changed?, message? }`, and `memory_changed { reason: "tidy" }` when it changed something. When the current thread has no messages yet, the system prompt is rebuilt at once so the new thread starts with the update.
+  - `settings.memory.tidy` off (`memoryTidy: false`): no passes, the idle timer is dropped; `memory_tidy` from Settings still runs.
+- **Caching rule.** The system prompt (instructions, About me, every voice profile, the memory block) is a snapshot taken when the thread starts and again after a compaction (and after a tidy, while the thread is still empty). New memory reaches it only then; until then the `memory_saved` tool result in the conversation and recall are how the model knows. A threshold compaction happens inside a run, and pi can't reload mid-run, so the new snapshot is applied once the run settles (from the next prompt). `about-me.md` that is only the starter comment is left out. Recalled notes live in the stored user message, so they are part of the cached prefix like any message.
+- **Settings commands.** `memory_overview` → `MemoryOverview` (profile, goals and recap without their headings, every note newest first with a 140-character preview, the index counts, the last tidy and whether one is running). `memory_core_set { which, text }` writes a core file from the edited text (the heading is added back; empty text deletes the file). `memory_note_delete { topic, noteId }` removes one note. Each emits `memory_changed { reason: "edit" }`. Undo emits `memory_changed { reason: "undo" }`.
 - **Voice profiles** live in `voice\<name>.md`. `settings.voiceProfiles.byApp` maps a process name (`outlook.exe`) to a profile, else `default`. The shell picks the profile from the foreground app when an action starts and sends its name with `run_action`; rewriting actions (`useVoice`) get its contents. The assistant can only propose changes: `voice_propose { profile, content, reason }` emits `voice_proposal`, the bar shows Accept / Dismiss, and `voice_proposal_decision` writes the file only on Accept. Pending proposals are dropped on clear.
-- **Forget everything** (Settings, after a confirmation in the UI): `memory_forget_all` deletes everything in `memory\` and recreates an empty `MEMORY.md`. About me and voice profiles stay.
+- **Forget everything** (Settings, after a confirmation in the UI): `memory_forget_all` deletes everything in `memory\` and recreates an empty `MEMORY.md`, deletes the recall index and the tidy state, and emits `memory_changed { reason: "forget" }`. About me, voice profiles and the search model stay.
 - **Opening the files.** The shell's `open_data_path { what: "about_me" | "memory" | "voice" }` opens `about-me.md` in the default editor, or the `memory\` / `voice\` folder in Explorer.
 
 ## Voice
@@ -357,9 +401,11 @@ engine/src/
   mood.ts        streaming <mood:…> stripper (pure)
   nowline.ts     <now …> line appended to the user message, and its parser for transcripts
   faux.ts        scripted winku-faux provider for tests (configure accepts a test-only `faux` field)
-  prompt.ts      frozen system prompt (instructions, about-me, voice profiles, MEMORY.md snapshot)
+  prompt.ts      frozen system prompt (instructions, the memory block, voice profiles)
   actions.ts     one-off actions on the Quick model                       (step 4)
-  memory.ts      MEMORY.md index + topic files, save/undo/forget, memory tools (step 5)
+  memory.ts      core files, topic files and notes, MEMORY.md index, save/undo/forget, memory tools (step 5)
+  recall.ts      the recall index (SQLite FTS5 + vectors), hybrid search, the <recalled_memories> block
+  tidy.ts        tidy passes: conversation text, the Quick-model prompt, plan parsing and applying
   voice.ts       voice profiles, proposals, voice_propose tool              (step 5)
   requests.ts    engine → shell Requests, correlated with their Responses (timeouts, abort)
   tools/         agent tools: index (assembly), shell (PowerShell/bash choice), find (glob backend),
@@ -392,6 +438,10 @@ app/src-tauri/src/
     tts.rs       cpal player, Supertonic, OneCore (WinRT) / spd-say
     models.rs    model table: pinned URLs, sizes, SHA-256s, files kept
     download.rs  streaming download, checksum, .tar.bz2 unpack, progress throttle
+  recall/        the memory search model                                     (step 5)
+    mod.rs       download, load-once/unload-when-idle, warm-up, the embed Request
+    embedder.rs  bge-small-en-v1.5 on sherpa-onnx's ONNX Runtime through ort
+    wordpiece.rs BERT uncased WordPiece tokenizer
 
 app/ui/src/
   main/          the main window: Eyes, Bar, Transcript, Connect form, toasts
@@ -402,7 +452,7 @@ app/ui/src/
 
 ## Testing and CI
 
-- Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index) get unit tests. Everything also runs against the compiled binary in CI. Computer use is tested against a fake agent-desktop (`test/fake-agent-desktop.ts`, run with bun): arguments, stdin, targeting, Winku's windows refused, skeleton fallback, error advice, the permission gate, abort.
+- Engine: `bun test` against pi-ai's scripted test model (`winku-faux`), no keys or network. Pure modules (mood stripper, prompt builder, memory index, note parsing, recall ranking, tidy plans) get unit tests. Recall runs through the engine with a fake embedder that answers `embed` Requests (hashed bag of words), and tidy with a scripted JSON reply. Everything also runs against the compiled binary in CI. Computer use is tested against a fake agent-desktop (`test/fake-agent-desktop.ts`, run with bun): arguments, stdin, targeting, Winku's windows refused, skeleton fallback, error advice, the permission gate, abort.
 - Computer use end to end (CI `windows-build`, under a minute): `WINKU_AGENT_DESKTOP_BIN=… bun run test/desktop-e2e.ts` in `engine` drives the real agent-desktop through the tool code: launches Notepad, observes it, sets text, observes again, types, observes again, checks that abort stops a wait, and prints CLI and MCP latencies (`LATENCY {…}` in the log).
 - Shell: `cargo test` for pure logic (settings defaults and migration, snapping, tap/hold timing, hotkey parsing, resampling and levels, the model table, downloads against an in-memory server, idle unload with an injected clock). Platform code is behind traits so the logic is testable on Linux. Linux builds need `libasound2-dev` for cpal.
 - Voice end to end (downloads about 200 MB, so not in CI): `WINKU_VOICE_E2E=/tmp/winku-e2e cargo test --release e2e -- --ignored --nocapture` in `app/src-tauri` installs moonshine-base and Supertonic, has Supertonic read a sentence with numbers through the playback resampler (writing `playback-48k.wav`) and checks that Moonshine transcribes it. `... cargo test tricky -- --ignored --nocapture` with the same variable installs both Supertonic models and Whisper base.en, reads a fixed set of tricky sentences (short replies, URLs, paths, versions, dates, equations, emoji) through `to_speech` and Supertonic, writes `tricky/<model>/NN.wav` for listening and `tricky/report.txt` with what Whisper heard and a rough word recall.
@@ -410,7 +460,7 @@ app/ui/src/
 - UI audit: with Vite running, `cd app && BASE_URL=http://localhost:5173 bun run ui-audit` checks keyboard activation, Tab out of hotkey fields, accessible field names, long content staying inside its box, and AA text contrast. docs/research/design-review.md has the last full design review.
 - Eyes motion budget: `cd app && bun run motion-check` starts Vite and drives the mock shell in Chromium. It checks that the resting pill runs no animations, that the idle bar runs no endless loop, that the speaking bounce runs only while the bar shows, that "reduce motion" stops every loop, that nothing draws frames at rest, and that the dot field lights up during a reply. Windows CI also samples idle CPU for the whole process tree with the pill showing (`scripts/measure-memory.ps1`).
 - Eyes gallery: `http://127.0.0.1:5173/eyes.html` under `bun run ui:dev` shows every state, tint and lid level at pill size (`?animate=1` turns the loops on). It is dev-only and not part of the build.
-- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `action-show`, `action-no-selection`, `memory-saved`, `eyes` (the gallery), `settings`, `settings-conversation`, `settings-memory`, `settings-actions`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout. Mock URL parameters `?size=medium|large`, `?left` and `?low` show the other eye sizes and growth directions.
+- Screenshots: `cd app && bun run ui:dev` (http://127.0.0.1:5173), then `bun run screenshots [before|after] [case …]`. Output goes to `app/.screenshots/<label>/`. Outside Tauri the UI runs on the browser mock shell (`app/ui/src/lib/mock.ts`), with canned replies, transcript and history, so no keys or engine are needed. Cases: `pill`, `pill-full-context`, `bar`, `reply`, `error`, `cleared`, `chips`, `transcript`, `connect`, `action-show`, `action-no-selection`, `memory-saved`, `eyes` (the gallery), `settings`, `settings-conversation`, `settings-memory`, `settings-memory-notes`, `settings-memory-forget`, `settings-memory-empty`, `settings-actions`, `settings-keys-warnings`, `history`. Sizes are a normal and a high-DPI desktop; Winku has no mobile layout. Mock URL parameters `?size=medium|large`, `?left` and `?low` show the other eye sizes and growth directions; `?nomemory` and `?nomodel` show an empty memory and the search model not downloaded.
 - Brand and README pictures: `cd app && bun run brand` renders the mark, the social card and the app icons in `app/src-tauri/icons/` from the SVGs in `docs/brand/`. With `bun run ui:dev` running, `bun run readme-media` captures the pictures for the user docs into `docs/media/`. See [brand/BRAND.md](brand/BRAND.md).
 - Windows desktop screenshots: CI's `windows-build` job runs `app/scripts/windows-shots.ps1` against the release build (resting pill, the bar after a tap of the summon key, closed again, plus a burst of about 24 frames during the open and the close) and uploads them as the `windows-shots` artifact.
 - CI: the Windows job builds everything, runs all tests, runs the smoke test and records idle memory and CPU. A Linux job runs the same checks faster.

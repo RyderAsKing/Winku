@@ -246,6 +246,26 @@ export interface ConfigureCommand {
 	assistantStyle: string;
 	/** settings.voiceProfiles.default: the profile (file stem in voice\) used when no app rule matches. */
 	defaultVoiceProfile?: string;
+	/** settings.memory.recall: add related notes to each message (SPEC §9). Absent = on. */
+	memoryRecall?: boolean;
+	/** settings.memory.tidy: update the profile, goals and recap in the background with the Quick model. Absent = on. */
+	memoryTidy?: boolean;
+}
+
+/** Which core memory file (SPEC §9). */
+export type MemoryCore = "profile" | "goals" | "recap";
+
+/** Settings > Memory and voice: what memory holds. Profile, goals and recap are without their heading. */
+export interface MemoryOverview {
+	profile: string;
+	goals: string;
+	recap: string;
+	notes: { id: string; topic: string; title: string; date: number; preview: string; important: boolean }[];
+	/** Notes in the search index, and how many have a vector (the rest are found by keyword only). */
+	indexed: { notes: number; embedded: number };
+	/** When tidy last finished, ms since the epoch. */
+	lastTidy: number | null;
+	tidying: boolean;
 }
 
 /** How much of a spoken reply is said (settings.voice.say, SPEC §11). */
@@ -330,6 +350,14 @@ export type Command =
 	| { type: "memory_undo"; id?: string; saveId: string }
 	/** Wipe memory\ entirely (Settings > Forget everything, after the UI's confirmation). Result data: { removed: number } (files). */
 	| { type: "memory_forget_all"; id?: string }
+	/** Result data: MemoryOverview. */
+	| { type: "memory_overview"; id: string }
+	/** Replace a core file (Settings), its text without the heading. Empty text clears it. Emits memory_changed. */
+	| { type: "memory_core_set"; id?: string; which: MemoryCore; text: string }
+	/** Delete one note from its topic file (Settings). Emits memory_changed. */
+	| { type: "memory_note_delete"; id?: string; topic: string; noteId: string }
+	/** Tidy now (Settings): the current thread since its last tidy. Result data: { changed: boolean }. */
+	| { type: "memory_tidy"; id?: string }
 	/** Accept writes voice\<profile>.md with the proposed content; Dismiss drops it. Result data: { written: boolean }. */
 	| { type: "voice_proposal_decision"; id?: string; proposalId: string; accept: boolean }
 	/** Result data: VoiceProfileInfo[] for the files in voice\, sorted by name. */
@@ -398,6 +426,10 @@ export type Event =
 	/** The model saved a memory (memory_save tool) during reply `id`. */
 	| { type: "memory_saved"; id?: string; saveId: string; title: string }
 	| { type: "memory_undone"; saveId: string }
+	/** Memory files changed outside a reply (tidy, Settings, undo, forget): Settings refreshes. */
+	| { type: "memory_changed"; reason: "tidy" | "edit" | "undo" | "forget" }
+	/** Tidy started or finished (Settings shows it). */
+	| { type: "memory_tidy"; state: "running" | "done" | "failed"; changed?: boolean; message?: string }
 	/** The model proposed a change to a voice profile (voice_propose tool). `current` is the file as it is now ("" if new). */
 	| { type: "voice_proposal"; id?: string; proposalId: string; profile: string; content: string; current: string; reason: string }
 	| { type: "error"; id?: string; errorKind: ErrorKind; message: string }
@@ -439,7 +471,14 @@ export type Request =
 	| { type: "request"; id: string; method: "visual_show"; params: VisualShowParams }
 	/** Ask before running. Response data: { decision: "allow_once" | "always" | "deny" }.
 	 *  On "always" the UI also adds allowKey to settings.alwaysAllow. */
-	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest };
+	| { type: "request"; id: string; method: "permission"; params: ToolPermissionRequest }
+	/**
+	 * Sentence vectors from the shell's embedder (bge-small-en-v1.5), for recall. `query` adds
+	 * bge's search instruction. Response data: { model, dims: 384, vectors: string[] }, each the
+	 * base64 of 384 little-endian f32, L2-normalised. Error "embedder_not_ready" while the model
+	 * downloads, "recall_off" when recall is switched off.
+	 */
+	| { type: "request"; id: string; method: "embed"; params: { texts: string[]; query: boolean } };
 
 export interface VisualShowParams {
 	/** The reply the visual belongs to. */

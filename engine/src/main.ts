@@ -33,7 +33,7 @@ async function handle(message: Command): Promise<unknown> {
 			return undefined;
 		case "prompt": {
 			if (!engine.configured) throw new Error("Engine is not configured");
-			return { steered: engine.replies.prompt(message) };
+			return { steered: await engine.prompt(message) };
 		}
 		case "notice":
 			await engine.notice(message.text);
@@ -43,7 +43,7 @@ async function handle(message: Command): Promise<unknown> {
 			const { action } = message;
 			if (action.output === "agent") {
 				const text = `${action.prompt}\n\nSelected text:\n"""\n${message.selection}\n"""`;
-				return { steered: engine.replies.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
+				return { steered: await engine.prompt({ type: "prompt", id: message.id, text, now: message.now }) };
 			}
 			engine.runOneOff({ ...message, action: { ...action, output: action.output } });
 			return { steered: false };
@@ -75,6 +75,16 @@ async function handle(message: Command): Promise<unknown> {
 			return undefined;
 		case "memory_forget_all":
 			return { removed: engine.forgetMemory() };
+		case "memory_overview":
+			return engine.memoryOverview();
+		case "memory_core_set":
+			engine.setMemoryCore(message.which, message.text);
+			return undefined;
+		case "memory_note_delete":
+			engine.deleteMemoryNote(message.topic, message.noteId);
+			return undefined;
+		case "memory_tidy":
+			return engine.tidyNow();
 		case "voice_proposal_decision":
 			return engine.voiceDecision(message.proposalId, message.accept);
 		case "voice_list":

@@ -10,6 +10,8 @@ use serde::Serialize;
 pub enum Kind {
     Stt,
     Tts,
+    /// Sentence embeddings for memory search (`recall`); not in `MODELS`.
+    Embed,
 }
 
 impl Kind {
@@ -17,6 +19,7 @@ impl Kind {
         match self {
             Kind::Stt => "stt",
             Kind::Tts => "tts",
+            Kind::Embed => "embed",
         }
     }
 }
@@ -35,8 +38,7 @@ pub struct Asset {
 pub enum Unpack {
     /// A .tar.bz2: keep only these file names (wherever they sit in the archive).
     TarBz2(&'static [&'static str]),
-    /// A plain file, saved under this name (for a model that ships a loose file; none does now).
-    #[allow(dead_code)]
+    /// A plain file, saved under this name (the memory search model's files).
     File(&'static str),
 }
 
@@ -69,6 +71,11 @@ pub enum Recipe {
         tts_json: &'static str,
         unicode_indexer: &'static str,
         voice_style: &'static str,
+    },
+    /// A BERT sentence-embedding model run by `recall::embedder` (not sherpa-onnx).
+    Embedder {
+        model: &'static str,
+        vocab: &'static str,
     },
 }
 
@@ -328,6 +335,7 @@ mod tests {
                     unicode_indexer,
                     voice_style,
                 ],
+                Recipe::Embedder { model, vocab } => vec![model, vocab],
             };
             for file in used {
                 assert!(files.contains(&file), "{} needs {file}", model.id);

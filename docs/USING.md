@@ -52,7 +52,7 @@ Winku remembers you between conversations. It keeps a short profile of lasting f
 
 Winku saves on its own and when you say "remember…", and each reply shows what it saved, with an Undo. After a conversation goes quiet or you clear it, Winku also tidies up: it updates the profile and goals, adds notes worth keeping and writes the recap.
 
-It's all plain markdown. Settings > Memory and voice lets you edit the profile, goals and recap, delete notes, run a tidy, open the folder and the "About me" file, and pick your writing voice profiles. Both the search and the tidying can be turned off there.
+It's all plain markdown. Settings > Memory and voice lets you edit the profile, goals and recap, delete notes, run a tidy, see the notes as a map (each topic a hub, with dotted lines between related notes in different topics), try a message to see exactly what Winku would add to it (and which notes came close but were left out, and why), open the folder and the "About me" file, and pick your writing voice profiles. Both the search and the tidying can be turned off there.
 
 ## The right-click menu
 

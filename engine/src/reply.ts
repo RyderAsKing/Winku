@@ -36,9 +36,10 @@ interface ActiveReply {
 	promptSpoken: boolean;
 }
 
-export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken" | "speak" | "scheduled">): string {
+/** The user message as the model sees it: the text, the recalled notes (recall.ts), then the now line. */
+export function userMessageText(command: Pick<PromptCommand, "text" | "now" | "spoken" | "speak" | "scheduled">, recalled = ""): string {
 	const text = command.scheduled ? formatScheduled(command.scheduled, command.text) : command.text;
-	return `${text}${formatNow(command.now, command.spoken === true, command.speak)}`;
+	return `${text}${recalled}${formatNow(command.now, command.spoken === true, command.speak)}`;
 }
 
 export class Replies {
@@ -87,7 +88,7 @@ export class Replies {
 	 * (tool calls returned, or the streamed text finished), before the next model call. The running
 	 * reply then ends and this prompt's id carries the rest of the run. Returns whether it steered.
 	 */
-	prompt(command: PromptCommand): boolean {
+	prompt(command: PromptCommand, recalled = ""): boolean {
 		const session = this.session;
 		if (!session) throw new Error("Engine is not configured");
 		const images: ImageContent[] = (command.images ?? []).map((image) => ({
@@ -101,7 +102,7 @@ export class Replies {
 		this.promptInfo.set(command.id, { scheduled: command.scheduled, promptSpoken: command.spoken === true });
 		if (!steered) this.emit({ type: "thinking", id: command.id });
 		session
-			.prompt(userMessageText(command), {
+			.prompt(userMessageText(command, recalled), {
 				images,
 				expandPromptTemplates: false,
 				...(steered ? { streamingBehavior: "steer" as const } : {}),

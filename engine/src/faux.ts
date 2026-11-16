@@ -48,6 +48,8 @@ export interface FauxOptions {
 	supportsImages?: boolean;
 	/** pi's compaction keepRecentTokens (default 20000), so tests can compact a tiny context. */
 	keepRecentTokens?: number;
+	/** Quiet spell before an idle tidy (default 10 minutes), so tests can tidy in milliseconds. */
+	tidyIdleMs?: number;
 }
 
 function userText(message: Message | undefined): { text: string; images: number } {

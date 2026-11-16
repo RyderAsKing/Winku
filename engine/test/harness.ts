@@ -35,6 +35,8 @@ export function fauxConfig(dataDir: string, extra: Partial<Configure> = {}): Con
 		askBeforeRunning: false,
 		alwaysAllow: [],
 		assistantStyle: "",
+		// Tidy makes its own model call, which would take a scripted reply; tests that want it say so.
+		memoryTidy: false,
 		...extra,
 	};
 }

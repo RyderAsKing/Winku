@@ -11,17 +11,20 @@ import {
 	createExtensionRuntime,
 	type ModelRuntime,
 	type ResourceLoader,
+	type SessionEntry,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { type ActionSetup, Actions, type OneOffAction } from "./action.ts";
 import { FAUX_PROVIDER, type FauxOptions } from "./faux.ts";
-import { ensureStarterFiles, MemoryStore, memoryTools } from "./memory.ts";
+import { CORE_FILES, type CoreKind, coreBody, coreForPrompt, coreFromBody, ensureStarterFiles, MemoryStore, memoryTools } from "./memory.ts";
 import { buildSystemPrompt } from "./prompt.ts";
-import type { ConfigureCommand, Event, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
+import type { Command, ConfigureCommand, Event, MemoryCore, MemoryOverview, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
+import { type Embed, formatRecalled, RecallIndex } from "./recall.ts";
 import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
-import { capContextWindow, clampThinking, createRuntime, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
+import { capContextWindow, clampThinking, createRuntime, errorOf, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
 import { NOTICE_TYPE, Thread } from "./thread.ts";
+import { IDLE_DELAY_MS, Tidy, type TidyModel, type TidyReason } from "./tidy.ts";
 import { cliRunner, findAgentDesktop } from "./tools/desktop/cli.ts";
 import { installImageDrop } from "./tools/images.ts";
 import { activeToolNames, type AnyTool, agentTools } from "./tools/index.ts";
@@ -33,7 +36,18 @@ import { VoiceProfiles, voiceTools } from "./voice.ts";
 export type EngineConfig = ConfigureCommand & { faux?: FauxOptions };
 
 /** configure fields that update in place, without reopening the session (so a running reply carries on). */
-const LIVE_FIELDS = ["id", "type", "askBeforeRunning", "alwaysAllow", "searchApiKey"] as const;
+const LIVE_FIELDS = ["id", "type", "askBeforeRunning", "alwaysAllow", "searchApiKey", "memoryRecall", "memoryTidy"] as const;
+
+/** The memory tools, active in every thread. */
+const MEMORY_TOOLS = ["memory_save", "memory_read", "memory_search", "voice_propose"];
+
+type PromptCommand = Extract<Command, { type: "prompt" }>;
+
+/** Vectors arrive as base64 of little-endian f32 (protocol.ts `embed`). */
+function decodeVector(b64: unknown): Float32Array {
+	const bytes = new Uint8Array(Buffer.from(String(b64), "base64"));
+	return new Float32Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 4));
+}
 
 /** JSON with object keys sorted at every level, so key order doesn't matter. */
 function canonical(value: unknown): string {
@@ -85,6 +99,12 @@ export class Engine {
 	private reloadPending = false;
 	private quick: ModelChoice | undefined;
 	private memory: MemoryStore | undefined;
+	private recall: RecallIndex | undefined;
+	private tidy: Tidy | undefined;
+	/** Starts a tidy after a quiet spell (IDLE_DELAY_MS, or faux.tidyIdleMs in tests). */
+	private idleTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Counts aborts, so a prompt still searching memory knows Esc came. */
+	private aborts = 0;
 	private voice: VoiceProfiles | undefined;
 	/** Ask before running + Always allow; read by the permission gate on every call. */
 	private policy: PermissionPolicy = policyFrom(false, []);
@@ -106,6 +126,7 @@ export class Engine {
 				this.emitContext();
 				this.flushTools();
 				void this.flushReload();
+				this.armIdleTidy();
 			},
 			(ok) => {
 				if (ok) void this.refreezePrompt();
@@ -117,7 +138,7 @@ export class Engine {
 		return !!this.session;
 	}
 
-	/** Re-reads about-me.md, the voice profiles and MEMORY.md: a new snapshot. */
+	/** Re-reads about-me.md, the voice profiles and the core memory files: a new snapshot. */
 	private freshPrompt(): string {
 		let aboutMe = "";
 		try {
@@ -125,11 +146,15 @@ export class Engine {
 		} catch {}
 		// The starter template is only an HTML comment; leave it out until the user writes something.
 		aboutMe = aboutMe.replace(/<!--[\s\S]*?-->/g, "");
+		const memory = this.requireMemory();
 		return buildSystemPrompt({
 			assistantStyle: this.config.assistantStyle ?? "",
 			aboutMe,
 			voiceProfiles: this.requireVoice().all(),
-			memoryIndex: this.requireMemory().index(),
+			profile: coreForPrompt("profile", memory.core("profile")),
+			goals: coreForPrompt("goals", memory.core("goals")),
+			recap: coreForPrompt("recap", memory.core("recap")),
+			noteTopics: memory.topics(),
 		});
 	}
 
@@ -151,6 +176,138 @@ export class Engine {
 	private applyLive(config: EngineConfig): void {
 		this.policy = policyFrom(!!config.askBeforeRunning, config.alwaysAllow ?? []);
 		this.searchApiKey = config.searchApiKey || undefined;
+		if (config.memoryTidy === false) this.disarmIdleTidy();
+	}
+
+	private get recallOn(): boolean {
+		return this.config?.memoryRecall !== false;
+	}
+
+	private get tidyOn(): boolean {
+		return this.config?.memoryTidy !== false;
+	}
+
+	/** The shell's embedder (protocol `embed`). */
+	private readonly embed: Embed = async (texts, query, timeoutMs) => {
+		if (!this.recallOn) throw new Error("recall_off");
+		const data = (await this.requests.request("embed", { texts, query }, { timeoutMs })) as { vectors?: unknown } | undefined;
+		if (!Array.isArray(data?.vectors) || data.vectors.length !== texts.length) throw new Error("The embedder sent no vectors");
+		return data.vectors.map(decodeVector);
+	};
+
+	/**
+	 * Send a prompt with the notes that relate to it (SPEC §9 Recall). Steers like Replies.prompt.
+	 * Recall waits at most QUERY_TIMEOUT_MS for the shell and never fails the prompt.
+	 */
+	async prompt(command: PromptCommand): Promise<boolean> {
+		this.disarmIdleTidy();
+		let recalled = "";
+		if (this.recallOn && this.recall && this.memory?.topics().length) {
+			const generation = this.aborts;
+			// The eyes start thinking at once, not after the search.
+			if (!this.replies.busy) this.emit({ type: "thinking", id: command.id });
+			const selection = command.now?.selection ? `\n${command.now.selection.slice(0, 500)}` : "";
+			const notes = await this.recall.search(`${command.text}${selection}`, { exclude: this.thread.recalledInContext() });
+			if (generation !== this.aborts) {
+				// Esc while searching: the prompt never went out.
+				this.emit({ type: "reply_end", id: command.id, text: "", aborted: true });
+				return false;
+			}
+			recalled = formatRecalled(notes);
+		}
+		return this.replies.prompt(command, recalled);
+	}
+
+	private disarmIdleTidy(): void {
+		if (this.idleTimer) clearTimeout(this.idleTimer);
+		this.idleTimer = undefined;
+	}
+
+	/** After a reply settles: tidy the thread once it has been quiet for a while. */
+	private armIdleTidy(): void {
+		this.disarmIdleTidy();
+		if (!this.tidyOn || !this.tidy) return;
+		const delay = this.config.faux?.tidyIdleMs ?? IDLE_DELAY_MS;
+		this.idleTimer = setTimeout(() => {
+			this.idleTimer = undefined;
+			if (this.replies.busy || !this.session) return;
+			void this.runTidy(this.thread.sessionId, () => this.thread.entries(), "idle");
+		}, delay);
+		// Don't keep the process alive for it.
+		(this.idleTimer as { unref?: () => void }).unref?.();
+	}
+
+	private tidyModel(): TidyModel {
+		const quick = this.quickChoice();
+		const model = resolveModel(this.runtime, this.config.provider, quick.id);
+		return { runtime: this.runtime, model, thinking: clampThinking(model, quick.thinking) };
+	}
+
+	/** Run a tidy pass and report it. Resolves with whether memory changed; never rejects. */
+	private async runTidy(sessionId: string, entries: () => SessionEntry[], reason: TidyReason, force = false): Promise<boolean> {
+		const tidy = this.tidy;
+		if (!tidy) return false;
+		this.emit({ type: "memory_tidy", state: "running" });
+		try {
+			const changed = await tidy.run({ sessionId, entries }, reason, () => this.tidyModel(), { force });
+			this.emit({ type: "memory_tidy", state: "done", changed });
+			if (changed) {
+				this.emit({ type: "memory_changed", reason: "tidy" });
+				if (this.recallOn) this.recall?.warm();
+				// A thread with no messages yet has no cache to break: give it the new memory now.
+				if (this.thread && !this.thread.entries().some((e) => e.type === "message")) await this.refreezePrompt();
+			}
+			return changed;
+		} catch (error) {
+			const message = errorOf(error).message;
+			this.emit({ type: "memory_tidy", state: "failed", message });
+			return false;
+		}
+	}
+
+	/** Settings > Memory: what memory holds. */
+	memoryOverview(): MemoryOverview {
+		this.requireSession();
+		const memory = this.requireMemory();
+		const notes = memory
+			.notes()
+			.sort((a, b) => b.date - a.date)
+			.map((n) => ({
+				id: n.id,
+				topic: n.topic,
+				title: n.title,
+				date: n.date,
+				preview: n.body.replace(/\s+/g, " ").trim().slice(0, 140),
+				important: n.important,
+			}));
+		return {
+			profile: coreBody("profile", memory.core("profile")),
+			goals: coreBody("goals", memory.core("goals")),
+			recap: coreBody("recap", memory.core("recap")),
+			notes,
+			indexed: this.recall?.stats() ?? { notes: 0, embedded: 0 },
+			lastTidy: this.tidy?.lastTidy ?? null,
+			tidying: this.tidy?.running ?? false,
+		};
+	}
+
+	setMemoryCore(which: MemoryCore, text: string): void {
+		this.requireSession();
+		if (!(which in CORE_FILES)) throw new Error(`Unknown memory file "${which}"`);
+		this.requireMemory().setCore(which as CoreKind, coreFromBody(which as CoreKind, text));
+		this.emit({ type: "memory_changed", reason: "edit" });
+	}
+
+	deleteMemoryNote(topic: string, noteId: string): void {
+		this.requireSession();
+		this.requireMemory().deleteNote(topic, noteId);
+		this.emit({ type: "memory_changed", reason: "edit" });
+	}
+
+	/** Settings "Tidy now": the current thread since its last pass, even a short one. */
+	async tidyNow(): Promise<{ changed: boolean }> {
+		this.requireSession();
+		return { changed: await this.runTidy(this.thread.sessionId, () => this.thread.entries(), "manual", true) };
 	}
 
 	async configure(config: EngineConfig): Promise<void> {
@@ -186,11 +343,16 @@ export class Engine {
 			this.thread = new Thread(config.dataDir);
 			const memory = new MemoryStore(config.dataDir);
 			this.memory = memory;
+			this.recall?.close();
+			this.recall = new RecallIndex(memory, RecallIndex.pathFor(config.dataDir), this.embed);
+			this.tidy = new Tidy(config.dataDir, () => memory);
 			this.voice = new VoiceProfiles(config.dataDir);
 			this.thread.undoneSaves = () => memory.undone();
 			this.systemPrompt = this.threadPrompt();
 		}
 		await this.openSession(clampThinking(model, config.main.thinking));
+		// Notes edited while Winku was closed get their vectors before the first message.
+		if (this.recallOn) this.recall?.warm();
 		this.emit(this.readyEvent());
 		this.emitContext();
 	}
@@ -229,7 +391,7 @@ export class Engine {
 			}),
 			sessionManager: this.thread.manager,
 			customTools: this.tools(),
-			tools: [...this.agentToolList.map((t) => t.name), "memory_save", "memory_read", "voice_propose"],
+			tools: [...this.agentToolList.map((t) => t.name), ...MEMORY_TOOLS],
 		});
 		installImageDrop(session);
 		this.session = session;
@@ -244,7 +406,7 @@ export class Engine {
 		const session = this.session;
 		if (!this.toolsPending || !session || session.isStreaming || session.isCompacting) return;
 		this.toolsPending = false;
-		const wanted = [...activeToolNames(this.agentToolList, !!this.searchApiKey), "memory_save", "memory_read", "voice_propose"];
+		const wanted = [...activeToolNames(this.agentToolList, !!this.searchApiKey), ...MEMORY_TOOLS];
 		const current = session.getActiveToolNames();
 		if (current.length === wanted.length && wanted.every((name) => current.includes(name))) return;
 		session.setActiveToolsByName(wanted);
@@ -281,6 +443,12 @@ export class Engine {
 			(save) => {
 				const id = this.replies.activeId;
 				this.emit({ type: "memory_saved", ...(id ? { id } : {}), saveId: save.saveId, title: save.title });
+				if (this.recallOn) this.recall?.warm();
+			},
+			async (query) => {
+				const notes = (await this.recall?.search(query, { limit: 8, budget: 6000, timeoutMs: 2000, loose: true })) ?? [];
+				if (!notes.length) return "Nothing in memory matches that.";
+				return notes.map((n) => `## ${n.topic}: ${n.title} (${new Date(n.date).toISOString().slice(0, 10)})\n${n.body}`).join("\n\n");
 			},
 		);
 		const voice = voiceTools(
@@ -308,11 +476,16 @@ export class Engine {
 		this.requireSession();
 		this.requireMemory().undo(saveId, this.thread.sessionId);
 		this.emit({ type: "memory_undone", saveId });
+		this.emit({ type: "memory_changed", reason: "undo" });
 	}
 
 	forgetMemory(): number {
 		this.requireSession();
-		return this.requireMemory().forgetAll();
+		const removed = this.requireMemory().forgetAll();
+		this.recall?.reset();
+		this.tidy?.reset();
+		this.emit({ type: "memory_changed", reason: "forget" });
+		return removed;
 	}
 
 	voiceDecision(proposalId: string, accept: boolean): { written: boolean } {
@@ -392,11 +565,19 @@ export class Engine {
 	}
 
 	async clear(): Promise<{ undoToken: string }> {
-		let result = { undoToken: "" };
+		let result: { undoToken: string; archivedFile?: string } = { undoToken: "" };
+		const archivedId = this.thread.sessionId;
+		this.disarmIdleTidy();
 		await this.swapThread("clear", () => {
 			result = this.thread.clear();
 		});
-		return result;
+		// Tidy the thread just cleared, in the background (SPEC §9 Tidy).
+		const file = result.archivedFile;
+		if (file && this.tidyOn) {
+			const thread = this.thread;
+			void this.runTidy(archivedId, () => thread.entries(file), "clear");
+		}
+		return { undoToken: result.undoToken };
 	}
 
 	async undoClear(token: string): Promise<void> {
@@ -451,6 +632,7 @@ export class Engine {
 
 	/** Stop whatever is running: the reply and any one-off actions. */
 	async abort(): Promise<void> {
+		this.aborts++;
 		this.actions.abort();
 		await this.replies.abort();
 	}
@@ -465,6 +647,8 @@ export class Engine {
 	}
 
 	async dispose(): Promise<void> {
+		this.disarmIdleTidy();
 		await this.stop();
+		this.recall?.close();
 	}
 }

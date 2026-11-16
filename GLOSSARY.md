@@ -63,3 +63,33 @@ _Avoid_: Fire, execution, trigger
 **Notice**:
 A one-line row the scheduler adds to the thread, such as a missed wakeup or a stopped task, which the model also sees.
 _Avoid_: Alert, toast (a toast is the bar's temporary message)
+
+## Memory
+
+**Memory**:
+Everything Winku keeps about the user between threads: the profile, goals, recap and notes. About me is the user's own file and not part of it.
+_Avoid_: Knowledge base, brain, context
+
+**Profile**:
+Short, lasting facts about the user that Winku keeps up to date (where they live, what they work on, how they like answers), known in every message.
+_Avoid_: About me (that one the user writes), user model, persona
+
+**Goal**:
+Something the user is working toward right now ("ship 0.2 by Friday"), known in every message until it is done or dropped.
+_Avoid_: Task (a task is a scheduled wakeup), todo, commitment
+
+**Recap**:
+A few sentences on what happened in a recent thread, written when Winku tidies its memory and known when the next thread starts.
+_Avoid_: Session summary, compaction summary (pi's summary inside one thread)
+
+**Note**:
+One dated entry in a topic file: a detail worth keeping that is too specific for the profile. Notes are recalled only when they relate to a message.
+_Avoid_: Memory (for a single entry), fact, archive
+
+**Recall**:
+Winku finding the notes that relate to a message, by meaning and by keyword, and adding them to that message before the model sees it.
+_Avoid_: Retrieval, RAG, lookup
+
+**Tidy**:
+A background pass, when the user clears the thread or goes quiet, that reads the conversation and updates the profile, goals and recap, and adds notes.
+_Avoid_: Consolidation, compaction (pi's shrinking of a long thread), cleanup

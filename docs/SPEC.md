@@ -132,7 +132,7 @@ An action is a config entry with a name, a prompt, a key slot, an output mode an
 
 - There is one thread, it survives restarts, and it lasts until you clear it.
 - A message sent while a reply is running steers it: the model gets it as soon as its current step ends and carries on from there. Nothing already written is cut off; `Esc` still stops.
-- **Request layout:** the system prompt comes first and stays the same for the whole session. It holds the instructions, tools, About me, the voice profiles and the `MEMORY.md` index as it was when the session started. After that comes the conversation, which is only ever appended to. This keeps provider prompt caching working.
+- **Request layout:** the system prompt comes first and stays the same for the whole thread. It holds the instructions, tools, the voice profiles and the memory block: About me, the profile, the goals, the recap and the list of note topics, as they were when the thread started. After that comes the conversation, which is only ever appended to. Notes recalled for a message ride at the end of that message, like the now line. This keeps provider prompt caching working.
 - **Context size:** the Main model's context window is capped at 250k tokens by default, adjustable in Settings. A model with a smaller window uses its own.
 - **Compaction:** pi auto-compacts at its default threshold, adjustable in Settings. The meter and the eyelids both show how full the context is.
 - **Visuals at compaction:** a visual shrinks to its title in the model's copy of the thread, the way screenshots are dropped; the file and History keep the whole page.
@@ -141,7 +141,7 @@ An action is a config entry with a name, a prompt, a key slot, an output mode an
 
 ## 9. Memory and voice
 
-All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in any editor.
+All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in any editor. The markdown is the memory; everything else is derived from it and rebuilt when it changes.
 
 ```
 %APPDATA%\winku\
@@ -149,17 +149,26 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
   about-me.md            yours; the assistant only reads it
   voice\casual.md        your voice profiles (rules + samples), chosen by active app
   voice\work.md
-  memory\MEMORY.md       index, about 150 lines max, always in the system prompt
-  memory\<topic>.md      details, read only when the index points to them
+  memory\PROFILE.md      lasting facts about you, in every message
+  memory\GOALS.md        what you are working toward, in every message
+  memory\RECAP.md        what happened in the last thread, in every message
+  memory\MEMORY.md       index of the topic files, for you to browse
+  memory\<topic>.md      notes, dated sections; recalled when they relate to a message
+  memory\threads.md      a recap of each past thread, recalled like notes
   tasks.json             scheduled tasks (section 7); never the output of a watch
-  engine\                pi agent dir + sessions (internal)
-  models\                downloaded STT/TTS models
+  engine\                pi agent dir + sessions + the memory search index (internal)
+  models\                downloaded STT/TTS models and the memory search model
 ```
 
-- **Writing memory:** the assistant writes memory on its own and when you ask it to "remember…". Each save shows a "Saved to memory: …" row with Undo, and the eyes do the "noted" blink.
+- **Always known:** the memory block (About me, profile, goals, recap and the list of note topics) is in every request, in the frozen system prompt, so the assistant knows who you are on an ordinary question, not only when you ask about yourself. It is told to treat the block as things it already knows. The block stays small: the profile about 600 tokens, the goals and the recap about 300 each. When it must be cut, the recap goes first, then the goals, then the profile; About me is never cut.
+- **Recall:** before each message goes to the model, Winku searches the notes and past-thread recaps for ones that relate to it, by meaning (a small local embedding model) and by keyword, favouring recent ones and ones marked important, and adds the best few (about 600 tokens at most) to the end of that message. A note already recalled since the last compaction isn't added again. Recall takes a few milliseconds and never waits longer than about a third of a second; if the search model isn't ready, keyword search alone is used. It can be turned off in Settings.
+- **Search model:** bge-small-en-v1.5 (34 MB), downloaded the first time recall needs it and run by the shell on the speech engine's runtime. It loads when the bar opens and frees its memory after 3 idle minutes.
+- **Writing memory:** the assistant writes memory on its own and when you ask it to "remember…": a fact for the profile, a goal, or a note under a topic. It can replace an outdated profile line or goal, or drop one, the same way. Each save shows a "Saved to memory: …" row with Undo, and the eyes do the "noted" blink. A new note can be recalled from the next message on.
+- **Tidy:** when you clear the thread, or after about 10 quiet minutes with new messages, Winku reads the conversation since the last tidy with the Quick actions model and updates the profile and goals (adding, rewording and removing lines), adds notes worth keeping, and writes a recap of the thread. It runs in the background and never delays a reply. It can be turned off in Settings, and Settings can run it now. Notes are never deleted by it.
 - **Voice profiles:** the assistant can only propose changes to a voice profile, which you Accept or Dismiss. "Learn from my edits" comes after v1.
-- **Caching:** new memory reaches the system prompt only after a clear or a compaction. Until then the transcript row is how the model knows about it.
-- **Forget everything:** a separate Settings button that wipes `memory\`, after a confirmation.
+- **Caching:** the profile, goals and recap reach the system prompt only after a clear or a compaction (or right after a tidy, while the new thread has no messages yet). Until then the transcript row and recall are how the model knows about new memory.
+- **Settings > Memory and voice:** shows the profile, goals and recap for editing, lists the notes with Delete, shows the search model, and has the recall and tidy switches.
+- **Forget everything:** a separate Settings button that wipes `memory\` and the search index, after a confirmation.
 - **Its voice:** how the assistant talks to you is a separate setting from your voice.
 
 ## 10. Models

@@ -4,11 +4,14 @@
 // engine\memory-index.sqlite that can be deleted at any time and is rebuilt from the files:
 // FTS5 for keywords, and one bge-small vector per note (from the shell's `embed` Request) for
 // meaning. A few thousand notes × 384 floats is a scan of a few milliseconds, so vectors are
-// compared in plain TypeScript; no vector extension.
+// compared in plain TypeScript; no vector extension. Vectors are compared after taking away the
+// model's common direction (recall-centre.ts), which spreads related and unrelated notes apart.
 import { Database } from "bun:sqlite";
 import { mkdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryStore, Note } from "./memory.ts";
+import type { MemoryLink, RecallTrace } from "./protocol.ts";
+import { PASSAGE_MEAN, QUERY_MEAN } from "./recall-centre.ts";
 
 /** Sends texts to the shell's embedder. `query` adds bge's search instruction. Rejects when it can't. */
 export type Embed = (texts: string[], query: boolean, timeoutMs: number) => Promise<Float32Array[]>;
@@ -19,7 +22,7 @@ export interface RecalledNote {
 	title: string;
 	date: number;
 	body: string;
-	/** Cosine similarity to the message, when vectors were compared. */
+	/** How close in meaning to the message (centred cosine, see recall-centre.ts), when vectors were compared. */
 	similarity?: number;
 }
 
@@ -28,15 +31,29 @@ const SCHEMA = "1";
 const MODEL = "bge-small-en-v1.5";
 const DIMS = 384;
 
-/** Tuned on bge-small with the query instruction: related notes score 0.56–0.75, unrelated ones under 0.50. */
-export const MIN_SIMILARITY = 0.53;
-/** A keyword match lowers the bar a little. */
-export const MIN_SIMILARITY_WITH_KEYWORD = 0.48;
+// Similarities below are centred cosines (recall-centre.ts), tuned on test/fixtures/recall-eval.json:
+// messages and notes embedded by the real model, with the notes each message should and shouldn't bring.
+
+/** A note with no keyword in common with the message needs this much. */
+export const MIN_SIMILARITY = 0.2;
+/** A keyword match lowers the bar. */
+export const MIN_SIMILARITY_WITH_KEYWORD = 0.12;
+/** A note in a topic the message names ("my travel plans", topic travel) only needs not to be unrelated. */
+export const MIN_SIMILARITY_IN_TOPIC = 0.0;
+/** Once a note matches by keyword or topic as well as meaning, notes matching by meaning alone need more. */
+export const MIN_SIMILARITY_BESIDE_KEYWORD = 0.3;
 /** Notes much weaker than the best match are left out even when they clear the bar. */
-const MAX_BEHIND_BEST = 0.12;
-/** At most this many notes per message, and about 600 tokens of them. */
+const MAX_BEHIND_BEST = 0.3;
+/** A named topic brings at most this many of its notes, newest first. */
+const TOPIC_NOTES = 3;
 /** memory_search is asked for on purpose, so it shows weaker matches too: any keyword hit, or this. */
-export const MIN_SIMILARITY_SEARCH = 0.45;
+export const MIN_SIMILARITY_SEARCH = 0.1;
+/** The memory map links each note to its few closest notes in other topics, when they're at least this close. */
+export const MAP_MIN_SIMILARITY = 0.3;
+export const MAP_LINKS_PER_NOTE = 3;
+/** At most this many notes per message, and about 600 tokens of them. */
+/** How many left-out notes the message tester lists. */
+const NEAR_MISSES = 6;
 export const RECALL_LIMIT = 4;
 export const RECALL_BUDGET_CHARS = 2400;
 const NOTE_MAX_CHARS = 700;
@@ -67,6 +84,27 @@ export function ftsQuery(words: string[]): string {
 	return words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
 }
 
+/** `vec` minus `mean`, scaled back to length 1: a vector to compare by centred cosine. */
+export function centre(vec: Float32Array, mean: Float32Array): Float32Array {
+	const out = new Float32Array(vec.length);
+	let norm = 0;
+	for (let i = 0; i < vec.length; i++) {
+		const v = (vec[i] ?? 0) - (mean[i] ?? 0);
+		out[i] = v;
+		norm += v * v;
+	}
+	norm = Math.sqrt(norm) || 1;
+	for (let i = 0; i < out.length; i++) out[i] = (out[i] ?? 0) / norm;
+	return out;
+}
+
+function decodeMean(b64: string): Float32Array {
+	const bytes = Buffer.from(b64, "base64");
+	return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+}
+export const PASSAGE_CENTRE = decodeMean(PASSAGE_MEAN);
+export const QUERY_CENTRE = decodeMean(QUERY_MEAN);
+
 export function dot(a: Float32Array, b: Float32Array): number {
 	let sum = 0;
 	for (let i = 0; i < a.length; i++) sum += (a[i] as number) * (b[i] as number);
@@ -80,6 +118,11 @@ function clip(text: string, max: number): string {
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** The block added to a user message, or "" for no notes. */
+/** A note as recalled: its body already clipped by fit. */
+function recalled(n: Note, similarity: number | undefined): RecalledNote {
+	return { id: n.id, topic: n.topic, title: n.title, date: n.date, body: n.body, ...(similarity !== undefined ? { similarity } : {}) };
+}
+
 export function formatRecalled(notes: RecalledNote[]): string {
 	if (!notes.length) return "";
 	const parts = notes.map((n) => {
@@ -109,45 +152,86 @@ interface Candidate {
 	vecRank?: number;
 	similarity?: number;
 	keywordHits: number;
+	/** The message names this note's topic. */
+	inTopic?: boolean;
 }
 
 /**
  * Rank candidates: reciprocal-rank fusion of the keyword and vector lists, then a boost for
  * recent notes and ones marked important. Drops what doesn't clear the similarity bar.
  */
-export function rank(candidates: Candidate[], now: number, haveVectors: boolean, words: number, loose = false): Candidate[] {
-	const best = Math.max(-1, ...candidates.map((c) => c.similarity ?? -1));
-	const kept = candidates.filter((c) => {
-		if (loose) return c.ftsRank !== undefined || (c.similarity ?? -1) >= MIN_SIMILARITY_SEARCH;
-		if (haveVectors && c.similarity !== undefined) {
-			const bar = c.ftsRank !== undefined ? MIN_SIMILARITY_WITH_KEYWORD : MIN_SIMILARITY;
-			return c.similarity >= bar && c.similarity >= best - MAX_BEHIND_BEST;
-		}
-		// Keywords alone (no embedder yet, or a note not embedded yet): ask for more than one stray word.
-		return c.ftsRank !== undefined && c.keywordHits >= Math.min(2, words);
-	});
-	const score = (c: Candidate) => {
-		let rrf = 0;
-		if (c.ftsRank !== undefined) rrf += 1 / (60 + c.ftsRank);
-		if (c.vecRank !== undefined) rrf += 1 / (60 + c.vecRank);
-		const ageDays = Math.max(0, (now - c.note.date) / 86_400_000);
-		const recency = 1 + 0.3 * 0.5 ** (ageDays / 60);
-		return rrf * recency * (c.note.important ? 1.3 : 1);
-	};
-	return kept.sort((a, b) => score(b) - score(a));
+/**
+ * Why a candidate is left out, or undefined when it passes. With vectors a note needs enough
+ * similarity (a little less when it also matches a keyword) and to be near the best match; with
+ * keywords alone it needs more than one stray word.
+ */
+export function gate(c: Candidate, best: number, haveVectors: boolean, words: number, loose = false, besideKeyword = false): string | undefined {
+	if (loose) return c.ftsRank !== undefined || c.inTopic || (c.similarity ?? -1) >= MIN_SIMILARITY_SEARCH ? undefined : "not close enough";
+	if (haveVectors && c.similarity !== undefined) {
+		const bar = c.inTopic ? MIN_SIMILARITY_IN_TOPIC : c.ftsRank !== undefined ? MIN_SIMILARITY_WITH_KEYWORD : besideKeyword ? MIN_SIMILARITY_BESIDE_KEYWORD : MIN_SIMILARITY;
+		if (c.similarity < bar) return c.inTopic ? "unrelated, though in the topic named" : `similarity under ${bar}`;
+		if (!c.inTopic && c.similarity < best - MAX_BEHIND_BEST) return "much weaker than the best match";
+		return undefined;
+	}
+	// Keywords alone (no embedder yet, or a note not embedded yet): ask for more than one stray word.
+	if (c.inTopic) return undefined;
+	if (c.ftsRank === undefined) return "no keyword match";
+	return c.keywordHits >= Math.min(2, words) ? undefined : "only one word matched";
 }
 
-/** Pick notes in order until the limit or the budget is reached. */
+/** Whether every word of a topic's name ("travel", "home-office") is among the message's keywords, singular or plural. */
+export function namesTopic(words: readonly string[], topic: string): boolean {
+	const said = new Set(words.flatMap((w) => [w, w.replace(/s$/, ""), `${w}s`]));
+	const parts = topic.split("-").filter(Boolean);
+	return parts.length > 0 && parts.every((p) => said.has(p) || said.has(p.replace(/s$/, "")));
+}
+
+/** Whether some note matches by keyword or topic and also by meaning: then meaning alone needs more. */
+function anchored(candidates: Candidate[], haveVectors: boolean): boolean {
+	return haveVectors && candidates.some((c) => c.similarity !== undefined && (c.inTopic ? c.similarity >= MIN_SIMILARITY_WITH_KEYWORD : c.ftsRank !== undefined && c.similarity >= MIN_SIMILARITY_WITH_KEYWORD));
+}
+
+export function rank(candidates: Candidate[], now: number, haveVectors: boolean, words: number, loose = false): Candidate[] {
+	const best = Math.max(-1, ...candidates.map((c) => c.similarity ?? -1));
+	const beside = anchored(candidates, haveVectors);
+	const kept = candidates.filter((c) => gate(c, best, haveVectors, words, loose, beside) === undefined);
+	return kept.sort((a, b) => score(b, now) - score(a, now));
+}
+
+/** Rank fusion of the keyword and vector positions, lifted a little for recent and important notes. */
+function score(c: Candidate, now: number): number {
+	let rrf = 0;
+	if (c.inTopic) rrf += 1 / 60;
+	if (c.ftsRank !== undefined) rrf += 1 / (60 + c.ftsRank);
+	if (c.vecRank !== undefined) rrf += 1 / (60 + c.vecRank);
+	const ageDays = Math.max(0, (now - c.note.date) / 86_400_000);
+	const recency = 1 + 0.3 * 0.5 ** (ageDays / 60);
+	return rrf * recency * (c.note.important ? 1.3 : 1);
+}
+
 export function fit(notes: Note[], limit = RECALL_LIMIT, budget = RECALL_BUDGET_CHARS): Note[] {
-	const out: Note[] = [];
+	return fitExplained(notes, limit, budget).flatMap((r) => (r.reason ? [] : [r.note]));
+}
+
+/** fit, keeping the notes that didn't fit with why: past the note limit or over the size budget. */
+export function fitExplained(notes: Note[], limit = RECALL_LIMIT, budget = RECALL_BUDGET_CHARS): { note: Note; reason?: string }[] {
+	const out: { note: Note; reason?: string }[] = [];
 	let used = 0;
+	let count = 0;
 	for (const note of notes) {
-		if (out.length >= limit) break;
+		if (count >= limit) {
+			out.push({ note, reason: `past the limit of ${limit} notes` });
+			continue;
+		}
 		const body = clip(note.body, NOTE_MAX_CHARS);
 		const size = note.title.length + body.length + 60;
-		if (used + size > budget) continue;
+		if (used + size > budget) {
+			out.push({ note, reason: `over the ${budget}-character budget` });
+			continue;
+		}
 		used += size;
-		out.push({ ...note, body });
+		count++;
+		out.push({ note: { ...note, body } });
 	}
 	return out;
 }
@@ -155,6 +239,7 @@ export function fit(notes: Note[], limit = RECALL_LIMIT, budget = RECALL_BUDGET_
 export class RecallIndex {
 	private db: Database | undefined;
 	private notes = new Map<string, Note>();
+	/** Note vectors, centred (recall-centre.ts). The database keeps them as the model gave them. */
 	private vectors = new Map<string, Float32Array>();
 	private embedding: Promise<void> | undefined;
 	private embedderDownUntil = 0;
@@ -273,10 +358,38 @@ export class RecallIndex {
 		this.vectors.clear();
 		for (const row of db.query<{ id: string; vec: Uint8Array }, [string]>("SELECT id, vec FROM vectors WHERE model = ?").all(MODEL)) {
 			if (row.vec.byteLength !== DIMS * 4 || !fresh.has(row.id)) continue;
-			this.vectors.set(row.id, new Float32Array(row.vec.buffer.slice(row.vec.byteOffset, row.vec.byteOffset + row.vec.byteLength)));
+			this.vectors.set(row.id, centre(new Float32Array(row.vec.buffer.slice(row.vec.byteOffset, row.vec.byteOffset + row.vec.byteLength)), PASSAGE_CENTRE));
 		}
 		this.stamp = stamp;
 		return true;
+	}
+
+	/**
+	 * Pairs of notes in different topics that mean similar things, for the memory map: each note keeps
+	 * its closest few at or above `min`. Same-topic notes are already joined through their topic.
+	 * Notes without a vector have no links.
+	 */
+	links(perNote = MAP_LINKS_PER_NOTE, min = MAP_MIN_SIMILARITY): MemoryLink[] {
+		this.sync();
+		const entries = [...this.vectors].flatMap(([id, vec]) => {
+			const note = this.notes.get(id);
+			return note ? [{ id, topic: note.topic, vec }] : [];
+		});
+		const pairs = new Map<string, MemoryLink>();
+		for (const a of entries) {
+			const closest: { id: string; similarity: number }[] = [];
+			for (const b of entries) {
+				if (a.topic === b.topic) continue;
+				const similarity = dot(a.vec, b.vec);
+				if (similarity >= min) closest.push({ id: b.id, similarity });
+			}
+			closest.sort((x, y) => y.similarity - x.similarity);
+			for (const { id, similarity } of closest.slice(0, perNote)) {
+				const [first, second] = a.id < id ? [a.id, id] : [id, a.id];
+				pairs.set(`${first} ${second}`, { a: first, b: second, similarity: Math.round(similarity * 1000) / 1000 });
+			}
+		}
+		return [...pairs.values()].sort((x, y) => y.similarity - x.similarity);
 	}
 
 	private countRows(db: Database): number {
@@ -325,7 +438,7 @@ export class RecallIndex {
 						const vec = vectors[i];
 						if (!vec || vec.length !== DIMS || !this.notes.has(note.id)) return;
 						put.run(note.id, MODEL, new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength));
-						this.vectors.set(note.id, vec);
+						this.vectors.set(note.id, centre(vec, PASSAGE_CENTRE));
 					});
 				})();
 				if (vectors.length < batch.length) return;
@@ -357,15 +470,79 @@ export class RecallIndex {
 	 * holds ids already in the model's context. Never throws: recall is a bonus, not a gate.
 	 */
 	async search(text: string, options: { exclude?: ReadonlySet<string>; limit?: number; budget?: number; timeoutMs?: number; loose?: boolean } = {}): Promise<RecalledNote[]> {
+		const found = await this.gather(text, options.timeoutMs ?? QUERY_TIMEOUT_MS);
+		if (!found) return [];
+		const exclude = options.exclude ?? new Set<string>();
+		const ranked = rank(found.candidates, this.now(), found.byMeaning, found.words, options.loose).filter((c) => !exclude.has(c.note.id));
+		const similarity = new Map(ranked.map((c) => [c.note.id, c.similarity]));
+		return fit(
+			ranked.map((c) => c.note),
+			options.limit,
+			options.budget,
+		).map((n) => recalled(n, similarity.get(n.id)));
+	}
+
+	/**
+	 * The search a message would get (Settings > Try a message): what would be sent, and the notes
+	 * that came close with why they were left out. Same limits and timeout as a real message.
+	 */
+	async explain(text: string, exclude: ReadonlySet<string> = new Set()): Promise<RecallTrace> {
+		const started = performance.now();
+		const found = await this.gather(text, QUERY_TIMEOUT_MS);
+		const ms = Math.round(performance.now() - started);
+		if (!found) return { byMeaning: false, why: this.notes.size ? undefined : "no notes", ms, sent: [], considered: [] };
+		const best = Math.max(-1, ...found.candidates.map((c) => c.similarity ?? -1));
+		const beside = anchored(found.candidates, found.byMeaning);
+		const reasons = new Map<string, string>();
+		for (const c of found.candidates) {
+			const reason = exclude.has(c.note.id) ? "already sent earlier in this conversation" : gate(c, best, found.byMeaning, found.words, false, beside);
+			if (reason) reasons.set(c.note.id, reason);
+		}
+		const passing = rank(found.candidates, this.now(), found.byMeaning, found.words).filter((c) => !reasons.has(c.note.id));
+		const fitted = fitExplained(passing.map((c) => c.note));
+		for (const r of fitted) if (r.reason) reasons.set(r.note.id, r.reason);
+		const byId = new Map(found.candidates.map((c) => [c.note.id, c]));
+		const sent = fitted.flatMap((r) => (r.reason ? [] : [recalled(r.note, byId.get(r.note.id)?.similarity)]));
+		// Left out: only the near misses, a keyword match or as close as memory_search would accept.
+		const near = (c: Candidate) => c.ftsRank !== undefined || c.inTopic || (c.similarity ?? -1) >= MIN_SIMILARITY_SEARCH;
+		const left = found.candidates
+			.filter((c) => reasons.has(c.note.id) && near(c))
+			.sort((x, y) => (y.similarity ?? -1) - (x.similarity ?? -1) || (x.ftsRank ?? 99) - (y.ftsRank ?? 99))
+			.slice(0, NEAR_MISSES);
+		return {
+			byMeaning: found.byMeaning,
+			why: found.why,
+			ms,
+			sent,
+			considered: [...sent.map((n) => byId.get(n.id) as Candidate), ...left].map((c) => ({
+				id: c.note.id,
+				topic: c.note.topic,
+				title: c.note.title,
+				...(c.similarity !== undefined ? { similarity: Math.round(c.similarity * 1000) / 1000 } : {}),
+				keyword: c.ftsRank !== undefined,
+				...(c.inTopic ? { namedTopic: true } : {}),
+				...(reasons.has(c.note.id) ? { reason: reasons.get(c.note.id) } : {}),
+			})),
+		};
+	}
+
+	/**
+	 * Every note that matches the text by keyword (FTS5) or is among the 20 closest by meaning, and
+	 * whether meaning was used at all: without it, `why` says what stopped it. Undefined when there is
+	 * nothing to search.
+	 */
+	private async gather(text: string, timeoutMs: number): Promise<{ candidates: Candidate[]; words: number; byMeaning: boolean; why?: string } | undefined> {
 		try {
 			this.sync();
 		} catch (error) {
 			process.stderr.write(`memory: index sync failed: ${String(error)}\n`);
-			return [];
+			return undefined;
 		}
-		if (!this.notes.size || !text.trim()) return [];
+		if (!this.notes.size || !text.trim()) return undefined;
 		void this.embedPending();
 		const words = keywords(text);
+		// Small talk ("hello there", "ok thanks") has nothing to look up, and meaning alone would find something anyway.
+		if (!words.length) return { candidates: [], words: 0, byMeaning: false, why: "the message has no words worth searching for" };
 		const candidates = new Map<string, Candidate>();
 		const candidate = (note: Note): Candidate => {
 			let c = candidates.get(note.id);
@@ -376,6 +553,12 @@ export class RecallIndex {
 			}
 			return c;
 		};
+		// A message that names a topic ("my travel plans") brings that topic's newest notes along.
+		for (const topic of new Set([...this.notes.values()].map((n) => n.topic))) {
+			if (!namesTopic(words, topic)) continue;
+			const newest = [...this.notes.values()].filter((n) => n.topic === topic).sort((a, b) => b.date - a.date);
+			for (const note of newest.slice(0, TOPIC_NOTES)) candidate(note).inTopic = true;
+		}
 		if (words.length) {
 			const db = this.open();
 			const rows = db
@@ -387,13 +570,22 @@ export class RecallIndex {
 			});
 		}
 		let query: Float32Array | undefined;
+		let why: string | undefined;
 		// Also when the first notes are still being embedded: they go first and are likely in by the time the query is.
-		if ((this.vectors.size || this.embedding) && this.embedderReady() && this.embed) {
+		if (!this.embed) why = "no search model";
+		else if (!this.vectors.size && !this.embedding) why = "no note has a vector yet";
+		else if (!this.embedderReady()) why = "the search model failed a moment ago";
+		else {
 			try {
-				query = (await this.embed([text.slice(0, 2000)], true, options.timeoutMs ?? QUERY_TIMEOUT_MS))[0];
+				const raw = (await this.embed([text.slice(0, 2000)], true, timeoutMs))[0];
+				query = raw?.length === DIMS ? centre(raw, QUERY_CENTRE) : raw;
 			} catch (error) {
 				// A slow answer only skips meaning for this message; anything else waits a minute.
-				if (!/did not answer/.test(String(error))) this.embedderFailed(error);
+				if (/did not answer/.test(String(error))) why = `the search model didn't answer within ${timeoutMs} ms`;
+				else {
+					this.embedderFailed(error);
+					why = "the search model failed";
+				}
 			}
 		}
 		if (query?.length === DIMS) {
@@ -413,21 +605,7 @@ export class RecallIndex {
 				const vec = this.vectors.get(c.note.id);
 				if (vec) c.similarity = dot(query, vec);
 			}
-		}
-		const exclude = options.exclude ?? new Set<string>();
-		const ranked = rank([...candidates.values()], this.now(), query !== undefined, words.length, options.loose).filter((c) => !exclude.has(c.note.id));
-		const similarity = new Map(ranked.map((c) => [c.note.id, c.similarity]));
-		return fit(
-			ranked.map((c) => c.note),
-			options.limit,
-			options.budget,
-		).map((n) => ({
-			id: n.id,
-			topic: n.topic,
-			title: n.title,
-			date: n.date,
-			body: n.body,
-			...(similarity.get(n.id) !== undefined ? { similarity: similarity.get(n.id) as number } : {}),
-		}));
+		} else if (query && !why) why = "the search model sent a vector of the wrong size";
+		return { candidates: [...candidates.values()], words: words.length, byMeaning: query?.length === DIMS, ...(why ? { why } : {}) };
 	}
 }

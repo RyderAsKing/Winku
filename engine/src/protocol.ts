@@ -268,6 +268,39 @@ export interface MemoryOverview {
 	tidying: boolean;
 }
 
+/** Two notes in different topics that mean similar things (centred cosine of their vectors, see recall-centre.ts). */
+export interface MemoryLink {
+	a: string;
+	b: string;
+	similarity: number;
+}
+
+/** How a message's recall search went (RecallIndex.explain). */
+export interface RecallTrace {
+	/** Whether notes were compared by meaning; without it only keywords count, and `why` says why. */
+	byMeaning: boolean;
+	why?: string;
+	/** How long the search took, in ms. */
+	ms: number;
+	/** The notes that would be sent, in order. */
+	sent: { id: string; topic: string; title: string; date: number; body: string; similarity?: number }[];
+	/** The sent notes, then up to 6 near misses (a keyword match, a topic the message names, or similarity of 0.1 or more), each with why it was left out. */
+	considered: { id: string; topic: string; title: string; similarity?: number; keyword: boolean; namedTopic?: boolean; reason?: string }[];
+}
+
+/** What Winku would add for a message (Settings > Try a message). Nothing goes to the model. */
+export interface MemoryPreview {
+	/** <winku_memory> as a new conversation gets it, in the system prompt. */
+	block: string;
+	/** True when the current conversation still has an older copy of the block (it's fixed per thread). */
+	stale: boolean;
+	/** False when "Bring up related notes" is off: nothing rides on the message. */
+	recallOn: boolean;
+	/** <recalled_memories> exactly as it would be appended to the message, or "". */
+	recalled: string;
+	trace: RecallTrace;
+}
+
 /** How much of a spoken reply is said (settings.voice.say, SPEC §11). */
 export type SpeechLength = "brief" | "enough" | "full";
 
@@ -352,6 +385,10 @@ export type Command =
 	| { type: "memory_forget_all"; id?: string }
 	/** Result data: MemoryOverview. */
 	| { type: "memory_overview"; id: string }
+	/** Result data: MemoryPreview for a message that isn't sent: the memory block and what recall would add. */
+	| { type: "memory_preview"; id: string; text: string }
+	/** Result data: { links: MemoryLink[] } for the memory map. Notes come from memory_overview. */
+	| { type: "memory_map"; id: string }
 	/** Replace a core file (Settings), its text without the heading. Empty text clears it. Emits memory_changed. */
 	| { type: "memory_core_set"; id?: string; which: MemoryCore; text: string }
 	/** Delete one note from its topic file (Settings). Emits memory_changed. */

@@ -167,7 +167,7 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 - **Tidy:** when you clear the thread, or after about 10 quiet minutes with new messages, Winku reads the conversation since the last tidy with the Quick actions model and updates the profile and goals (adding, rewording and removing lines), adds notes worth keeping, and writes a recap of the thread. It runs in the background and never delays a reply. It can be turned off in Settings, and Settings can run it now. Notes are never deleted by it.
 - **Voice profiles:** the assistant can only propose changes to a voice profile, which you Accept or Dismiss. "Learn from my edits" comes after v1.
 - **Caching:** the profile, goals and recap reach the system prompt only after a clear or a compaction (or right after a tidy, while the new thread has no messages yet). Until then the transcript row and recall are how the model knows about new memory.
-- **Settings > Memory and voice:** shows the profile, goals and recap for editing, lists the notes with Delete, shows the search model, and has the recall and tidy switches.
+- **Settings > Memory and voice:** shows the profile, goals and recap for editing, lists the notes with Delete or shows them as a map of topics with related notes linked, has a message tester that shows what a message would carry without sending it, shows the search model, and has the recall and tidy switches.
 - **Forget everything:** a separate Settings button that wipes `memory\` and the search index, after a confirmation.
 - **Its voice:** how the assistant talks to you is a separate setting from your voice.
 

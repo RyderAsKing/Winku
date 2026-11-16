@@ -11,8 +11,8 @@ import {
 	parseNotes,
 	removeNote,
 } from "../src/memory.ts";
-import type { MemoryOverview, OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
-import { type Embed, fit, formatRecalled, keywords, RecallIndex, recalledIds, stripRecalled } from "../src/recall.ts";
+import type { MemoryOverview, MemoryPreview, OutboundMessage, Request, TranscriptItem } from "../src/protocol.ts";
+import { type Embed, fit, formatRecalled, keywords, namesTopic, PASSAGE_CENTRE, QUERY_CENTRE, RecallIndex, recalledIds, stripRecalled } from "../src/recall.ts";
 import { applyOps, conversationText, parsePlan } from "../src/tidy.ts";
 import { EngineProcess, removeTempDirs, tempDir } from "./harness.ts";
 
@@ -34,8 +34,11 @@ afterEach(() => {
 const T = 30_000;
 const read = (path: string) => readFileSync(path, "utf8");
 
-/** A stand-in for bge-small: hashed bag of keywords, L2-normalised. Shared words make texts similar. */
-function fakeVector(text: string): Float32Array {
+/**
+ * A stand-in for bge-small: a hashed bag of keywords on top of the model's common direction
+ * (recall-centre.ts), so centring leaves the bag. Shared words make texts similar.
+ */
+function fakeVector(text: string, query = false): Float32Array {
 	const v = new Float32Array(384);
 	for (const word of keywords(text)) {
 		let h = 0;
@@ -43,9 +46,10 @@ function fakeVector(text: string): Float32Array {
 		v[h % 384] = (v[h % 384] as number) + 1;
 	}
 	const norm = Math.hypot(...v) || 1;
-	return v.map((x) => x / norm);
+	const mean = query ? QUERY_CENTRE : PASSAGE_CENTRE;
+	return v.map((x, i) => x / norm + (mean[i] ?? 0));
 }
-const fakeEmbed: Embed = async (texts) => texts.map(fakeVector);
+const fakeEmbed: Embed = async (texts, query) => texts.map((t) => fakeVector(t, query));
 
 function encode(v: Float32Array): string {
 	return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64");
@@ -56,7 +60,7 @@ function shellEmbedder(engine: EngineProcess, seen: string[][] = []): string[][]
 	engine.onRequest = (request: Request) => {
 		if (request.method !== "embed") return undefined;
 		seen.push(request.params.texts);
-		return { ok: true, data: { model: "bge-small-en-v1.5", dims: 384, vectors: request.params.texts.map((t) => encode(fakeVector(t))) } };
+		return { ok: true, data: { model: "bge-small-en-v1.5", dims: 384, vectors: request.params.texts.map((t) => encode(fakeVector(t, request.params.query))) } };
 	};
 	return seen;
 }
@@ -166,6 +170,62 @@ test("recall finds related notes by meaning and keyword, skips unrelated and exc
 	expect(openHandles(RecallIndex.pathFor(dir))).toEqual([]);
 });
 
+test("a message names a topic when every word of its name is a keyword, singular or plural", () => {
+	expect(namesTopic(keywords("you remember my travel plans?"), "travel")).toBe(true);
+	expect(namesTopic(keywords("any news on the pets?"), "pets")).toBe(true);
+	expect(namesTopic(keywords("how's my pet doing"), "pets")).toBe(true);
+	expect(namesTopic(keywords("the home office chair"), "home-office")).toBe(true);
+	expect(namesTopic(keywords("working from the office"), "home-office")).toBe(false);
+	expect(namesTopic(keywords("hello there"), "travel")).toBe(false);
+});
+
+test("the memory map links close notes across topics, a few per note, and none without vectors", async () => {
+	const { dir, store } = memoryDir();
+	store.save({ title: "Oat milk", topic: "food", content: "Prefers oat milk in coffee, no sugar." }, "s");
+	store.save({ title: "Office coffee", topic: "work", content: "The office coffee machine has oat milk now." }, "s");
+	store.save({ title: "Coffee beans", topic: "food", content: "Buys oat milk and coffee beans on Saturday." }, "s");
+	store.save({ title: "Dog", topic: "pets", content: "Has a dog named Biscuit who needs a walk at 6pm." }, "s");
+	const ids = Object.fromEntries(store.notes().map((n) => [n.title, n.id]));
+	expect(new RecallIndex(store, RecallIndex.pathFor(dir), undefined).links()).toEqual([]);
+	const index = new RecallIndex(store, RecallIndex.pathFor(dir), fakeEmbed);
+	index.warm();
+	await index.settled();
+	const links = index.links(3, 0.3);
+	const pairs = links.map((l) => [l.a, l.b].sort().join(" "));
+	// Both food notes link to the work note; the two food notes share a topic, and the dog is unrelated.
+	expect(pairs.sort()).toEqual([[ids["Oat milk"], ids["Office coffee"]].sort().join(" "), [ids["Coffee beans"], ids["Office coffee"]].sort().join(" ")].sort());
+	expect(links.every((l) => l.similarity >= 0.3 && l.a < l.b)).toBe(true);
+	expect(index.links(1, 0.3)).toHaveLength(2);
+	expect(index.links(3, 0.99)).toEqual([]);
+	index.close();
+});
+
+test("explain shows what a message would get and why the near misses were left out", async () => {
+	const { dir, store } = memoryDir();
+	store.save({ title: "Oat milk", topic: "food", content: "Prefers oat milk in coffee, no sugar." }, "s");
+	store.save({ title: "Coffee beans", topic: "food", content: "Buys coffee beans on Saturday." }, "s");
+	store.save({ title: "Dog", topic: "pets", content: "Has a dog named Biscuit who needs a walk at 6pm." }, "s");
+	const ids = Object.fromEntries(store.notes().map((n) => [n.title, n.id]));
+	const keywordsOnly = await new RecallIndex(store, RecallIndex.pathFor(dir), undefined).explain("oat milk in my coffee");
+	expect(keywordsOnly).toMatchObject({ byMeaning: false, why: "no search model" });
+	expect(keywordsOnly.sent.map((n) => n.title)).toEqual(["Oat milk"]);
+	expect(keywordsOnly.considered.find((c) => c.title === "Coffee beans")).toMatchObject({ keyword: true, reason: "only one word matched" });
+	const index = new RecallIndex(store, RecallIndex.pathFor(dir), fakeEmbed);
+	index.warm();
+	await index.settled();
+	const trace = await index.explain("what milk goes in my coffee?");
+	expect(trace.byMeaning).toBe(true);
+	expect(trace.why).toBeUndefined();
+	// The same notes a real message gets, first in the list and without a reason.
+	expect(trace.sent.map((n) => n.id)).toEqual((await index.search("what milk goes in my coffee?")).map((n) => n.id));
+	expect(trace.considered.slice(0, trace.sent.length).every((c) => c.reason === undefined)).toBe(true);
+	expect(trace.considered.filter((c) => c.reason).every((c) => typeof c.reason === "string")).toBe(true);
+	const excluded = await index.explain("what milk goes in my coffee?", new Set([ids["Oat milk"] as string]));
+	expect(excluded.sent.map((n) => n.title)).not.toContain("Oat milk");
+	expect(excluded.considered.find((c) => c.title === "Oat milk")?.reason).toBe("already sent earlier in this conversation");
+	index.close();
+});
+
 test("without an embedder recall uses keywords, asking for more than one stray word", async () => {
 	const { dir, store } = memoryDir();
 	store.save({ title: "Dog", topic: "pets", content: "Has a dog named Biscuit who needs a walk at 6pm." }, "s");
@@ -244,6 +304,35 @@ test("recall can be switched off, and an unanswered embedder doesn't hold a mess
 	expect((await engine.prompt("oat milk coffee")).end.text).toContain("<recalled_memories>");
 	expect(performance.now() - started).toBeLessThan(2000);
 	await engine.shutdown();
+}, T);
+
+test("memory_preview shows the block and the notes a message would carry, without sending anything", async () => {
+	const engine = start();
+	shellEmbedder(engine);
+	await engine.configure({ faux: { replies: [{ echoUser: true }] } });
+	const store = new MemoryStore(engine.dataDir);
+	store.save({ title: "Oat milk", topic: "food", content: "Prefers oat milk in coffee." }, "x");
+	// Saved after this conversation started: its copy of the block doesn't list the topic yet.
+	expect((await engine.callOk<MemoryPreview>({ type: "memory_preview", text: "hi" })).stale).toBe(true);
+	await engine.callOk({ type: "clear" });
+	await new Promise((r) => setTimeout(r, 200));
+	const preview = await engine.callOk<MemoryPreview>({ type: "memory_preview", text: "which milk for my coffee?" });
+	expect(preview.block).toStartWith("<winku_memory>\n");
+	expect(preview.block).toContain("<note_topics>");
+	expect(preview).toMatchObject({ stale: false, recallOn: true });
+	expect(preview.trace.sent.map((n) => n.title)).toEqual(["Oat milk"]);
+	// Nothing went to the model: the one scripted reply is still there for the real message, which carries the same notes.
+	const sent = (await engine.prompt("which milk for my coffee?")).end.text;
+	expect(sent).toBe(`which milk for my coffee?${preview.recalled}\n[images:0]`);
+	// A core edit reaches new conversations; this one keeps the copy it started with.
+	await engine.callOk({ type: "memory_core_set", which: "goals", text: "- Run a marathon" });
+	const after = await engine.callOk<MemoryPreview>({ type: "memory_preview", text: "which milk for my coffee?" });
+	expect(after.block).toContain("<goals>\n- Run a marathon\n</goals>");
+	expect(after.stale).toBe(true);
+	expect(after.trace.considered.find((c) => c.title === "Oat milk")?.reason).toBe("already sent earlier in this conversation");
+	await engine.configure({ memoryRecall: false });
+	expect(await engine.callOk<MemoryPreview>({ type: "memory_preview", text: "milk" })).toMatchObject({ recallOn: false, recalled: "", trace: { why: "recall is off", sent: [] } });
+	expect((await engine.shutdown()).stderr).toBe("");
 }, T);
 
 test("memory_save kinds: profile and goal lines, replaces, and memory_search", async () => {
@@ -342,6 +431,7 @@ test("Settings: overview, edit a core file, delete a note, forget everything", a
 	await engine.callOk({ type: "memory_core_set", which: "goals", text: "- Run a marathon\n" });
 	expect(await engine.waitFor((r) => r.type === "memory_changed", from)).toEqual({ type: "memory_changed", reason: "edit" });
 	let overview = await engine.callOk<MemoryOverview>({ type: "memory_overview" });
+	expect(await engine.callOk<{ links: unknown[] }>({ type: "memory_map" })).toEqual({ links: expect.any(Array) });
 	expect(overview.goals).toBe("- Run a marathon");
 	expect(read(join(engine.dataDir, "memory", "GOALS.md"))).toBe("# Goals\n\n- Run a marathon\n");
 	expect(overview.notes.map((n) => n.title).sort()).toEqual(["Oat milk", "Rye"]);
@@ -370,7 +460,7 @@ test("Esc while memory is being searched stops the prompt before it goes out", a
 		if (request.method !== "embed") return undefined;
 		const texts = request.params.texts;
 		if (!request.params.query) return { ok: true, data: { vectors: texts.map((t) => encode(fakeVector(t))) } };
-		release = () => engine.send({ type: "response", id: request.id, ok: true, data: { vectors: texts.map((t) => encode(fakeVector(t))) } });
+		release = () => engine.send({ type: "response", id: request.id, ok: true, data: { vectors: texts.map((t) => encode(fakeVector(t, true))) } });
 		return undefined;
 	};
 	// Let the background embedding finish.

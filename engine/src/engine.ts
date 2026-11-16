@@ -17,8 +17,8 @@ import {
 import { type ActionSetup, Actions, type OneOffAction } from "./action.ts";
 import { FAUX_PROVIDER, type FauxOptions } from "./faux.ts";
 import { CORE_FILES, type CoreKind, coreBody, coreForPrompt, coreFromBody, ensureStarterFiles, MemoryStore, memoryTools } from "./memory.ts";
-import { buildSystemPrompt } from "./prompt.ts";
-import type { Command, ConfigureCommand, Event, MemoryCore, MemoryOverview, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
+import { buildSystemPrompt, memoryBlock, type PromptInputs } from "./prompt.ts";
+import type { Command, ConfigureCommand, Event, MemoryCore, MemoryLink, MemoryOverview, MemoryPreview, ModelChoice, ModelRole, ThinkingLevel, VoiceProfileInfo } from "./protocol.ts";
 import { type Embed, formatRecalled, RecallIndex } from "./recall.ts";
 import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
@@ -140,6 +140,10 @@ export class Engine {
 
 	/** Re-reads about-me.md, the voice profiles and the core memory files: a new snapshot. */
 	private freshPrompt(): string {
+		return buildSystemPrompt(this.promptInputs());
+	}
+
+	private promptInputs(): PromptInputs {
 		let aboutMe = "";
 		try {
 			aboutMe = readFileSync(join(this.config.dataDir, "about-me.md"), "utf8");
@@ -147,7 +151,7 @@ export class Engine {
 		// The starter template is only an HTML comment; leave it out until the user writes something.
 		aboutMe = aboutMe.replace(/<!--[\s\S]*?-->/g, "");
 		const memory = this.requireMemory();
-		return buildSystemPrompt({
+		return {
 			assistantStyle: this.config.assistantStyle ?? "",
 			aboutMe,
 			voiceProfiles: this.requireVoice().all(),
@@ -155,7 +159,7 @@ export class Engine {
 			goals: coreForPrompt("goals", memory.core("goals")),
 			recap: coreForPrompt("recap", memory.core("recap")),
 			noteTopics: memory.topics(),
-		});
+		};
 	}
 
 	private requireMemory(): MemoryStore {
@@ -289,6 +293,24 @@ export class Engine {
 			lastTidy: this.tidy?.lastTidy ?? null,
 			tidying: this.tidy?.running ?? false,
 		};
+	}
+
+	/** Settings > Try a message: what a message would carry, without sending it. Read-only. */
+	async memoryPreview(text: string): Promise<MemoryPreview> {
+		this.requireSession();
+		const block = memoryBlock(this.promptInputs());
+		const current = /<winku_memory>[\s\S]*?<\/winku_memory>/.exec(this.systemPrompt)?.[0];
+		const trace =
+			this.recall && this.recallOn
+				? await this.recall.explain(text, this.thread.recalledInContext())
+				: { byMeaning: false, why: this.recallOn ? "no search index" : "recall is off", ms: 0, sent: [], considered: [] };
+		return { block, stale: current !== undefined && current !== block, recallOn: this.recallOn, recalled: formatRecalled(trace.sent), trace };
+	}
+
+	memoryMap(): { links: MemoryLink[] } {
+		this.requireSession();
+		this.requireMemory();
+		return { links: this.recall?.links() ?? [] };
 	}
 
 	setMemoryCore(which: MemoryCore, text: string): void {

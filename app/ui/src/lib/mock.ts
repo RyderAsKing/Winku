@@ -624,7 +624,7 @@ function previewMemory(memory: MemoryOverview, text: string, byMeaning: boolean)
 		.map((n) => {
 			const hay = new Set(tokens(`${n.title} ${n.preview} ${n.topic}`));
 			const hits = [...words].filter((w) => hay.has(w) || hay.has(`${w}s`) || (w.endsWith("s") && hay.has(w.slice(0, -1)))).length;
-			return { n, hits, similarity: Math.round(Math.min(0.6, hits * 0.16 + (n.title.length % 7) / 100) * 1000) / 1000 };
+			return { n, hits, similarity: Math.round(Math.max(0, Math.min(0.6, hits * 0.16 - 0.08 + (n.title.length % 4) / 100)) * 1000) / 1000 };
 		})
 		.sort((a, b) => b.similarity - a.similarity);
 	const best = scored[0]?.similarity ?? 0;

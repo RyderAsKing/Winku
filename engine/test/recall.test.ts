@@ -1,5 +1,5 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	coreFile,
@@ -127,6 +127,20 @@ test("profile saves undo exactly, or just their own line once the file changed",
 
 // ───────────────────────────── recall ─────────────────────────────
 
+/** Files under `path` (and its -wal/-shm) this process still has open. Linux only; elsewhere it's always empty. */
+function openHandles(path: string): string[] {
+	if (process.platform !== "linux") return [];
+	return readdirSync("/proc/self/fd")
+		.map((fd) => {
+			try {
+				return readlinkSync(`/proc/self/fd/${fd}`);
+			} catch {
+				return "";
+			}
+		})
+		.filter((target) => target.startsWith(path));
+}
+
 test("recall finds related notes by meaning and keyword, skips unrelated and excluded ones, and follows edits", async () => {
 	const { dir, store } = memoryDir();
 	store.save({ title: "Oat milk", topic: "food", content: "Prefers oat milk in coffee, no sugar." }, "s");
@@ -148,6 +162,8 @@ test("recall finds related notes by meaning and keyword, skips unrelated and exc
 	expect(after.map((h) => h.body)).toEqual(["Switched to almond milk in coffee."]);
 	index.reset();
 	expect(existsSync(RecallIndex.pathFor(dir))).toBe(false);
+	// Windows can't delete a file that is still open, so reset must leave no handle on the index behind.
+	expect(openHandles(RecallIndex.pathFor(dir))).toEqual([]);
 });
 
 test("without an embedder recall uses keywords, asking for more than one stray word", async () => {

@@ -251,11 +251,11 @@ export class RecallIndex {
 		if (stamp === this.stamp && this.notes.size === this.countRows(db)) return false;
 		const fresh = new Map(this.store.notes().map((n) => [n.id, n]));
 		const stored = new Set(db.query<{ id: string }, []>("SELECT id FROM notes").all().map((r) => r.id));
-		const insert = db.prepare("INSERT OR REPLACE INTO notes(id, topic, title, date, important, body) VALUES (?, ?, ?, ?, ?, ?)");
-		const insertFts = db.prepare("INSERT INTO notes_fts(id, title, body, topic) VALUES (?, ?, ?, ?)");
-		const remove = db.prepare("DELETE FROM notes WHERE id = ?");
-		const removeFts = db.prepare("DELETE FROM notes_fts WHERE id = ?");
-		const removeVec = db.prepare("DELETE FROM vectors WHERE id = ?");
+		const insert = db.query("INSERT OR REPLACE INTO notes(id, topic, title, date, important, body) VALUES (?, ?, ?, ?, ?, ?)");
+		const insertFts = db.query("INSERT INTO notes_fts(id, title, body, topic) VALUES (?, ?, ?, ?)");
+		const remove = db.query("DELETE FROM notes WHERE id = ?");
+		const removeFts = db.query("DELETE FROM notes_fts WHERE id = ?");
+		const removeVec = db.query("DELETE FROM vectors WHERE id = ?");
 		db.transaction(() => {
 			for (const id of stored) {
 				if (fresh.has(id)) continue;
@@ -319,7 +319,7 @@ export class RecallIndex {
 					return;
 				}
 				const db = this.open();
-				const put = db.prepare("INSERT OR REPLACE INTO vectors(id, model, vec) VALUES (?, ?, ?)");
+				const put = db.query("INSERT OR REPLACE INTO vectors(id, model, vec) VALUES (?, ?, ?)");
 				db.transaction(() => {
 					batch.forEach((note, i) => {
 						const vec = vectors[i];

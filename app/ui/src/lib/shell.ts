@@ -146,12 +146,19 @@ export interface OsVoice {
 	language: string;
 }
 
-/** fraction 0…1 while downloading, 1 when installed, -1 when it failed. */
-export interface DownloadProgress {
-	what: "stt" | "tts";
-	model: VoiceModelId;
-	fraction: number;
+/** The memory search model (recall), downloaded like the voice models. */
+export interface MemoryModel {
+	id: string;
+	name: string;
+	sizeMb: number;
+	installed: boolean;
+	downloading: boolean;
 }
+
+/** fraction 0…1 while downloading, 1 when installed, -1 when it failed. */
+export type DownloadProgress =
+	| { what: "stt" | "tts"; model: VoiceModelId; fraction: number }
+	| { what: "embed"; model: string; fraction: number };
 
 export interface UpdateStatus {
 	state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
@@ -207,6 +214,10 @@ export const shell = {
 	voiceModels: () => invoke<VoiceModel[]>("voice_models"),
 	voiceModelDownload: (id: VoiceModelId) => invoke<void>("voice_model_download", { id }),
 	voiceModelRemove: (id: VoiceModelId) => invoke<void>("voice_model_remove", { id }),
+	memoryModelStatus: () => invoke<MemoryModel>("memory_model_status"),
+	/** Starts the download and returns; progress comes as download_progress with what "embed". */
+	memoryModelDownload: () => invoke<void>("memory_model_download"),
+	memoryModelRemove: () => invoke<void>("memory_model_remove"),
 	/** Drag the main window by the eyes until the button comes up. The shell follows the mouse
 	 * itself; touch and pen use the OS move (core:window:allow-start-dragging). */
 	startDrag: async (pointerType: string) => {

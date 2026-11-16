@@ -447,8 +447,18 @@ const cases = [
 		size: SETTINGS,
 		ready: "text=installs when you quit or restart",
 	},
+	{ name: "settings-memory", path: "/settings.html#memory", size: SETTINGS, ready: "text=Always known" },
 	{
-		name: "settings-memory",
+		name: "settings-memory-notes",
+		path: "/settings.html#memory",
+		size: SETTINGS,
+		ready: "text=Release checklist",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: /^Notes/ }).evaluate((h) => h.scrollIntoView({ block: "start" }));
+		},
+	},
+	{
+		name: "settings-memory-forget",
 		path: "/settings.html#memory",
 		size: SETTINGS,
 		ready: "text=Forget everything?",
@@ -456,6 +466,7 @@ const cases = [
 			await page.getByRole("button", { name: "Forget everything" }).click();
 		},
 	},
+	{ name: "settings-memory-empty", path: "/settings.html?nomemory&nomodel#memory", size: SETTINGS, ready: "text=No notes yet" },
 	{
 		name: "settings-actions",
 		path: "/settings.html#actions",

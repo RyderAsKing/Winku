@@ -50,6 +50,12 @@ export interface Settings {
 		say: SpeechLength;
 		listeningPaused: boolean;
 	};
+	memory: {
+		/** Bring related notes along with each message (SPEC §9 Recall). */
+		recall: boolean;
+		/** Update the profile, goals and recap in the background (SPEC §9 Tidy). */
+		tidy: boolean;
+	};
 	updates: UpdateMode;
 	launchAtLogin: boolean;
 }

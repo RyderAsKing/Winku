@@ -706,6 +706,8 @@ export class MainState {
 	}
 
 	#onDownload(progress: DownloadProgress) {
+		// The memory search model downloads quietly; Settings shows its progress.
+		if (progress.what === "embed") return;
 		if (progress.fraction >= 1 || progress.fraction < 0) {
 			if (this.download?.model === progress.model) this.download = null;
 			return;

@@ -77,6 +77,10 @@ async function handle(message: Command): Promise<unknown> {
 			return { removed: engine.forgetMemory() };
 		case "memory_overview":
 			return engine.memoryOverview();
+		case "memory_preview":
+			return engine.memoryPreview(message.text);
+		case "memory_map":
+			return engine.memoryMap();
 		case "memory_core_set":
 			engine.setMemoryCore(message.which, message.text);
 			return undefined;

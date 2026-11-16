@@ -65,7 +65,7 @@ function section(name: string, content: string | undefined, attributes = ""): st
 }
 
 /** <winku_memory>: always present, so the instructions about it never point at nothing. */
-function memoryBlock(inputs: PromptInputs): string {
+export function memoryBlock(inputs: PromptInputs): string {
 	const parts = [
 		section("about_me", inputs.aboutMe),
 		section("profile", inputs.profile),

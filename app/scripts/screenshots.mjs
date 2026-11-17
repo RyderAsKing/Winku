@@ -20,6 +20,11 @@ const summon = async (page) => {
 };
 /** The Settings window's default size (window.rs). */
 const SETTINGS = { width: 860, height: 600 };
+/** Picks `option` in the dropdown named `name` (lib/Select.svelte). */
+const pick = async (page, name, option) => {
+	await page.getByRole("combobox", { name, exact: true }).click();
+	await page.getByRole("option", { name: option }).click();
+};
 const ui = (page, event) => page.evaluate((e) => window.__winkuMock.ui(e), event);
 const action = (page, slot, selection) => page.evaluate(([s, t]) => window.__winkuMock.action(s, t), [slot, selection]);
 const engine = (page, event) => page.evaluate((e) => window.__winkuMock.engine(e), event);
@@ -299,7 +304,7 @@ const cases = [
 		ready: "text=Connect a model",
 		prepare: async (page) => {
 			await summon(page);
-			await page.waitForFunction(() => document.querySelector("select")?.value);
+			await page.getByRole("combobox", { name: "Provider" }).getByText("Anthropic").waitFor();
 		},
 	},
 	{
@@ -438,7 +443,7 @@ const cases = [
 		size: SETTINGS,
 		ready: "role=heading[name='Speech']",
 		prepare: async (page) => {
-			await page.getByRole("option", { name: "Microsoft Zira (en-US)" }).waitFor({ state: "attached" });
+			await page.getByRole("combobox", { name: "Reading voice" }).waitFor();
 		},
 	},
 	{
@@ -647,7 +652,7 @@ cases.push(
 		ready: "text=Base URL",
 		prepare: async (page) => {
 			await summon(page);
-			await page.getByRole("combobox").first().selectOption("__custom__");
+			await pick(page, "Provider", "Custom OpenAI-compatible");
 		},
 	},
 	{
@@ -711,16 +716,57 @@ cases.push(
 		size: SETTINGS,
 		ready: "text=Context window",
 		prepare: async (page) => {
-			await page.getByRole("combobox").first().selectOption("__custom__");
+			await pick(page, "Provider", "Custom OpenAI-compatible");
 		},
 	},
 	{
 		name: "settings-quick-model",
 		path: "/settings.html",
 		size: SETTINGS,
-		ready: "[placeholder='Model id']",
+		ready: "role=combobox[name='Quick model ID']",
 		prepare: async (page) => {
-			await page.getByLabel("Quick actions model", { exact: true }).selectOption("false");
+			await pick(page, "Quick actions model", "A different model");
+		},
+	},
+	{
+		// The model field lists every model when clicked, even with one already filled in.
+		name: "connect-models",
+		path: "/?connect=1",
+		ready: "role=option[name=/Claude Opus/]",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("textbox", { name: "API key" }).fill("sk-test");
+			const field = page.getByRole("combobox", { name: "Model" });
+			await page.waitForFunction(() => document.querySelector("input[aria-label='Model']")?.value);
+			await field.click();
+		},
+	},
+	{
+		name: "connect-providers",
+		path: "/?connect=1",
+		ready: "role=option[name='OpenRouter']",
+		prepare: async (page) => {
+			await summon(page);
+			await page.getByRole("combobox", { name: "Provider" }).click();
+		},
+	},
+	{
+		name: "settings-models-open",
+		path: "/settings.html",
+		size: SETTINGS,
+		ready: "role=option[name=/Claude Haiku/]",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Show main model list" }).waitFor();
+			await page.getByRole("combobox", { name: "Main model" }).click();
+		},
+	},
+	{
+		name: "settings-voice-open",
+		path: "/settings.html#speech",
+		size: SETTINGS,
+		ready: "role=option[name=/Microsoft Zira/]",
+		prepare: async (page) => {
+			await page.getByRole("combobox", { name: "Reading voice" }).click();
 		},
 	},
 );

@@ -36,3 +36,25 @@ export async function testConnection(provider: ProviderConfig, model: string, ap
 		return { ok: false, supportsImages: false, error: String(error) };
 	}
 }
+
+/** Provider picker entries: the catalog, then a custom OpenAI-compatible endpoint. */
+export function providerOptions(providers: ProviderInfo[]): { value: string; label: string; hint?: string }[] {
+	return [
+		...providers.map((p) => ({ value: p.id, label: p.name })),
+		{ value: CUSTOM, label: "Custom OpenAI-compatible", hint: "Ollama, LM Studio or any /v1 endpoint" },
+	];
+}
+
+/** Model picker entries: the name, with the id and what the model can do under it. */
+export function modelOptions(models: ModelInfo[]): { value: string; label: string; hint: string }[] {
+	return models.map((m) => {
+		const facts = [m.contextWindow ? `${contextLabel(m.contextWindow)} context` : "", m.supportsImages ? "images" : ""].filter(Boolean);
+		const hint = [m.name && m.name !== m.id ? m.id : "", ...facts].filter(Boolean).join(" · ");
+		return { value: m.id, label: m.name || m.id, hint };
+	});
+}
+
+function contextLabel(tokens: number): string {
+	if (tokens >= 1_000_000) return `${+(tokens / 1_000_000).toFixed(1)}M`;
+	return `${Math.round(tokens / 1000)}k`;
+}

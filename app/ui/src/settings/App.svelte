@@ -19,12 +19,16 @@
 		DEFAULT_CUSTOM_CONTEXT,
 		listModels,
 		listProviders,
+		modelOptions,
 		PRESETS,
 		providerConfig,
+		providerOptions,
 		type TestResult,
 		testConnection,
 	} from "../lib/connect.ts";
+	import Combobox from "../lib/Combobox.svelte";
 	import HotkeyField from "../lib/HotkeyField.svelte";
+	import Select, { type SelectOption } from "../lib/Select.svelte";
 	import MemoryMap, { type Picked } from "./MemoryMap.svelte";
 	import Switch from "../lib/Switch.svelte";
 	import { duplicates } from "../lib/hotkey.ts";
@@ -128,6 +132,17 @@
 	const custom = $derived(providerId === CUSTOM);
 	const keyUrl = $derived(providers.find((p) => p.id === providerId)?.keyUrl);
 	const levelsFor = (id: string) => models.find((m) => m.id === id)?.thinkingLevels ?? ALL_LEVELS;
+	const levelOptions = (id: string): SelectOption<ThinkingLevel>[] => levelsFor(id).map((level) => ({ value: level, label: level }));
+	const providerList = $derived(providerOptions(providers));
+	const modelList = $derived(modelOptions(models));
+	/** Set when the provider is changed here: its models replace the last provider's ids. */
+	let providerChanged = false;
+
+	function changeProvider() {
+		providerChanged = true;
+		test = null;
+		modelSaved = false;
+	}
 
 	function loadDraft(s: Settings) {
 		const p = s.provider;
@@ -215,7 +230,14 @@
 		if (!providerId || (custom && !baseUrl.trim())) return;
 		const timer = setTimeout(() => {
 			listModels(provider, key)
-				.then((list) => (models = list))
+				.then((list) => {
+					models = list;
+					if (!providerChanged) return;
+					providerChanged = false;
+					const ids = new Set(list.map((m) => m.id));
+					if (!ids.has(mainId.trim())) mainId = list[0]?.id ?? "";
+					if (!ids.has(quickId.trim())) quickId = "";
+				})
 				.catch(() => (models = []));
 		}, 300);
 		return () => clearTimeout(timer);
@@ -396,6 +418,17 @@
 			]),
 		].filter(Boolean),
 	);
+
+	const profileOptions = $derived(
+		profileNames.map((name) => ({ value: name, label: name, hint: profiles.find((p) => p.name === name)?.summary })),
+	);
+
+	/** The reading voice picker: the natural voices (when offered), then the system's. */
+	const voiceOptions = $derived<SelectOption<string>[]>([
+		...(neural ? neuralVoices.map((v) => ({ value: `neural:${v.n}`, label: v.name, group: `Natural, offline (${neural.sizeMb} MB download)` })) : []),
+		{ value: "os:", label: "System default", group: "System voices" },
+		...osVoices.map((v) => ({ value: `os:${v.id}`, label: v.name, hint: v.language, group: "System voices" })),
+	]);
 
 	function setVoice(patch: Partial<Settings["voiceProfiles"]>) {
 		if (!settings) return;
@@ -709,18 +742,10 @@
 			</header>
 
 			{#if page === "model"}
-				<datalist id="models">
-					{#each models as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-				</datalist>
 				<div class="group">
 					<div class="row">
 						<div class="label"><span class="title">Provider</span></div>
-						<select aria-label="Provider" bind:value={providerId}>
-							{#each providers as p (p.id)}
-								<option value={p.id}>{p.name}</option>
-							{/each}
-							<option value={CUSTOM}>Custom OpenAI-compatible</option>
-						</select>
+						<Select label="Provider" options={providerList} bind:value={providerId} onchange={changeProvider} />
 					</div>
 					{#if custom}
 						<div class="row stack">
@@ -754,27 +779,27 @@
 					<div class="row">
 						<div class="label"><span class="title">Main model</span><span class="desc">Replies, tools and the conversation</span></div>
 						<div class="inline">
-							<input aria-label="Main model" bind:value={mainId} list="models" spellcheck="false" placeholder="Pick or type a model id" />
-							<select bind:value={mainThinking} aria-label="Main thinking level" class="level">
-								{#each levelsFor(mainId) as level (level)}<option value={level}>{level}</option>{/each}
-							</select>
+							<Combobox label="Main model" options={modelList} bind:value={mainId} placeholder="Pick or type a model id" />
+							<Select class="level" label="Main thinking level" options={levelOptions(mainId)} bind:value={mainThinking} />
 						</div>
 					</div>
 					<div class="row">
 						<div class="label"><span class="title">Quick actions</span><span class="desc">Rewrites and other actions on selected text</span></div>
-						<select bind:value={quickFollows} aria-label="Quick actions model">
-							<option value={true}>Same as main model</option>
-							<option value={false}>A different model</option>
-						</select>
+						<Select
+							label="Quick actions model"
+							options={[
+								{ value: true, label: "Same as main model" },
+								{ value: false, label: "A different model" },
+							]}
+							bind:value={quickFollows}
+						/>
 					</div>
 					{#if !quickFollows}
 						<div class="row">
 							<div class="label"><span class="title">Quick model</span></div>
 							<div class="inline">
-								<input aria-label="Quick model ID" bind:value={quickId} list="models" spellcheck="false" placeholder="Model id" />
-								<select bind:value={quickThinking} aria-label="Quick actions thinking level" class="level">
-									{#each levelsFor(quickId) as level (level)}<option value={level}>{level}</option>{/each}
-								</select>
+								<Combobox label="Quick model ID" options={modelList} bind:value={quickId} placeholder="Pick or type a model id" />
+								<Select class="level" label="Quick actions thinking level" options={levelOptions(quickId)} bind:value={quickThinking} />
 							</div>
 						</div>
 					{/if}
@@ -898,11 +923,12 @@
 							{/if}
 						</div>
 						<div class="inline">
-							<select aria-label="Speech to text" value={settings.voice.stt} onchange={(e) => saveVoice({ stt: e.currentTarget.value as Settings["voice"]["stt"] })}>
-								{#each voiceModels.filter((m) => m.kind === "stt") as model (model.id)}
-									<option value={model.id}>{model.name}</option>
-								{/each}
-							</select>
+							<Select
+								label="Speech to text"
+								options={voiceModels.filter((m) => m.kind === "stt").map((m) => ({ value: m.id as Settings["voice"]["stt"], label: m.name, hint: `${m.sizeMb} MB${m.installed ? ", downloaded" : ""}` }))}
+								value={settings.voice.stt}
+								onchange={(stt) => saveVoice({ stt })}
+							/>
 							{#if stt && downloads[stt.id] === undefined && !stt.downloading}
 								{#if stt.installed}
 									<button type="button" class="btn" onclick={() => removeModel(stt.id)}>Remove</button>
@@ -921,19 +947,29 @@
 				<div class="group">
 					<div class="row">
 						<div class="label"><span class="title">Read replies aloud</span></div>
-						<select aria-label="Read replies aloud" value={settings.voice.reply} onchange={(e) => saveVoice({ reply: e.currentTarget.value as Settings["voice"]["reply"] })}>
-							<option value="mirror">When I speak</option>
-							<option value="always_voice">Always</option>
-							<option value="always_text">Never</option>
-						</select>
+						<Select
+							label="Read replies aloud"
+							options={[
+								{ value: "mirror", label: "When I speak", hint: "Spoken messages get spoken replies" },
+								{ value: "always_voice", label: "Always" },
+								{ value: "always_text", label: "Never" },
+							] satisfies SelectOption<Settings["voice"]["reply"]>[]}
+							value={settings.voice.reply}
+							onchange={(reply) => saveVoice({ reply })}
+						/>
 					</div>
 					<div class="row">
 						<div class="label"><span class="title">How much it says</span><span class="desc">The rest stays on screen.</span></div>
-						<select aria-label="How much it says" value={settings.voice.say} onchange={(e) => saveVoice({ say: e.currentTarget.value as Settings["voice"]["say"] })}>
-							<option value="brief">A sentence or two</option>
-							<option value="enough">Enough to follow without looking</option>
-							<option value="full">Everything it writes</option>
-						</select>
+						<Select
+							label="How much it says"
+							options={[
+								{ value: "brief", label: "A sentence or two" },
+								{ value: "enough", label: "Enough to follow without looking" },
+								{ value: "full", label: "Everything it writes" },
+							] satisfies SelectOption<Settings["voice"]["say"]>[]}
+							value={settings.voice.say}
+							onchange={(say) => saveVoice({ say })}
+						/>
 					</div>
 					<div class="row">
 						<div class="label">
@@ -949,41 +985,37 @@
 							{/if}
 						</div>
 						<div class="inline">
-							<select aria-label="Reading voice" value={readingVoice(settings.voice)} onchange={(e) => setReadingVoice(e.currentTarget.value)}>
-								{#if neural}
-									<optgroup label="Natural, offline ({neural.sizeMb} MB download)">
-										{#each neuralVoices as voice (voice.n)}
-											<option value="neural:{voice.n}">{voice.name}</option>
-										{/each}
-									</optgroup>
-								{/if}
-								<optgroup label="System voices">
-									<option value="os:">System default</option>
-									{#each osVoices as voice (voice.id)}
-										<option value="os:{voice.id}">{voice.name} ({voice.language})</option>
-									{/each}
-								</optgroup>
-							</select>
+							<Select label="Reading voice" options={voiceOptions} value={readingVoice(settings.voice)} onchange={setReadingVoice} />
 							<button type="button" class="btn" onclick={() => shell.speak("Hi, I'm Winku. This is how I sound.").catch((e) => (voiceError = String(e)))}>Test</button>
 						</div>
 					</div>
 					{#if settings.voice.tts === "supertonic"}
 						<div class="row">
 							<div class="label"><span class="title">Pace</span></div>
-							<select aria-label="Pace" value={String(settings.voice.ttsSpeed)} onchange={(e) => saveVoice({ ttsSpeed: Number(e.currentTarget.value) })}>
-								<option value="0.95">Slower</option>
-								<option value="1.05">Normal</option>
-								<option value="1.15">Faster</option>
-								<option value="1.3">Fastest</option>
-							</select>
+							<Select
+								label="Pace"
+								options={[
+									{ value: 0.95, label: "Slower" },
+									{ value: 1.05, label: "Normal" },
+									{ value: 1.15, label: "Faster" },
+									{ value: 1.3, label: "Fastest" },
+								]}
+								value={settings.voice.ttsSpeed}
+								onchange={(ttsSpeed) => saveVoice({ ttsSpeed })}
+							/>
 						</div>
 						<div class="row">
 							<div class="label"><span class="title">Quality</span><span class="desc">Higher is clearer and takes a little longer to start.</span></div>
-							<select aria-label="Quality" value={String(settings.voice.ttsSteps)} onchange={(e) => saveVoice({ ttsSteps: Number(e.currentTarget.value) })}>
-								<option value="5">Fast</option>
-								<option value="8">Balanced</option>
-								<option value="12">Best</option>
-							</select>
+							<Select
+								label="Quality"
+								options={[
+									{ value: 5, label: "Fast" },
+									{ value: 8, label: "Balanced" },
+									{ value: 12, label: "Best" },
+								]}
+								value={settings.voice.ttsSteps}
+								onchange={(ttsSteps) => saveVoice({ ttsSteps })}
+							/>
 						</div>
 					{/if}
 					{#if settings.voice.tts === "supertonic" && neural && downloads.supertonic === undefined && !neural.downloading}
@@ -1233,11 +1265,7 @@
 					<div class="row">
 						<div class="label"><span class="title">Default</span><span class="desc">Rewrites use this voice, unless an app below has its own.</span></div>
 						<div class="inline">
-							<select aria-label="Default voice profile" value={settings.voiceProfiles.default} onchange={(e) => setVoice({ default: e.currentTarget.value })}>
-								{#each profileNames as name (name)}
-									<option value={name}>{name}</option>
-								{/each}
-							</select>
+							<Select label="Default voice profile" options={profileOptions} value={settings.voiceProfiles.default} onchange={(name) => setVoice({ default: name })} />
 							<button type="button" class="btn" onclick={() => shell.openDataPath("voice")}>Open folder</button>
 						</div>
 					</div>
@@ -1245,11 +1273,7 @@
 						<div class="row">
 							<div class="label"><span class="title mono app">{app}</span></div>
 							<div class="inline">
-								<select aria-label="Voice profile for {app}" value={profile} onchange={(e) => setAppProfile(app, e.currentTarget.value)}>
-									{#each profileNames as name (name)}
-										<option value={name}>{name}</option>
-									{/each}
-								</select>
+								<Select label="Voice profile for {app}" options={profileOptions} value={profile} onchange={(name) => setAppProfile(app, name)} />
 								<button type="button" class="btn" onclick={() => setAppProfile(app, null)}>Remove</button>
 							</div>
 						</div>
@@ -1275,11 +1299,7 @@
 									value={action.name}
 									oninput={(e) => setAction(i, { name: e.currentTarget.value }, 400)}
 								/>
-								<select class="output" aria-label="Action {i + 1} result" value={action.output} onchange={(e) => setAction(i, { output: e.currentTarget.value as ActionSpec["output"] })}>
-									{#each OUTPUTS as o (o.value)}
-										<option value={o.value}>{o.label}</option>
-									{/each}
-								</select>
+								<Select class="output" label="Action {i + 1} result" options={OUTPUTS} value={action.output} onchange={(output) => setAction(i, { output })} />
 								<div class="action-toggles">
 									{#if action.output !== "agent"}
 										<span class="toggle" title="Use the conversation as context">
@@ -1346,11 +1366,16 @@
 				<div class="group">
 					<div class="row">
 						<div class="label"><span class="title">Size</span></div>
-						<select aria-label="Size" value={settings.eyes.size} onchange={(e) => save({ eyes: { ...settings!.eyes, size: e.currentTarget.value as Settings["eyes"]["size"] } })}>
-							<option value="small">Small</option>
-							<option value="medium">Medium</option>
-							<option value="large">Large</option>
-						</select>
+						<Select
+							label="Size"
+							options={[
+								{ value: "small", label: "Small" },
+								{ value: "medium", label: "Medium" },
+								{ value: "large", label: "Large" },
+							] satisfies SelectOption<Settings["eyes"]["size"]>[]}
+							value={settings.eyes.size}
+							onchange={(size) => save({ eyes: { ...settings!.eyes, size } })}
+						/>
 					</div>
 					<div class="row">
 						<div class="label"><span class="title">Hide the eyes</span><span class="desc">A tray icon appears while they're hidden.</span></div>
@@ -1385,11 +1410,16 @@
 							<span class="desc" class:bad={update.state === "error"}>{updateLine(update)}</span>
 						</div>
 						<div class="inline">
-							<select aria-label="Updates" value={settings.updates} onchange={(e) => save({ updates: e.currentTarget.value as Settings["updates"] })}>
-								<option value="auto">Install automatically</option>
-								<option value="notify">Tell me, don't download</option>
-								<option value="off">Off</option>
-							</select>
+							<Select
+								label="Updates"
+								options={[
+									{ value: "auto", label: "Install automatically" },
+									{ value: "notify", label: "Tell me, don't download" },
+									{ value: "off", label: "Off" },
+								] satisfies SelectOption<Settings["updates"]>[]}
+								value={settings.updates}
+								onchange={(updates) => save({ updates })}
+							/>
 							{#if update.state === "ready" || update.state === "available"}
 								<button type="button" class="btn" onclick={() => shell.updateRestart()}>Restart to update</button>
 							{:else}
@@ -1701,7 +1731,8 @@
 		min-width: 0;
 	}
 	.inline > input,
-	.inline > select {
+	.inline > :global(.select),
+	.inline > :global(.combo) {
 		flex: 1 1 auto;
 	}
 	.inline.end {
@@ -1710,7 +1741,6 @@
 
 	/* ── controls ── */
 	input:not([type="checkbox"]),
-	select,
 	textarea {
 		width: 100%;
 		min-width: 0;
@@ -1723,18 +1753,6 @@
 		font-size: 13px;
 		transition: border-color 120ms ease;
 	}
-	select {
-		appearance: none;
-		padding-right: 30px;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23aaaeb9' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-		background-repeat: no-repeat;
-		background-position: right 11px center;
-		cursor: pointer;
-	}
-	select option,
-	select optgroup {
-		background: var(--panel-raised);
-	}
 	textarea {
 		height: auto;
 		padding: 8px 10px;
@@ -1744,18 +1762,15 @@
 		min-height: 60px;
 	}
 	input:hover,
-	select:hover,
 	textarea:hover {
 		border-color: rgb(255 255 255 / 0.32);
 	}
 	/* The border is the focus mark; an outline as well would double it. */
 	input:focus,
-	select:focus,
 	textarea:focus {
 		border-color: var(--focus);
 	}
 	input:focus-visible,
-	select:focus-visible,
 	textarea:focus-visible {
 		outline: none;
 	}
@@ -1766,8 +1781,8 @@
 	.short {
 		width: 120px !important;
 	}
-	.level {
-		flex: 0 0 112px !important;
+	.inline > :global(.select.level) {
+		flex: 0 0 112px;
 	}
 	.btn {
 		flex: none;
@@ -1843,7 +1858,7 @@
 		gap: 8px;
 		min-width: 0;
 	}
-	.action :is(input, select) {
+	.action :is(input, :global(.select .trigger)) {
 		height: 28px;
 	}
 	.key {
@@ -1854,7 +1869,7 @@
 	.name {
 		flex: 0 1 200px;
 	}
-	.output {
+	.action-main > :global(.select.output) {
 		flex: 0 0 128px;
 	}
 	.action-toggles {

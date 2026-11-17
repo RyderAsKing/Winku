@@ -4,7 +4,7 @@
 
 | Keys | Does |
 |---|---|
-| tap `Ctrl+Alt+Space` | open or hide the bar |
+| tap `Ctrl+Alt+Space` | open or hide the bar. With text selected in another app, it brings that text to the bar instead, open or not |
 | hold `Ctrl+Alt+Space` | talk; let go to send. Holding also stops Winku speaking |
 | `Ctrl+Alt+1`–`5` | run an action on the selected text |
 | `Ctrl+Alt+Q` | ask about the selected text |

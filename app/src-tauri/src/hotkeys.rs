@@ -478,22 +478,25 @@ fn summon(app: &AppHandle, pressed: bool) {
     let talking = state.talking.swap(false, Ordering::SeqCst);
     match summon_release(released, talking, listening_paused(app)) {
         SummonRelease::Toggle => {
-            if app.state::<WindowState>().mode() != Mode::Pill {
-                emit_ui(app, json!({ "kind": "hide" }));
-                return;
-            }
-            // Load memory search while the user types (a background thread; returns at once).
-            crate::recall::warm(app);
+            let open = app.state::<WindowState>().mode() != Mode::Pill;
             let window = crate::platform::foreground_window();
-            let Some(note) = crate::capture::begin_hotkey_note(app, window) else {
-                emit_ui(app, json!({ "kind": "summon" }));
+            let note = crate::capture::begin_hotkey_note(app, window);
+            let Some(note) = note else {
+                // Winku itself is in front: no outside selection to bring.
+                let kind = if open { "hide" } else { "summon" };
+                emit_ui(app, json!({ "kind": kind }));
                 return;
             };
+            if !open {
+                // Load memory search while the user types (a background thread; returns at once).
+                crate::recall::warm(app);
+            }
             // The selection is read before the bar takes focus, and comes with it as a pill.
+            // Over the open bar a selection joins it the same way; with none the bar hides.
             let app = app.clone();
             std::thread::spawn(move || {
                 let selection = crate::capture::read_selection(&app, note, false);
-                emit_ui(&app, json!({ "kind": "summon", "selection": selection }));
+                emit_ui(&app, toggle_event(open, selection));
             });
         }
         SummonRelease::EndTalk => {
@@ -513,6 +516,14 @@ fn summon(app: &AppHandle, pressed: bool) {
             emit_ui(app, json!({ "kind": "talk_start" }));
             emit_ui(app, json!({ "kind": "talk_end", "text": "" }));
         }
+    }
+}
+
+/// What a summon tap over another app's window sends the bar, once its selection is read.
+fn toggle_event(open: bool, selection: Option<String>) -> serde_json::Value {
+    match selection {
+        None if open => json!({ "kind": "hide" }),
+        selection => json!({ "kind": "summon", "selection": selection }),
     }
 }
 
@@ -718,6 +729,24 @@ mod tests {
         );
         assert_eq!(summon_release(late, false, true), Toggle);
         assert_eq!(summon_release(late, false, false), EmptyTalk);
+    }
+
+    #[test]
+    fn tap_over_the_open_bar_brings_a_selection_or_hides() {
+        let text = Some("picked".to_string());
+        assert_eq!(
+            toggle_event(true, text.clone()),
+            json!({ "kind": "summon", "selection": "picked" })
+        );
+        assert_eq!(toggle_event(true, None), json!({ "kind": "hide" }));
+        assert_eq!(
+            toggle_event(false, text),
+            json!({ "kind": "summon", "selection": "picked" })
+        );
+        assert_eq!(
+            toggle_event(false, None),
+            json!({ "kind": "summon", "selection": null })
+        );
     }
 
     #[test]

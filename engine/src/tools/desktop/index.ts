@@ -22,7 +22,12 @@ const CHROMIUM_SNAPSHOT_MS = 15_000;
 const PROCESS_MARGIN_MS = 10_000;
 
 const REF = /^@([A-Za-z0-9]+):e\d+$/;
-const WINDOW_ID = /^w-\d+$/;
+/**
+ * agent-desktop's window ids: `w-<HWND>` on Windows, opaque addresses of 34 to 70 characters on
+ * Linux (where the shell's `w-<X11 window>` is also accepted). Elsewhere checked only so a
+ * model-written id can't be read as a flag.
+ */
+const WINDOW_ID = process.platform === "win32" ? /^w-\d+$/ : /^[^\s-]\S{0,255}$/;
 
 export const DESKTOP_GATED = new Set(["desktop_act", "desktop_press", "desktop_window"]);
 
@@ -39,6 +44,15 @@ interface KnownWindow {
 	title?: string;
 	chromium?: boolean;
 }
+
+/** The shell's view of a window. With a pid (Linux), its id is the shell's, not agent-desktop's. */
+interface ShellWindow extends KnownWindow {
+	pid?: number;
+}
+
+const NOT_ACCESSIBLE =
+	"isn't visible to accessibility tools, so it can't be read or operated. Apps that run natively on Wayland aren't " +
+	"reachable; Chromium and Electron apps need --force-renderer-accessibility, Qt apps QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1.";
 
 interface SnapshotEntry {
 	window: KnownWindow;
@@ -85,9 +99,9 @@ const ACTION_VERB: Record<Action, string> = {
 };
 
 /**
- * On Windows these have no semantic (accessibility-only) path in agent-desktop: they use real
- * input and may bring the window to the front. Everything else stays headless: no pointer
- * movement, no focus change.
+ * These have no semantic (accessibility-only) path in agent-desktop: they use real input and may
+ * bring the window to the front (on Linux only on X11). Everything else stays headless: no
+ * pointer movement, no focus change.
  */
 const PHYSICAL = new Set<Action>(["double_click", "right_click", "type", "focus"]);
 
@@ -114,14 +128,49 @@ class DesktopState {
 			throw new Error(`Couldn't tell which window the user is in: ${(error as Error).message}`);
 		}
 		if (!data?.windowId || !WINDOW_ID.test(data.windowId)) throw new Error("There is no window to work with.");
-		const known: KnownWindow = {
-			id: data.windowId,
-			...(data.app ? { app: data.app } : {}),
-			...(data.windowTitle ? { title: data.windowTitle } : {}),
-			chromium: !!data.chromium,
-		};
-		this.windows.set(known.id, known);
-		return known;
+		return this.resolve(
+			{
+				id: data.windowId,
+				...(data.app ? { app: data.app } : {}),
+				...(data.windowTitle ? { title: data.windowTitle } : {}),
+				chromium: !!data.chromium,
+				...(data.pid !== undefined ? { pid: data.pid } : {}),
+			},
+			signal,
+		);
+	}
+
+	/**
+	 * A window the shell named, as agent-desktop knows it. Where the shell's id is its own (Linux,
+	 * with a pid), the window is looked up among agent-desktop's by process and title, and the
+	 * shell's id is kept as another name for it.
+	 */
+	async resolve(shell: ShellWindow, signal: AbortSignal | undefined): Promise<KnownWindow> {
+		const { pid, ...known } = shell;
+		if (pid === undefined) {
+			this.windows.set(known.id, known);
+			return known;
+		}
+		const cached = this.windows.get(known.id);
+		if (cached && cached.id !== known.id && (!known.title || cached.title === known.title)) return cached;
+		const rows = (await this.listWindows(signal)).filter((row) => row.pid === pid);
+		const title = known.title;
+		const row =
+			rows.find((r) => title !== undefined && r.title === title) ??
+			rows.find((r) => r.is_focused) ??
+			// Titles can differ in a suffix or change between reads (a browser's page title).
+			rows.find((r) => !!title && !!r.title && (title.includes(r.title) || r.title.includes(title))) ??
+			(rows.length === 1 ? rows[0] : undefined);
+		if (!row && rows.length > 1) {
+			throw new Error(
+				`${known.app ?? "That app"} has ${rows.length} windows and Winku couldn't tell which one the user is in. Pick one from desktop_windows.`,
+			);
+		}
+		if (!row) throw new Error(`The window of ${known.app ?? "that app"} ${NOT_ACCESSIBLE}`);
+		const found: KnownWindow = { ...this.windows.get(row.id), id: row.id, chromium: known.chromium };
+		this.windows.set(row.id, found);
+		this.windows.set(known.id, found);
+		return found;
 	}
 
 	async listWindows(signal: AbortSignal | undefined): Promise<WindowRow[]> {
@@ -140,7 +189,7 @@ class DesktopState {
 	async window(id: string | undefined, signal: AbortSignal | undefined): Promise<KnownWindow> {
 		if (!id) return this.target(signal);
 		const wanted = id.trim();
-		if (!WINDOW_ID.test(wanted)) throw new Error(`"${id}" isn't a window id. Window ids look like w-12345 (from desktop_windows).`);
+		if (!WINDOW_ID.test(wanted)) throw new Error(`"${id}" isn't a window id. Window ids come from desktop_windows.`);
 		const known = this.windows.get(wanted);
 		if (known) return known;
 		await this.listWindows(signal);
@@ -254,7 +303,7 @@ export interface DesktopTools {
 	/** Permission summaries and allow keys for the gated desktop tools. */
 	describe: (tool: string, args: Record<string, unknown>) => GateCheck | undefined;
 	/** A compact snapshot of a (non-Chromium) window for look_at_screen; undefined on failure. */
-	glance: (window: { id: string; app?: string; title?: string }, signal: AbortSignal | undefined) => Promise<string | undefined>;
+	glance: (window: { id: string; app?: string; title?: string; pid?: number }, signal: AbortSignal | undefined) => Promise<string | undefined>;
 }
 
 export function desktopTools(deps: DesktopDeps): DesktopTools {
@@ -270,7 +319,7 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 			"Only observe an app you're operating or the user asked about: in Chromium-based apps (Chrome, Edge, VS Code, Slack, Teams, other Electron apps) " +
 			"it switches on the app's accessibility tree, which slows that app until it restarts.",
 		parameters: Type.Object({
-			window: Type.Optional(Type.String({ description: "A window id (w-…) from desktop_windows; default: the window the user was in" })),
+			window: Type.Optional(Type.String({ description: "A window id from desktop_windows; default: the window the user was in" })),
 			root: Type.Optional(Type.String({ description: "A ref to read just that part of the window, deeper" })),
 			surface: Type.Optional(
 				Type.Union([Type.Literal("menu"), Type.Literal("sheet"), Type.Literal("focused")], {
@@ -356,7 +405,7 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 			"Some shortcuts (alt+f4, win+r, …) are refused. Observe afterwards to see what it did.",
 		parameters: Type.Object({
 			keys: Type.String({ description: "Key or combo joined with +: ctrl, alt, shift, return, escape, tab, f1…f12, up, …" }),
-			window: Type.Optional(Type.String({ description: "A window id (w-…); default: the window the user was in" })),
+			window: Type.Optional(Type.String({ description: "A window id from desktop_windows; default: the window the user was in" })),
 		}),
 		async execute(_id, params, signal) {
 			try {
@@ -405,14 +454,16 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 		label: "Manage a window",
 		description:
 			"focus, minimize, maximize or restore a window (a minimized window must be restored before you can act in it), " +
-			'or launch an app and get its window: app is "notepad", "mspaint", "charmap" or a full path to an .exe. ' +
+			(process.platform === "win32"
+				? 'or launch an app and get its window: app is "notepad", "mspaint", "charmap" or a full path to an .exe. '
+				: 'or launch an app and get its window: app is a name list-apps would show, such as "gnome-calculator", or a desktop entry. ') +
 			"For other apps use open, then desktop_windows to find the new window.",
 		parameters: Type.Object({
 			action: Type.Union(
 				WINDOW_ACTIONS.map((a) => Type.Literal(a)),
 				{ description: "What to do" },
 			),
-			window: Type.Optional(Type.String({ description: "A window id (w-…); default: the window the user was in" })),
+			window: Type.Optional(Type.String({ description: "A window id from desktop_windows; default: the window the user was in" })),
 			app: Type.Optional(Type.String({ description: "launch: the app" })),
 		}),
 		async execute(_id, params, signal) {
@@ -460,7 +511,7 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 			text: Type.Optional(Type.String({ description: "Text to wait for (in a name, value or description)" })),
 			role: Type.Optional(Type.String({ description: 'A role to wait for, e.g. "button", "dialog"' })),
 			gone: Type.Optional(Type.Boolean({ description: "Wait until it's gone instead" })),
-			window: Type.Optional(Type.String({ description: "A window id (w-…); default: the window the user was in" })),
+			window: Type.Optional(Type.String({ description: "A window id from desktop_windows; default: the window the user was in" })),
 			ms: Type.Optional(Type.Number({ description: "Without text/role: how long to pause. With them: how long to wait at most (default 10000)" })),
 		}),
 		async execute(_id, params, signal) {
@@ -525,9 +576,8 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 
 	const glance: DesktopTools["glance"] = async (target, signal) => {
 		if (!WINDOW_ID.test(target.id)) return undefined;
-		const window: KnownWindow = { ...target, chromium: false };
-		state.windows.set(window.id, window);
 		try {
+			const window = await state.resolve({ ...target, chromium: false }, signal);
 			const result = await state.observe({ window, cap: GLANCE_CAP }, signal);
 			return result.ok ? result.text : undefined;
 		} catch (error) {

@@ -80,9 +80,12 @@ pub struct ScreenCapture {
     pub app: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
-    /// agent-desktop's id for the window, `w-<HWND>`.
+    /// agent-desktop's id for the window, `w-<HWND>`; on Linux `w-<X11 window>`, see `pid`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_id: Option<String>,
+    /// See `ScreenTarget::pid`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
     /// A Chromium window (see `platform::uia_is_safe`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub chromium: bool,
@@ -102,6 +105,24 @@ pub struct ScreenTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
     pub chromium: bool,
+    /// Linux only: the window's process. agent-desktop's window ids there are AT-SPI addresses,
+    /// not X11 windows, so the engine finds the window by process and title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
+/// The process the engine looks the window up by (`ScreenTarget::pid`): Linux only. Elsewhere
+/// `window_id` is agent-desktop's own id.
+fn lookup_pid(window: WindowHandle) -> Option<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        platform::window_pid(window)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        None
+    }
 }
 
 /// agent-desktop's window id: `w-` and the HWND as an unsigned number.
@@ -424,6 +445,7 @@ pub fn screen_capture(app: &AppHandle, include_image: bool) -> Result<ScreenCapt
         app: non_empty(platform::process_name(window), usize::MAX),
         window_title: non_empty(platform::window_title(window), 300),
         window_id: Some(agent_desktop_window_id(window)),
+        pid: lookup_pid(window),
         chromium,
         text,
         image,
@@ -444,6 +466,7 @@ pub fn screen_target(app: &AppHandle) -> Result<ScreenTarget, String> {
         app: non_empty(platform::process_name(window), usize::MAX),
         window_title: non_empty(platform::window_title(window), 300),
         chromium: !platform::uia_is_safe(window),
+        pid: lookup_pid(window),
     })
 }
 
@@ -541,6 +564,7 @@ mod tests {
             app: Some("notepad.exe".into()),
             window_title: None,
             chromium: false,
+            pid: None,
         };
         assert_eq!(
             response_with("r9", Ok(target)),

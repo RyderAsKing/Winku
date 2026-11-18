@@ -1,8 +1,10 @@
 //! Hides the resting pill while a fullscreen app has focus (docs/ARCHITECTURE.md "Shipping").
 //! Windows checks the foreground window on every foreground change (a WinEvent hook) and when
 //! Explorer reports a fullscreen app opening or closing (an appbar notification); no polling.
-//! Other platforms never report fullscreen.
+//! On X11 the window manager marks fullscreen windows (`_NET_WM_STATE_FULLSCREEN`), and a thread
+//! waits for the active window, or its state, to change. Other platforms never report fullscreen.
 
+// The geometry check is Windows-only; X11 asks the window manager.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,7 +63,13 @@ pub fn start(app: &AppHandle) {
     }));
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn start(app: &AppHandle) {
+    let app = app.clone();
+    crate::platform::watch_fullscreen(Box::new(move |fullscreen| changed(&app, fullscreen)));
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn start(_app: &AppHandle) {}
 
 #[cfg(test)]

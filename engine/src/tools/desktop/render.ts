@@ -172,7 +172,10 @@ const RECOVERY: Record<string, string> = {
 	APP_NOT_FOUND: "That app isn't running.",
 	POLICY_DENIED: "This needs a different action (or isn't allowed).",
 	ACTION_NOT_SUPPORTED: "This element can't do that. Try another action or element.",
-	PERM_DENIED: "Permission denied. On Windows this usually means the app runs as administrator and Winku doesn't.",
+	PERM_DENIED:
+		process.platform === "win32"
+			? "Permission denied. On Windows this usually means the app runs as administrator and Winku doesn't."
+			: "Permission denied. The app may run as another user (or as root) than Winku.",
 	APP_UNRESPONSIVE: "The app isn't responding. Observe again before trying anything else.",
 };
 

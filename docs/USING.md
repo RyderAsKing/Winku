@@ -38,13 +38,13 @@ You don't need an action key to work on a selection. Select text, open Winku wit
 
 ## Tools
 
-Winku can read and write files in your home folder, run PowerShell, open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.
+Winku can read and write files in your home folder, run PowerShell (bash on Linux), open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.
 
 ## Voice
 
 The first time you hold the talk key, Winku downloads a speech model of about 110 MB and shows the progress on the eyes. Your speech is recognised on your computer and never leaves it.
 
-When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice reads until Supertonic arrives, and stays available in Settings.
+When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice (on Linux, Speech Dispatcher's `spd-say`, if it's installed) reads until Supertonic arrives, and stays available in Settings.
 
 ## Memory
 
@@ -61,3 +61,19 @@ Right-click the eyes for Settings, History, Ask before running, Hide eyes, Pause
 ## Updates
 
 Winku updates itself from GitHub Releases. It checks each update against Winku's signing key, then installs it when you quit or restart. You can switch this to "Tell me" or "Off" in Settings > App.
+
+## Linux
+
+Winku talks to the X server ([why](adr/0003-linux-runs-on-x11.md)). In an X11 session everything above works. In a Wayland session Winku runs through XWayland, which changes a few things:
+
+- **Apps that run natively on Wayland are invisible to Winku.** Most GTK 4 and Qt 6 apps do, and so do Firefox and Chromium-based browsers when they're set to. With one of them in front, Winku doesn't know which app you're in, can't read your selection or paste a result back, and can't take a screenshot. Apps that run through XWayland (many Electron apps, older GTK 3 and Qt 5 apps, games) work normally. Choosing the X11 session at the login screen ("GNOME on Xorg", "Plasma (X11)") gives you everything.
+- **Hotkeys on GNOME** only reach Winku while an XWayland app has focus. KDE Plasma passes them on when its setting for legacy X11 apps allows them to read keystrokes (System Settings, Application Permissions or Window Management, depending on the version).
+- **Computer use** reads apps through the accessibility bus (AT-SPI), on X11 and Wayland alike. Chromium and Electron apps show up there only when started with `--force-renderer-accessibility`, and Qt apps with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`.
+
+A few things differ on Linux whatever the session:
+
+- **The clipboard.** X11 has no clipboard store: the app that copied keeps the data. What Winku copies stays available while it runs, or longer if your desktop has a clipboard manager (most do).
+- **Terminals** copy and paste with `Ctrl+Shift+C` and `Ctrl+Shift+V`, and Winku uses those in them. xterm and urxvt don't have those shortcuts, so rewriting a selection doesn't work there.
+- **API keys** are kept in the Secret Service (GNOME Keyring or KWallet). Without a running keyring Winku can't save a key.
+- **The tray icon** needs a status-notifier host. GNOME shows it only with the AppIndicator extension, which Ubuntu turns on by default.
+- **Updates.** The AppImage updates itself like the Windows app. The `.deb` and `.rpm` ask for your password (through `pkexec`) to install an update.

@@ -22,6 +22,8 @@ mod window;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    platform::force_x11_backend();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

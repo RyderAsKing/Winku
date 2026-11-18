@@ -1,9 +1,10 @@
 //! The main window and its three modes (pill, bar, transcript), plus the on-demand Settings and
 //! History windows. Everything grows out of the pill: the window is a fixed "stage" with the pill
 //! in one corner, and the bar and the reply bubble extend from there toward the screen's middle.
-//! On Windows the stage is clipped to the shapes the UI reports, so the transparent rest of it
-//! neither paints nor takes clicks, and nothing is resized while a reply streams. Geometry is pure
-//! (physical pixels, `Rect`, `MonitorInfo`) and unit-tested; the Tauri glue feeds it real monitors.
+//! On Windows and X11 the stage is clipped to the shapes the UI reports, so the transparent rest
+//! of it neither paints nor takes clicks, and nothing is resized while a reply streams. Geometry is
+//! pure (physical pixels, `Rect`, `MonitorInfo`) and unit-tested; the Tauri glue feeds it real
+//! monitors.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -510,7 +511,25 @@ fn handle(window: &WebviewWindow) -> Option<crate::platform::WindowHandle> {
             .ok()
             .map(|h| crate::platform::WindowHandle(h.0 as isize))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // The X11 window id, which doesn't change: asked for once. Under Wayland without XWayland
+        // there is none, and window placement falls back to GTK's calls.
+        static XID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        if let Some(&xid) = XID.get() {
+            return Some(crate::platform::WindowHandle(xid as isize));
+        }
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let xid = match window.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok()?,
+            RawWindowHandle::Xcb(h) => h.window.get(),
+            _ => return None,
+        };
+        Some(crate::platform::WindowHandle(
+            *XID.get_or_init(|| xid) as isize
+        ))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = window;
         None
@@ -657,8 +676,8 @@ pub struct Shape {
 }
 
 /// The UI reports its stage size and the shapes it is drawing (pill or bar, bubble). The window
-/// becomes the stage around the pill, clipped to the shapes on Windows. Elsewhere there is no
-/// clipping, so a bare pill keeps a pill-sized window. `inset`: the stage's strip on the far side
+/// becomes the stage around the pill, clipped to the shapes on Windows and X11. Elsewhere there is
+/// no clipping, so a bare pill keeps a pill-sized window. `inset`: the stage's strip on the far side
 /// of the pill, logical px. Returns which way things grow.
 pub fn set_shape(
     app: &AppHandle,
@@ -683,7 +702,9 @@ pub fn set_shape(
     let pill = eye_size(app).pill();
     let bare_pill = shapes.len() == 1 && shapes[0].w <= pill.0 + 0.5 && shapes[0].h <= pill.1 + 0.5;
     view.stage = Some(stage);
-    view.staged = cfg!(windows) || !bare_pill;
+    // With a handle the shell can limit clicks to the shapes (Windows' window region, X11's input
+    // shape), so the window can stay the whole stage.
+    view.staged = handle(&window).is_some() || !bare_pill;
     view.inset = inset;
     // The strip may have changed size: whether it fits is part of the layout.
     let layout = Layout {
@@ -1010,8 +1031,8 @@ fn emit_bring(app: &AppHandle, payload: serde_json::Value) {
 /// "Bring Winku here": glides the pill to beside the pointer (`bring_target`), stage and all. A
 /// press during a glide retargets it; a drag that starts during one cancels it. Nothing happens
 /// while the eyes are hidden or tucked away for a fullscreen app, or when the pointer is already
-/// next to the pill. The shell moves the window itself only on Windows, so elsewhere this does
-/// nothing either.
+/// next to the pill. The shell moves the window itself only on Windows and X11, so elsewhere this
+/// does nothing either.
 pub fn bring_here(app: &AppHandle) {
     let hidden = app.state::<settings::Store>().get().eyes.hidden;
     let state = app.state::<WindowState>();
@@ -1125,8 +1146,12 @@ fn glide_to_pointer(app: &AppHandle, hwnd: crate::platform::WindowHandle) {
                 rect.w.round().max(1.0) as i32,
                 rect.h.round().max(1.0) as i32,
             );
-            if crate::platform::window_rect(hwnd) != Some((x, y, w, h)) {
-                crate::platform::set_window_rect(hwnd, x, y, w, h);
+            if crate::platform::window_rect(hwnd) != Some((x, y, w, h))
+                && !crate::platform::set_window_rect(hwnd, x, y, w, h)
+            {
+                let _ = window
+                    .set_position(PhysicalPosition::new(x, y))
+                    .and_then(|_| window.set_size(PhysicalSize::new(w as u32, h as u32)));
             }
             Step::Next
         });

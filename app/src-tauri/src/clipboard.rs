@@ -3,7 +3,8 @@
 //! list come from the clipboard history (clipboard_history.rs).
 //!
 //! The OS work is in `platform`; this module holds the pure parts: decoding the formats the
-//! platform hands over (CF_DIB images, CF_HDROP file lists), the Response data and the note.
+//! platform hands over (CF_DIB images and CF_HDROP file lists on Windows, PNG images and URI
+//! lists on X11), the Response data and the note.
 
 use std::time::Instant;
 
@@ -23,6 +24,9 @@ pub enum Raw {
     Text(String),
     /// A CF_DIB (BITMAPINFOHEADER and pixels).
     Dib(Vec<u8>),
+    /// A PNG file (X11's `image/png`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Png(Vec<u8>),
     Files(Vec<String>),
 }
 
@@ -109,8 +113,13 @@ fn content(raw: Raw, include_image: bool) -> Result<Content, String> {
         Raw::Private => Content::Private,
         Raw::Text(text) => Content::Text { text },
         Raw::Files(paths) => Content::Files { paths },
-        Raw::Dib(dib) => {
-            let image = decode_dib(&dib).ok_or("the image on the clipboard couldn't be read")?;
+        Raw::Dib(_) | Raw::Png(_) => {
+            let image = match raw {
+                Raw::Dib(dib) => decode_dib(&dib),
+                Raw::Png(png) => decode_png(&png),
+                _ => None,
+            }
+            .ok_or("the image on the clipboard couldn't be read")?;
             let (width, height) = (image.width, image.height);
             let image = if include_image {
                 Some(to_attachment(image)?)
@@ -197,6 +206,85 @@ pub fn decode_dib(dib: &[u8]) -> Option<RawImage> {
     })
 }
 
+/// Width and height from a PNG's header (IHDR), without decoding it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    if png.get(..8)? != b"\x89PNG\r\n\x1a\n" || png.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let be = |at: usize| Some(u32::from_be_bytes(png.get(at..at + 4)?.try_into().ok()?));
+    Some((be(16)?, be(20)?))
+}
+
+/// A PNG as RGBA pixels.
+pub fn decode_png(png: &[u8]) -> Option<RawImage> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let frame = reader.next_frame(&mut buf).ok()?;
+    let pixels = &buf[..frame.buffer_size()];
+    let rgba = match frame.color_type {
+        png::ColorType::Rgba => pixels.to_vec(),
+        png::ColorType::Rgb => pixels
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => pixels
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        png::ColorType::Grayscale => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        png::ColorType::Indexed => return None,
+    };
+    Some(RawImage {
+        width: frame.width,
+        height: frame.height,
+        rgba,
+    })
+}
+
+/// Local file paths from a `text/uri-list` (or GNOME's `x-special/gnome-copied-files`, which
+/// starts with a `copy` or `cut` line): `file://` URIs, percent-decoded. Other URIs are skipped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn decode_uri_list(list: &str) -> Vec<String> {
+    list.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|uri| {
+            let rest = uri.strip_prefix("file://")?;
+            // `file:///path` or `file://localhost/path`; another host isn't a local file.
+            let path = &rest[rest.find('/')?..];
+            let host = &rest[..rest.len() - path.len()];
+            if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+                return None;
+            }
+            percent_decode(path)
+        })
+        .collect()
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 /// File paths from a CF_HDROP (a DROPFILES header and a double-NUL-terminated list).
 pub fn decode_hdrop(data: &[u8]) -> Vec<String> {
@@ -274,6 +362,36 @@ mod tests {
         }
         assert_eq!(decode_hdrop(&d), vec!["C:\\a.txt", "D:\\b c.pdf"]);
         assert!(decode_hdrop(&[1, 2]).is_empty());
+    }
+
+    #[test]
+    fn decodes_uri_lists() {
+        let list =
+            "# a comment\r\nfile:///home/me/a%20b.txt\r\nfile://localhost/tmp/%C3%A9.png\r\n\
+                    https://example.com/x\r\nfile://server/share/c\r\n";
+        assert_eq!(
+            decode_uri_list(list),
+            vec!["/home/me/a b.txt", "/tmp/é.png"]
+        );
+        let gnome = "copy\nfile:///home/me/doc.pdf";
+        assert_eq!(decode_uri_list(gnome), vec!["/home/me/doc.pdf"]);
+        assert!(decode_uri_list("file:///bad%zz").is_empty());
+    }
+
+    #[test]
+    fn reads_png_images_and_their_size() {
+        let image = RawImage {
+            width: 3,
+            height: 2,
+            rgba: (0..6)
+                .flat_map(|i| [i * 40, 0, 255 - i * 40, 255])
+                .collect(),
+        };
+        let png = crate::capture::encode_png(&image).unwrap();
+        assert_eq!(png_size(&png), Some((3, 2)));
+        assert_eq!(decode_png(&png), Some(image));
+        assert_eq!(png_size(b"not a png at all, really"), None);
+        assert_eq!(decode_png(b"nope"), None);
     }
 
     #[test]

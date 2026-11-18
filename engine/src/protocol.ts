@@ -538,8 +538,10 @@ export interface VisualShown {
 export interface ScreenCapture {
 	app?: string;
 	windowTitle?: string;
-	/** agent-desktop's id for the window (`w-<HWND>`), for desktop_* tools. */
+	/** agent-desktop's id for the window (`w-<HWND>`), for desktop_* tools. Linux: `w-<X11 window>`, see `pid`. */
 	windowId?: string;
+	/** See ScreenTarget.pid. */
+	pid?: number;
 	/** A Chromium window: no UI Automation text when there is a screenshot (it slows the app). */
 	chromium?: boolean;
 	text?: string;
@@ -575,6 +577,11 @@ export interface ScreenTarget {
 	windowTitle?: string;
 	/** Chrome, Edge, Electron or WebView2: reading it through UI Automation switches on its accessibility tree. */
 	chromium: boolean;
+	/**
+	 * Linux only: the window's process. agent-desktop's window ids there are AT-SPI addresses, not
+	 * X11 windows, so the engine looks the window up by process and title (`list-windows`).
+	 */
+	pid?: number;
 }
 
 export type OutboundMessage = Event | Result | Request;

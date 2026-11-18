@@ -9,9 +9,10 @@
 //! its own thread that sleeps in `GetMessageW`, plus one timer while a hold is pending. There is
 //! no low-level keyboard hook (it adds latency to every keystroke system-wide) and no polling.
 //! Raw input is not delivered while an elevated window has focus, so hints don't appear there;
-//! the hotkeys themselves are unaffected. Other platforms never show hints.
+//! the hotkeys themselves are unaffected. X11 reads XInput 2 raw key events (`xinput.rs`) on a
+//! thread that sleeps waiting for them. Other platforms never show hints.
 
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -22,6 +23,10 @@ use tauri::{AppHandle, Emitter};
 
 #[cfg(windows)]
 mod rawinput;
+#[cfg(target_os = "linux")]
+mod xinput;
+#[cfg(target_os = "linux")]
+use xinput as rawinput;
 
 /// How long the prefix must be held alone before the hints appear.
 pub const HOLD_DELAY: Duration = Duration::from_millis(450);
@@ -380,7 +385,7 @@ pub(crate) fn debug_log(line: &str) {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn on_key(key: Key, down: bool) -> Timer {
     let outcome = with_state(|h| h.on_key(key, down, Instant::now()));
     if outcome.hide {
@@ -390,7 +395,7 @@ fn on_key(key: Key, down: bool) -> Timer {
 }
 
 /// The 450 ms timer. `Some(ms)`: start it again for that long.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn on_timer() -> Option<u32> {
     let allowed = !crate::fullscreen::active();
     match with_state(|h| h.timer_fired(Instant::now(), allowed)) {
@@ -403,7 +408,7 @@ fn on_timer() -> Option<u32> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn start(app: &AppHandle) {
     if APP.set(app.clone()).is_err() {
         return;
@@ -415,7 +420,7 @@ pub fn start(app: &AppHandle) {
     rawinput::watch(on_key, on_timer, HOLD_DELAY.as_millis() as u32);
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn start(_app: &AppHandle) {}
 
 #[cfg(test)]

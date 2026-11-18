@@ -1,7 +1,7 @@
-//! OS-specific bits behind small functions. `windows.rs` is the real thing; `fallback.rs` keeps
-//! other platforms building (and tests running on Linux).
+//! OS-specific bits behind small functions: `windows.rs`, `linux.rs` (X11), and `fallback.rs`,
+//! which keeps other platforms (macOS) building.
 
-/// An opaque top-level window handle (an HWND on Windows), remembered so an action can paste
+/// An opaque top-level window handle (an HWND on Windows, an X11 window id on Linux), remembered so an action can paste
 /// back into the window it was started from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowHandle(#[allow(dead_code)] pub(crate) isize);
@@ -77,7 +77,7 @@ pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
         "CASCADIA_HOSTING_WINDOW_CLASS",
         "PseudoConsoleWindow",
     ];
-    const TERMINALS: [&str; 18] = [
+    const TERMINALS: [&str; 22] = [
         "windowsterminal.exe",
         "wt.exe",
         "conhost.exe",
@@ -96,6 +96,11 @@ pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
         "code.exe",
         "code - insiders.exe",
         "cursor.exe",
+        // Linux: VS Code and its forks.
+        "code",
+        "code-insiders",
+        "codium",
+        "cursor",
     ];
     const IDE_PREFIXES: [&str; 12] = [
         "windsurf",
@@ -111,6 +116,13 @@ pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
         "rustrover",
         "studio",
     ];
+    // JetBrains IDEs on Linux run as `java`; their windows' WM_CLASS names them.
+    if classes.iter().any(|c| c.starts_with("jetbrains-")) {
+        return false;
+    }
+    if process.is_some_and(is_linux_terminal) {
+        return false;
+    }
     if classes
         .iter()
         .any(|c| CONSOLE_CLASSES.contains(&c.as_str()))
@@ -121,6 +133,42 @@ pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
         return true;
     };
     !(TERMINALS.contains(&process) || IDE_PREFIXES.iter().any(|p| process.starts_with(p)))
+}
+
+/// Terminal emulators on Linux, by executable name. They copy and paste with Ctrl+Shift+C and
+/// Ctrl+Shift+V: plain Ctrl+C interrupts the running program and Ctrl+V types a control character.
+pub(crate) fn is_linux_terminal(process: &str) -> bool {
+    const TERMINALS: [&str; 28] = [
+        "gnome-terminal-server",
+        "kgx",
+        "ptyxis",
+        "konsole",
+        "yakuake",
+        "xterm",
+        "uxterm",
+        "urxvt",
+        "rxvt",
+        "kitty",
+        "alacritty",
+        "wezterm-gui",
+        "foot",
+        "footclient",
+        "tilix",
+        "terminator",
+        "xfce4-terminal",
+        "mate-terminal",
+        "lxterminal",
+        "qterminal",
+        "terminology",
+        "st",
+        "sakura",
+        "guake",
+        "tilda",
+        "ghostty",
+        "warp",
+        "tabby",
+    ];
+    TERMINALS.contains(&process)
 }
 
 /// `summon_copy_allowed` for a live window.
@@ -136,9 +184,14 @@ mod windows;
 #[cfg(windows)]
 pub use self::windows::*;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use self::linux::*;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod fallback;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub use self::fallback::*;
 
 #[cfg(test)]
@@ -182,6 +235,32 @@ mod summon_copy_tests {
         assert!(!summon_copy_allowed(Some("cursor.exe"), &[]));
         assert!(!summon_copy_allowed(Some("idea64.exe"), &[]));
         assert!(!summon_copy_allowed(Some("rustrover64.exe"), &[]));
+    }
+
+    #[test]
+    fn linux_terminals_and_editors_never_copy() {
+        assert!(!summon_copy_allowed(Some("gnome-terminal-server"), &[]));
+        assert!(!summon_copy_allowed(Some("konsole"), &[]));
+        assert!(!summon_copy_allowed(Some("code"), &[]));
+        assert!(!summon_copy_allowed(
+            Some("java"),
+            &classes(&["jetbrains-idea", "jetbrains-idea"])
+        ));
+        assert!(summon_copy_allowed(
+            Some("firefox"),
+            &classes(&["Navigator", "firefox"])
+        ));
+        assert!(summon_copy_allowed(Some("gedit"), &[]));
+    }
+
+    #[test]
+    fn only_terminal_emulators_paste_with_shift() {
+        use super::is_linux_terminal;
+        assert!(is_linux_terminal("gnome-terminal-server"));
+        assert!(is_linux_terminal("kitty"));
+        assert!(!is_linux_terminal("code"));
+        assert!(!is_linux_terminal("firefox"));
+        assert!(!is_linux_terminal("kitty.exe"));
     }
 }
 

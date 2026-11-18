@@ -1,7 +1,9 @@
 name: Release
 
-# Pushing a tag like v0.1.0 builds the Windows installer, signs the updater artifacts and
-# publishes a GitHub Release with latest.json, which installed copies check for updates.
+# Pushing a tag like v0.1.0 builds the Windows installer and the Linux packages (AppImage, .deb,
+# .rpm), signs the updater artifacts and publishes a GitHub Release with latest.json, which
+# installed copies check for updates. Linux runs after Windows, adding its files and its entries
+# in latest.json to the same release.
 # The tag must match the version in app/src-tauri/tauri.conf.json.
 on:
   push:
@@ -58,7 +60,61 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Winku ${{ github.ref_name }}
           releaseBody: |
-            Windows installer below (`Winku_*_x64-setup.exe`). It isn't code-signed yet, so Windows SmartScreen may warn: choose **More info**, then **Run anyway**. Installed copies update themselves from here.
+            Windows installer below (`Winku_*_x64-setup.exe`). It isn't code-signed yet, so Windows SmartScreen may warn: choose **More info**, then **Run anyway**.
+
+            Linux (x86_64): the AppImage, or the `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) package. Winku runs on X11, and on Wayland desktops through XWayland; see the README for what that means.
+
+            Installed copies update themselves from here.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+
+  linux:
+    needs: windows
+    # The oldest supported Ubuntu: the packages then run on any distribution with glibc 2.35 or
+    # newer, which agent-desktop needs too.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tauri system dependencies
+        timeout-minutes: 10
+        run: |
+          echo 'Acquire::Retries "3"; Acquire::http::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/99winku-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev libasound2-dev patchelf rpm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
+          prefix-key: v1-sherpa
+          save-if: false
+
+      - name: Install and stage the engine sidecar
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          bun run engine
+
+      - name: Build the packages and add them to the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: bunx tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: Winku ${{ github.ref_name }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

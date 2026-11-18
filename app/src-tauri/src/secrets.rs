@@ -34,8 +34,16 @@ impl Account {
     }
 }
 
+/// Linux keeps keys in the Secret Service, which needs a keyring daemon in the session.
+const KEYRING_HINT: &str = if cfg!(target_os = "linux") {
+    ". Is a keyring (GNOME Keyring or KWallet) running and unlocked?"
+} else {
+    ""
+};
+
 fn entry(account: Account) -> Result<Entry, String> {
-    Entry::new(SERVICE, account.name()).map_err(|e| format!("credential store unavailable: {e}"))
+    Entry::new(SERVICE, account.name())
+        .map_err(|e| format!("credential store unavailable: {e}{KEYRING_HINT}"))
 }
 
 /// The stored key, or None when there is none or the store can't be read.
@@ -49,7 +57,7 @@ pub fn get(account: Account) -> Option<String> {
 pub fn set(account: Account, key: &str) -> Result<(), String> {
     entry(account)?
         .set_password(key)
-        .map_err(|e| format!("could not save the key: {e}"))
+        .map_err(|e| format!("could not save the key: {e}{KEYRING_HINT}"))
 }
 
 pub fn clear(account: Account) -> Result<(), String> {

@@ -6272,9 +6272,11 @@ dependencies = [
  "bzip2 0.6.1",
  "chrono",
  "cpal",
+ "gtk",
  "keyring",
  "ort",
  "png",
+ "raw-window-handle",
  "regex",
  "serde",
  "serde_json",
@@ -6294,6 +6296,7 @@ dependencies = [
  "ureq 3.5.1",
  "windows",
  "windows-sys 0.59.0",
+ "x11rb",
 ]
 
 [[package]]

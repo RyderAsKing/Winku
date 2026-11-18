@@ -25,7 +25,7 @@ interface Rig {
 	tools: Map<string, AnyTool>;
 	calls: () => { args: string[]; stdin?: string }[];
 	/** Answer screen_target with this (or an error when undefined). */
-	target: { windowId: string; app?: string; windowTitle?: string; chromium: boolean } | undefined;
+	target: { windowId: string; app?: string; windowTitle?: string; chromium: boolean; pid?: number } | undefined;
 	askBeforeRunning: boolean;
 	decisions: string[];
 	permissionAsks: Record<string, unknown>[];
@@ -61,7 +61,14 @@ function rig(): Rig {
 					type: "response",
 					id: request.id,
 					ok: true,
-					data: { app: r.target?.app, windowTitle: r.target?.windowTitle, windowId: r.target?.windowId, chromium: r.target?.chromium, text: "uia text" },
+					data: {
+						app: r.target?.app,
+						windowTitle: r.target?.windowTitle,
+						windowId: r.target?.windowId,
+						chromium: r.target?.chromium,
+						pid: r.target?.pid,
+						text: "uia text",
+					},
 				});
 			if (request.method === "permission") {
 				r.permissionAsks.push(request.params as unknown as Record<string, unknown>);
@@ -269,6 +276,28 @@ test("Esc stops a running action and a pause", async () => {
 	await expect(pause).rejects.toThrow("Stopped.");
 }, T);
 
+test("with a pid (Linux), the shell's window is found among agent-desktop's by process and title", async () => {
+	const r = rig();
+	r.target = { windowId: "w-90001", app: "gedit", windowTitle: "Untitled - Notepad", chromium: false, pid: 77 };
+	const seen = await call(r, "desktop_observe", {});
+	expect(seen).toContain("window w-1001");
+	expect(r.calls().map((c) => c.args[0])).toEqual(["list-windows", "snapshot"]);
+	expect(r.calls()[1]?.args).toContain("w-1001");
+	// The shell's id now names the same window, and isn't looked up again.
+	await call(r, "desktop_press", { keys: "ctrl+s", window: "w-90001" });
+	expect(r.calls().at(-1)?.args).toEqual(["press", "--headed", "--window-id", "w-1001", "--", "ctrl+s"]);
+	expect(r.calls().filter((c) => c.args[0] === "list-windows").length).toBe(1);
+
+	r.target = { windowId: "w-90002", app: "gedit", windowTitle: "Other", chromium: false, pid: 999 };
+	await expect(call(r, "desktop_observe", {})).rejects.toThrow("isn't visible to accessibility tools");
+
+	// look_at_screen leaves out the shell's id, which desktop_* tools don't take.
+	r.target = { windowId: "w-90001", app: "gedit", windowTitle: "Untitled - Notepad", chromium: false, pid: 77 };
+	const look = await call(r, "look_at_screen", {});
+	expect(look).not.toContain("Window id:");
+	expect(look).toContain('textfield "Text editor"');
+}, T);
+
 test("look_at_screen adds the controls, except in Chromium windows", async () => {
 	const r = rig();
 	const plain = await call(r, "look_at_screen", {});
@@ -295,5 +324,7 @@ test("outline: one line per node, quiet states dropped, capped", () => {
 	expect(out.text).toBe('window "W"\n  group\n    button "OK" @s1:e1 [focused]');
 	expect(out.labels.get("@s1:e1")).toBe('button "OK"');
 	expect(outline(tree, 12).cut).toBe(2);
-	expect(renderError("Click", { ok: false, error: { code: "PERM_DENIED", message: "no" } })).toContain("administrator");
+	expect(renderError("Click", { ok: false, error: { code: "PERM_DENIED", message: "no" } })).toContain(
+		process.platform === "win32" ? "administrator" : "another user",
+	);
 });

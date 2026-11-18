@@ -120,7 +120,7 @@ export interface HotkeysStatus {
 }
 
 export interface AltGrReport {
-	/** null when the platform can't tell (non-Windows). */
+	/** null when the platform can't tell (not Windows), false on X11, where AltGr is a key of its own. */
 	altGr: boolean | null;
 	/** Keys that type a character with Ctrl+Alt in the current layout. */
 	keys: string[];

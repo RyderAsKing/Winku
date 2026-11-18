@@ -101,6 +101,11 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+# X11 (docs/adr/0003-linux-runs-on-x11.md): pure Rust, no extra system libraries.
+x11rb = { version = "0.13", features = ["shape", "xtest", "xfixes", "res", "xinput"] }
+# Already in the build through Tauri: GTK's backend choice, and the main window's X11 id.
+gtk = "0.18"
+raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

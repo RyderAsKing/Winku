@@ -20,6 +20,13 @@
 
 	let { app }: { app: MainState } = $props();
 
+	/** Where the shell keeps the key (the OS credential store, through keyring). */
+	const keyStore = navigator.userAgent.includes("Windows")
+		? "Windows Credential Manager"
+		: navigator.userAgent.includes("Mac")
+			? "your Keychain"
+			: "your system keyring";
+
 	let providers: ProviderInfo[] = $state([]);
 	let providerId = $state("");
 	let baseUrl = $state(PRESETS[0].baseUrl);
@@ -147,7 +154,7 @@
 			{:else if test}
 				{test.error ?? "That didn't work."}
 			{:else}
-				Your key stays in Windows Credential Manager.
+				Your key stays in {keyStore}.
 			{/if}
 		</p>
 		<button type="button" class="secondary" disabled={!canTest || busy} onclick={runTest}>Test</button>

@@ -8,13 +8,17 @@ import type { ShellRequests } from "../requests.ts";
 export const SCREEN_TIMEOUT_MS = 10_000;
 
 /** A compact outline of the window's controls (computer use), when it can be read cheaply. */
-export type Glance = (window: { id: string; app?: string; title?: string }, signal: AbortSignal | undefined) => Promise<string | undefined>;
+export type Glance = (
+	window: { id: string; app?: string; title?: string; pid?: number },
+	signal: AbortSignal | undefined,
+) => Promise<string | undefined>;
 
 export function describeCapture(capture: ScreenCapture, imageIncluded: boolean, controls?: string): string {
 	const lines = [
 		capture.app ? `App: ${capture.app}` : "",
 		capture.windowTitle ? `Window: ${capture.windowTitle}` : "",
-		capture.windowId ? `Window id: ${capture.windowId}` : "",
+		// With a pid (Linux) the id is the shell's, not one desktop_* tools know; they default to this window anyway.
+		capture.windowId && capture.pid === undefined ? `Window id: ${capture.windowId}` : "",
 	].filter(Boolean);
 	const text = capture.text?.trim();
 	if (text) lines.push("", `Text in the window:\n${text}`);
@@ -52,6 +56,7 @@ export function lookAtScreenTool(requests: ShellRequests, supportsImages: () => 
 								id: capture.windowId,
 								...(capture.app ? { app: capture.app } : {}),
 								...(capture.windowTitle ? { title: capture.windowTitle } : {}),
+								...(capture.pid !== undefined ? { pid: capture.pid } : {}),
 							},
 							signal,
 						)

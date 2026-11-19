@@ -566,7 +566,9 @@ mod os {
             COUNT.fetch_add(1, Ordering::Relaxed)
         ));
         let mut command = Command::new(SAY);
-        if let Some(voice) = voice.filter(|v| voices().is_ok_and(|all| all.iter().any(|a| a.id == *v))) {
+        if let Some(voice) =
+            voice.filter(|v| voices().is_ok_and(|all| all.iter().any(|a| a.id == *v)))
+        {
             command.args(["-v", voice]);
         }
         let mut child = command

@@ -12,7 +12,10 @@
 //! the hotkeys themselves are unaffected. X11 reads XInput 2 raw key events (`xinput.rs`) on a
 //! thread that sleeps waiting for them. Other platforms never show hints.
 
-#![cfg_attr(not(any(windows, target_os = "linux", target_os = "macos")), allow(dead_code))]
+#![cfg_attr(
+    not(any(windows, target_os = "linux", target_os = "macos")),
+    allow(dead_code)
+)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};

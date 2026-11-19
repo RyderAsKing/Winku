@@ -538,7 +538,7 @@ export interface VisualShown {
 export interface ScreenCapture {
 	app?: string;
 	windowTitle?: string;
-	/** agent-desktop's id for the window (`w-<HWND>`), for desktop_* tools. Linux: `w-<X11 window>`, see `pid`. */
+	/** agent-desktop's id for the window (`w-<HWND>`), for desktop_* tools. Linux and macOS: the shell's own (`w-<X11 or Quartz window>`), see `pid`. */
 	windowId?: string;
 	/** See ScreenTarget.pid. */
 	pid?: number;
@@ -578,8 +578,9 @@ export interface ScreenTarget {
 	/** Chrome, Edge, Electron or WebView2: reading it through UI Automation switches on its accessibility tree. */
 	chromium: boolean;
 	/**
-	 * Linux only: the window's process. agent-desktop's window ids there are AT-SPI addresses, not
-	 * X11 windows, so the engine looks the window up by process and title (`list-windows`).
+	 * Linux and macOS: the window's process. agent-desktop's window ids there aren't the windows the
+	 * shell sees (AT-SPI addresses, accessibility elements), so the engine looks the window up by
+	 * process and title (`list-windows`).
 	 */
 	pid?: number;
 }

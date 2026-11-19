@@ -1,8 +1,9 @@
-//! OS-specific bits behind small functions: `windows.rs`, `linux.rs` (X11), and `fallback.rs`,
-//! which keeps other platforms (macOS) building.
+//! OS-specific bits behind small functions: `windows.rs`, `linux.rs` (X11), `macos.rs`, and
+//! `fallback.rs`, which keeps other platforms building.
 
-/// An opaque top-level window handle (an HWND on Windows, an X11 window id on Linux), remembered so an action can paste
-/// back into the window it was started from.
+/// An opaque top-level window handle (an HWND on Windows, an X11 window id on Linux, a Quartz
+/// window id on macOS), remembered so an action can paste back into the window it was started
+/// from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowHandle(#[allow(dead_code)] pub(crate) isize);
 
@@ -71,7 +72,11 @@ pub fn uia_is_safe(window: WindowHandle) -> bool {
 /// editors with a built-in terminal (VS Code and its forks, JetBrains IDEs), which could have
 /// one focused. The action hotkeys still copy there: the user asked for the selection then.
 /// `process` is the lowercase executable name; `classes` a window and its focused child.
+/// Always on macOS, where the copy is Cmd+C, which interrupts nothing.
 pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
+    if cfg!(target_os = "macos") {
+        return true;
+    }
     const CONSOLE_CLASSES: [&str; 3] = [
         "ConsoleWindowClass",
         "CASCADIA_HOSTING_WINDOW_CLASS",
@@ -189,12 +194,24 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use self::linux::*;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use self::macos::*;
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod fallback;
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub use self::fallback::*;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn summon_always_copies_on_macos() {
+    assert!(summon_copy_allowed(Some("terminal"), &[]));
+    assert!(summon_copy_allowed(Some("code"), &[]));
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
 mod summon_copy_tests {
     use super::summon_copy_allowed;
 

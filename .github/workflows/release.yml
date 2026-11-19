@@ -1,9 +1,12 @@
 name: Release
 
-# Pushing a tag like v0.1.0 builds the Windows installer and the Linux packages (AppImage, .deb,
-# .rpm), signs the updater artifacts and publishes a GitHub Release with latest.json, which
-# installed copies check for updates. Linux runs after Windows, adding its files and its entries
-# in latest.json to the same release.
+# Pushing a tag like v0.1.0 builds the Windows installer, the Linux packages (AppImage, .deb,
+# .rpm) and the Mac apps (Apple Silicon and Intel), signs the updater artifacts and publishes a
+# GitHub Release with latest.json, which installed copies check for updates. Linux runs after
+# Windows and the Macs after Linux, one at a time, each adding its files and its entries in
+# latest.json to the same release.
+# The Mac apps are ad-hoc signed, not signed with an Apple Developer ID or notarized:
+# docs/adr/0004-macos-unsigned-build.md.
 # The tag must match the version in app/src-tauri/tauri.conf.json.
 on:
   push:
@@ -64,6 +67,8 @@ jobs:
 
             Linux (x86_64): the AppImage, or the `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) package. Winku runs on X11, and on Wayland desktops through XWayland; see the README for what that means.
 
+            macOS (11 Big Sur or newer): `Winku_*_aarch64.dmg` for Apple Silicon, `Winku_*_x64.dmg` for Intel. **The Mac app is unsigned**: it isn't signed with an Apple Developer ID or notarized, so macOS blocks it at first ("Winku is damaged" or "can't be opened"). It is also untested on real Macs so far; please report what doesn't work. To open it anyway, drag Winku to Applications, then either run `xattr -dr com.apple.quarantine /Applications/Winku.app` in Terminal, or try to open it once and choose **Open Anyway** in System Settings > Privacy & Security. Or build it yourself from source (see CONTRIBUTING.md). Winku asks for Accessibility, and later Screen Recording, Microphone and Input Monitoring; macOS asks again after each update.
+
             Installed copies update themselves from here.
           releaseDraft: false
           prerelease: false
@@ -113,6 +118,59 @@ jobs:
         with:
           projectPath: app
           tauriScript: bunx tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: Winku ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+
+  macos:
+    needs: linux
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      # One after the other: each adds its entries to the release's latest.json.
+      max-parallel: 1
+      matrix:
+        # The Intel app is built on the Apple Silicon runner too.
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
+          prefix-key: v1-sherpa
+          key: ${{ matrix.target }}
+          save-if: false
+
+      - name: Install and stage the engine sidecar
+        working-directory: app
+        env:
+          WINKU_TARGET: ${{ matrix.target }}
+        run: |
+          bun install --frozen-lockfile
+          bun run engine
+
+      - name: Build the app and add it to the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: bunx tauri
+          args: --target ${{ matrix.target }}
           tagName: ${{ github.ref_name }}
           releaseName: Winku ${{ github.ref_name }}
           releaseDraft: false

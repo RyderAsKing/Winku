@@ -25,7 +25,7 @@ pub enum Raw {
     /// A CF_DIB (BITMAPINFOHEADER and pixels).
     Dib(Vec<u8>),
     /// A PNG file (X11's `image/png`).
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     Png(Vec<u8>),
     Files(Vec<String>),
 }
@@ -207,7 +207,7 @@ pub fn decode_dib(dib: &[u8]) -> Option<RawImage> {
 }
 
 /// Width and height from a PNG's header (IHDR), without decoding it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
     if png.get(..8)? != b"\x89PNG\r\n\x1a\n" || png.get(12..16)? != b"IHDR" {
         return None;
@@ -250,7 +250,7 @@ pub fn decode_png(png: &[u8]) -> Option<RawImage> {
 
 /// Local file paths from a `text/uri-list` (or GNOME's `x-special/gnome-copied-files`, which
 /// starts with a `copy` or `cut` line): `file://` URIs, percent-decoded. Other URIs are skipped.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 pub fn decode_uri_list(list: &str) -> Vec<String> {
     list.lines()
         .map(str::trim)

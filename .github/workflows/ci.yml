@@ -252,3 +252,83 @@ jobs:
           New-Item -ItemType File -Force binaries/winku-engine-x86_64-pc-windows-msvc.exe | Out-Null
           New-Item -ItemType File -Force binaries/agent-desktop-x86_64-pc-windows-msvc.exe | Out-Null
           cargo test
+
+  # Nobody on the team has a Mac, so this job is the check that Winku builds and starts there:
+  # clippy and the tests on macOS, the engine's tests, then the app bundled (ad-hoc signed, as the
+  # release does) and launched for half a minute. Apple Silicon runner.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # As in windows-build: a working optimised app, not the release's smallest binary.
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
+          prefix-key: v1-sherpa
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Engine tests
+        working-directory: engine
+        run: |
+          bun install --frozen-lockfile
+          bun test --parallel
+
+      - name: Intel build check (the release cross-builds it from this runner)
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          WINKU_TARGET=x86_64-apple-darwin bun run engine
+          file src-tauri/binaries/winku-engine-x86_64-apple-darwin | grep -q x86_64
+          cd src-tauri && cargo check --target x86_64-apple-darwin
+
+      - name: UI build, stage the sidecars
+        working-directory: app
+        run: |
+          bun install --frozen-lockfile
+          bun run ui:build
+          bun run engine
+
+      - name: Shell clippy and tests
+        working-directory: app/src-tauri
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      - name: Bundle the app
+        working-directory: app
+        # No updater artifacts: they need the release's signing key.
+        run: bunx tauri build --bundles app -c '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Smoke test (the app starts and stays up)
+        working-directory: app/src-tauri/target/release/bundle/macos
+        run: |
+          codesign --verify --verbose Winku.app
+          plutil -p Winku.app/Contents/Info.plist | grep -E "LSUIElement|NSMicrophoneUsageDescription"
+          ls Winku.app/Contents/MacOS
+          exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Winku.app/Contents/Info.plist)
+          "Winku.app/Contents/MacOS/$exe" > "$RUNNER_TEMP/winku.log" 2>&1 &
+          pid=$!
+          sleep 30
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "Winku exited early:"; cat "$RUNNER_TEMP/winku.log"; exit 1
+          fi
+          pgrep -fl winku-engine || { echo "the engine didn't start"; cat "$RUNNER_TEMP/winku.log"; exit 1; }
+          kill "$pid"
+          cat "$RUNNER_TEMP/winku.log"
+          if grep -qi "panicked" "$RUNNER_TEMP/winku.log"; then exit 1; fi

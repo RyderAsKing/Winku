@@ -30,6 +30,8 @@ impl MicError {
             }
             MicError::Denied => if cfg!(windows) {
                 "Windows is blocking the microphone. Turn on Settings > Privacy & security > Microphone > \"Let desktop apps access your microphone\", then hold the key again."
+            } else if cfg!(target_os = "macos") {
+                "macOS is blocking the microphone. Turn on Winku in System Settings > Privacy & Security > Microphone, then hold the key again."
             } else {
                 "The system denied access to the microphone. Allow it in your privacy settings and try again."
             }

@@ -175,7 +175,9 @@ const RECOVERY: Record<string, string> = {
 	PERM_DENIED:
 		process.platform === "win32"
 			? "Permission denied. On Windows this usually means the app runs as administrator and Winku doesn't."
-			: "Permission denied. The app may run as another user (or as root) than Winku.",
+			: process.platform === "darwin"
+				? "Permission denied. Winku needs the Accessibility permission (System Settings > Privacy & Security > Accessibility); tell the user."
+				: "Permission denied. The app may run as another user (or as root) than Winku.",
 	APP_UNRESPONSIVE: "The app isn't responding. Observe again before trying anything else.",
 };
 

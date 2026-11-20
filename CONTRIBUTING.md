@@ -19,6 +19,8 @@ You need [Bun](https://bun.sh) 1.4, Rust (stable) and, on Windows, the WebView2 
 sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev libasound2-dev
 ```
 
+On macOS you need Xcode's command line tools (`xcode-select --install`). A Mac build made this way is signed ad hoc like the release; since you built it yourself, macOS doesn't quarantine it. The macOS OS layer is `app/src-tauri/src/platform/macos.rs` ([ADR 0004](docs/adr/0004-macos-unsigned-build.md)). Nobody on the team has a Mac, so if you do, trying a build and reporting what works is a big help. Without one, CI's `macos` job is the check.
+
 The Linux OS layer is `app/src-tauri/src/platform/linux.rs`, on X11 ([ADR 0003](docs/adr/0003-linux-runs-on-x11.md)). Try it in an X11 session, or in WSLg on Windows, which is an XWayland display. In WSLg an X window has focus only after you click it, and only then do the hotkeys reach Winku. Computer use doesn't work in WSLg: agent-desktop lists windows through `_NET_CLIENT_LIST`, which WSLg's window manager doesn't publish. Keep the checkout on the Linux file system (not under `/mnt`), or `bun install` and the build crawl.
 
 ```sh

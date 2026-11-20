@@ -105,20 +105,21 @@ pub struct ScreenTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
     pub chromium: bool,
-    /// Linux only: the window's process. agent-desktop's window ids there are AT-SPI addresses,
-    /// not X11 windows, so the engine finds the window by process and title.
+    /// Linux and macOS: the window's process. agent-desktop's window ids there aren't the
+    /// windows Winku sees (AT-SPI addresses, accessibility elements), so the engine finds the
+    /// window by process and title.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
 }
 
-/// The process the engine looks the window up by (`ScreenTarget::pid`): Linux only. Elsewhere
-/// `window_id` is agent-desktop's own id.
+/// The process the engine looks the window up by (`ScreenTarget::pid`): Linux and macOS. On
+/// Windows `window_id` is agent-desktop's own id.
 fn lookup_pid(window: WindowHandle) -> Option<u32> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         platform::window_pid(window)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = window;
         None

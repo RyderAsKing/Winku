@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS only: Tauri merges this into the app bundle's Info.plist. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Winku listens while you hold the talk key, to turn what you say into text on this Mac.</string>
+  <!-- No Dock icon or app menu: Winku lives as the eyes and a menu bar icon. -->
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>

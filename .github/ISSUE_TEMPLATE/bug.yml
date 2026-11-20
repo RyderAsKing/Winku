@@ -31,8 +31,8 @@ body:
     id: windows
     attributes:
       label: Operating system
-      description: Windows version, or Linux distribution, desktop, and X11 or Wayland.
-      placeholder: "Windows 11 24H2, or Ubuntu 24.04 GNOME on Wayland"
+      description: Windows version; Linux distribution, desktop, and X11 or Wayland; or macOS version and Apple Silicon or Intel.
+      placeholder: "Windows 11 24H2, Ubuntu 24.04 GNOME on Wayland, or macOS 15.1 on Apple Silicon"
     validations:
       required: true
   - type: input

@@ -6,7 +6,7 @@
 //! keys typed into native Wayland apps aren't sent to X11 clients, so hints only appear while an
 //! X11 window has focus there.
 
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
@@ -14,17 +14,10 @@ use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::protocol::Event;
 
+use super::deadline::{set_deadline, timer};
 use super::{Key, Timer};
 
-/// When the timer is due; None while no hold is pending.
-static DEADLINE: Mutex<Option<Instant>> = Mutex::new(None);
-static WAKE: Condvar = Condvar::new();
 static STARTED: OnceLock<()> = OnceLock::new();
-
-fn set_deadline(at: Option<Instant>) {
-    *DEADLINE.lock().unwrap_or_else(|e| e.into_inner()) = at;
-    WAKE.notify_all();
-}
 
 /// Starts the watcher thread. `on_key` runs on it for every key event; `on_timer` when the timer
 /// fires (it may ask for another run). Safe to call once.
@@ -84,33 +77,6 @@ fn keys(on_key: fn(Key, bool) -> Timer, delay: Duration) -> Option<()> {
             Timer::Start => set_deadline(Some(Instant::now() + delay)),
             Timer::Cancel => set_deadline(None),
             Timer::Keep => {}
-        }
-    }
-}
-
-fn timer(on_timer: fn() -> Option<u32>) {
-    let mut deadline = DEADLINE.lock().unwrap_or_else(|e| e.into_inner());
-    loop {
-        match *deadline {
-            None => {
-                deadline = WAKE.wait(deadline).unwrap_or_else(|e| e.into_inner());
-            }
-            Some(at) if Instant::now() < at => {
-                let left = at.saturating_duration_since(Instant::now());
-                deadline = WAKE
-                    .wait_timeout(deadline, left)
-                    .unwrap_or_else(|e| e.into_inner())
-                    .0;
-            }
-            Some(_) => {
-                *deadline = None;
-                drop(deadline);
-                let again = on_timer();
-                deadline = DEADLINE.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(ms) = again {
-                    deadline.get_or_insert(Instant::now() + Duration::from_millis(u64::from(ms)));
-                }
-            }
         }
     }
 }

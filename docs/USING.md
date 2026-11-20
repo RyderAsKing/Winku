@@ -48,7 +48,7 @@ Winku can read and write files in your home folder, run PowerShell (bash on Linu
 
 The first time you hold the talk key, Winku downloads a speech model of about 110 MB and shows the progress on the eyes. Your speech is recognised on your computer and never leaves it.
 
-When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice (on Linux, Speech Dispatcher's `spd-say`, if it's installed) reads until Supertonic arrives, and stays available in Settings.
+When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice (on macOS its own `say`; on Linux, Speech Dispatcher's `spd-say`, if it's installed) reads until Supertonic arrives, and stays available in Settings.
 
 ## Memory
 
@@ -81,3 +81,21 @@ A few things differ on Linux whatever the session:
 - **API keys** are kept in the Secret Service (GNOME Keyring or KWallet). Without a running keyring Winku can't save a key.
 - **The tray icon** needs a status-notifier host. GNOME shows it only with the AppIndicator extension, which Ubuntu turns on by default.
 - **Updates.** The AppImage updates itself like the Windows app. The `.deb` and `.rpm` ask for your password (through `pkexec`) to install an update.
+
+## macOS
+
+The Mac app is an unsigned preview ([why](adr/0004-macos-unsigned-build.md)): it hasn't been tried on a real Mac yet, so please [report](https://github.com/RyderAsKing/Winku/issues/new/choose) whatever doesn't work. The README says how to get past Gatekeeper the first time.
+
+- **Keys.** Winku's `Alt` is Option and `Super` (or `Win`) is Cmd, so the summon key is `Ctrl+Option+Space`. macOS uses `Ctrl+Option+Space` to switch input sources when you have more than one; if it does on your Mac, pick another summon key in Settings > Keys.
+- **Permissions.** macOS asks for each one the first time Winku needs it. You can turn them on or off later in System Settings > Privacy & Security:
+  - **Accessibility** (asked at the first start): reading your selection, pasting a result back, and computer use.
+  - **Screen Recording**: screenshots of the window you're in, and window titles.
+  - **Microphone**: talking to Winku.
+  - **Input Monitoring**: the hotkey hints that appear while you hold a key's modifiers.
+
+  Without one of them, that feature does less and the rest keeps working. Because the app isn't signed with a Developer ID, macOS forgets these permissions when Winku updates, and asks again.
+- **Copy and paste** use Cmd+C and Cmd+V, in terminals too (Cmd+C never interrupts a program on a Mac), so the summon key reads the selection there as well. They are sent as the keys where C and V sit on a US keyboard.
+- **The clipboard.** When Winku puts your clipboard back after reading a selection or pasting, it marks it as transient, so clipboard managers don't record the copy twice. Content a password manager marks as concealed is never kept or read. Clipboard history checks for new copies a few times a second.
+- **Fullscreen apps** live in a Space of their own, and the eyes stay out of it.
+- **Voices.** The "system" voice is the Mac's own speech (`say`), in the voice you pick from the ones installed in System Settings > Accessibility > Spoken Content.
+- **API keys** are kept in your login Keychain.

@@ -18,10 +18,12 @@ function start(): EngineProcess {
 }
 afterAll(removeTempDirs);
 afterEach(async () => {
+	// Wait for each to exit: Windows keeps the temp folder locked while the process lives.
 	for (const engine of running.splice(0)) {
 		try {
 			engine.proc.kill();
 		} catch {}
+		await engine.proc.exited;
 	}
 });
 

@@ -4,6 +4,7 @@
 	// saves as you change it. The URL hash names the open section (settings.html#speech).
 	import type {
 		ActionSpec,
+		ExtensionInfo,
 		MemoryCore,
 		MemoryLink,
 		MemoryOverview,
@@ -17,12 +18,16 @@
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
+		installExtension,
+		keyPlaceholder,
+		listExtensions,
 		listModels,
 		listProviders,
 		modelOptions,
 		PRESETS,
 		providerConfig,
 		providerOptions,
+		removeExtension,
 		type TestResult,
 		testConnection,
 	} from "../lib/connect.ts";
@@ -130,13 +135,59 @@
 	let modelSaved = $state(false);
 
 	const custom = $derived(providerId === CUSTOM);
-	const keyUrl = $derived(providers.find((p) => p.id === providerId)?.keyUrl);
+	const currentProvider = $derived(providers.find((p) => p.id === providerId));
+	const keyUrl = $derived(currentProvider?.keyUrl);
 	const levelsFor = (id: string) => models.find((m) => m.id === id)?.thinkingLevels ?? ALL_LEVELS;
 	const levelOptions = (id: string): SelectOption<ThinkingLevel>[] => levelsFor(id).map((level) => ({ value: level, label: level }));
 	const providerList = $derived(providerOptions(providers));
 	const modelList = $derived(modelOptions(models));
 	/** Set when the provider is changed here: its models replace the last provider's ids. */
 	let providerChanged = false;
+
+	// Provider extensions
+	let extensions: ExtensionInfo[] = $state([]);
+	let extensionSource = $state("");
+	let extensionBusy = $state("");
+	let extensionNote = $state("");
+	let extensionFailed = $state(false);
+
+	async function refreshProviders() {
+		[providers, extensions] = await Promise.all([listProviders().catch(() => providers), listExtensions().catch(() => extensions)]);
+	}
+
+	async function addExtension(event: SubmitEvent) {
+		event.preventDefault();
+		const source = extensionSource.trim();
+		if (!source || extensionBusy) return;
+		extensionBusy = "install";
+		extensionNote = "";
+		extensionFailed = false;
+		try {
+			const added = await installExtension(source);
+			extensionSource = "";
+			await refreshProviders();
+			const names = added.providers.map((p) => p.name).join(", ");
+			extensionNote = `Installed. Pick ${names} under Provider above.`;
+		} catch (error) {
+			extensionFailed = true;
+			extensionNote = String(error).replace(/^Error: /, "");
+		}
+		extensionBusy = "";
+	}
+
+	async function dropExtension(name: string) {
+		extensionBusy = name;
+		extensionNote = "";
+		extensionFailed = false;
+		try {
+			await removeExtension(name);
+			await refreshProviders();
+		} catch (error) {
+			extensionFailed = true;
+			extensionNote = String(error).replace(/^Error: /, "");
+		}
+		extensionBusy = "";
+	}
 
 	function changeProvider() {
 		providerChanged = true;
@@ -160,8 +211,14 @@
 
 	$effect(() => {
 		void (async () => {
-			const [s, key, list] = await Promise.all([shell.settingsGet(), shell.secretPresent(), listProviders().catch(() => [])]);
+			const [s, key, list, installed] = await Promise.all([
+				shell.settingsGet(),
+				shell.secretPresent(),
+				listProviders().catch(() => []),
+				listExtensions().catch(() => []),
+			]);
 			providers = list;
+			extensions = installed;
 			hasKey = key;
 			settings = s;
 			loadDraft(s);
@@ -758,23 +815,29 @@
 							</div>
 						</div>
 					{/if}
-					<div class="row">
-						<div class="label">
-							<span class="title">API key</span>
-							{#if hasKey && !replacingKey}<span class="desc">Saved in Credential Manager</span>{/if}
+					{#if currentProvider?.signedIn}
+						<div class="row">
+							<div class="label"><span class="title">Sign-in</span><span class="desc">{currentProvider.signedIn}, through {currentProvider.extension}. No key needed.</span></div>
 						</div>
-						{#if hasKey && !replacingKey}
-							<div class="inline end">
-								<button type="button" class="btn" onclick={() => (replacingKey = true)}>Replace</button>
-								<button type="button" class="btn" onclick={removeKey}>Remove</button>
+					{:else}
+						<div class="row">
+							<div class="label">
+								<span class="title">API key</span>
+								{#if hasKey && !replacingKey}<span class="desc">Saved in Credential Manager</span>{/if}
 							</div>
-						{:else}
-							<div class="inline">
-								<input type="password" aria-label="API key" bind:value={keyDraft} autocomplete="off" spellcheck="false" placeholder={custom ? "Optional for local servers" : "Paste your key"} />
-								{#if keyUrl}<button type="button" class="btn" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>{/if}
-							</div>
-						{/if}
-					</div>
+							{#if hasKey && !replacingKey}
+								<div class="inline end">
+									<button type="button" class="btn" onclick={() => (replacingKey = true)}>Replace</button>
+									<button type="button" class="btn" onclick={removeKey}>Remove</button>
+								</div>
+							{:else}
+								<div class="inline">
+									<input type="password" aria-label="API key" bind:value={keyDraft} autocomplete="off" spellcheck="false" placeholder={keyPlaceholder(currentProvider, custom)} />
+									{#if keyUrl}<button type="button" class="btn" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
 
 					<div class="row">
 						<div class="label"><span class="title">Main model</span><span class="desc">Replies, tools and the conversation</span></div>
@@ -822,6 +885,40 @@
 							<button type="button" class="btn primary" disabled={modelBusy || !mainId.trim()} onclick={saveModel}>Save</button>
 						</div>
 					</div>
+				</div>
+
+				<h3>Provider extensions</h3>
+				<div class="group">
+					{#each extensions as extension (extension.name)}
+						<div class="row">
+							<div class="label">
+								<span class="title">{extension.name}{extension.version ? ` ${extension.version}` : ""}</span>
+								{#if extension.error}
+									<span class="desc bad">{extension.error}</span>
+								{:else}
+									<span class="desc">Adds {extension.providers.map((p) => p.name).join(", ")}</span>
+								{/if}
+							</div>
+							<button type="button" class="btn" disabled={!!extensionBusy} onclick={() => dropExtension(extension.name)}>
+								{extensionBusy === extension.name ? "Removing…" : "Remove"}
+							</button>
+						</div>
+					{/each}
+					<form class="row stack" onsubmit={addExtension}>
+						<div class="label">
+							<span class="title">Add an extension</span>
+							<span class="desc">A pi package that adds model providers, like https://github.com/earendil-works/pi-claude-code for a Claude subscription. It runs on this computer with your permissions, so add only ones you trust.</span>
+						</div>
+						<div class="inline">
+							<input aria-label="Extension to install" bind:value={extensionSource} placeholder="npm package, GitHub URL or folder" spellcheck="false" autocomplete="off" />
+							<button type="submit" class="btn" disabled={!!extensionBusy || !extensionSource.trim()}>{extensionBusy === "install" ? "Installing…" : "Install"}</button>
+						</div>
+					</form>
+					{#if extensionNote}
+						<div class="row foot">
+							<p class="status" class:bad={extensionFailed} role="status">{extensionNote}</p>
+						</div>
+					{/if}
 				</div>
 			{:else if page === "conversation"}
 				<div class="group">

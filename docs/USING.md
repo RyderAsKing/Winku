@@ -36,6 +36,10 @@ Select text in any app and press `Ctrl+Alt+1`. The defaults are Rewrite, Fix gra
 
 You don't need an action key to work on a selection. Select text, open Winku with `Ctrl+Alt+Space` (or hold it and talk), and say what you want: "google this and check the facts". The selection shows in the bar as a pill; click its × to leave it out. In terminals, and in editors that have a built-in terminal (VS Code, JetBrains IDEs), use `Ctrl+Alt+Q` instead, because Winku won't press `Ctrl+C` there for you.
 
+## More providers
+
+Settings > Model > Provider extensions adds a pi package that brings more model providers. For example, paste `https://github.com/earendil-works/pi-claude-code` to use your Claude Pro or Max subscription through Claude Code: install Claude Code, run `claude auth login` once, then pick "Claude Code Subscription (Experimental)" as the provider. It needs no key. Only add extensions you trust, since they run on your computer. Winku uses only the providers an extension adds, not its other features.
+
 ## Tools
 
 Winku can read and write files in your home folder, run PowerShell (bash on Linux), open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.

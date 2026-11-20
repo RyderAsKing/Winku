@@ -4,7 +4,8 @@ import { Engine, type EngineConfig } from "./engine.ts";
 import { readLines, send } from "./io.ts";
 import { ShellRequests } from "./requests.ts";
 import type { Command, InboundMessage } from "./protocol.ts";
-import { errorOf, listModels, listProviders, testConnection } from "./runtime.ts";
+import { extensionOf, installExtension, listExtensions, removeExtension } from "./extensions.ts";
+import { builtInProviderIds, errorOf, listModels, listProviders, testConnection } from "./runtime.ts";
 
 const startedAt = performance.now();
 const requests = new ShellRequests(send);
@@ -95,6 +96,19 @@ async function handle(message: Command): Promise<unknown> {
 			return engine.voiceList();
 		case "list_providers":
 			return listProviders();
+		case "extensions_list":
+			return listExtensions();
+		case "extension_install": {
+			const builtIn = await builtInProviderIds();
+			return installExtension(message.source, (id) => builtIn.has(id));
+		}
+		case "extension_remove": {
+			const inUse = engine.providerId;
+			if (inUse && (await extensionOf(inUse)) === message.name)
+				throw new Error("Your model comes from this extension. Pick another provider and save first.");
+			await removeExtension(message.name);
+			return undefined;
+		}
 		case "list_models":
 			return listModels(message.provider, message.apiKey);
 		case "test_connection":

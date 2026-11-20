@@ -1,4 +1,5 @@
-// Model runtime: pi's bundled catalog or one custom OpenAI-compatible endpoint, keys in memory only.
+// Model runtime: pi's bundled catalog (plus the providers from provider extensions) or one custom
+// OpenAI-compatible endpoint, keys in memory only.
 import {
 	type Api,
 	type AssistantMessage,
@@ -8,6 +9,7 @@ import {
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { registerExtensionProviders } from "./extensions.ts";
 import { createFauxProvider, FAUX_PROVIDER, type FauxOptions } from "./faux.ts";
 import type { CustomModel, ErrorKind, ModelInfo, ProviderConfig, ProviderInfo, ThinkingLevel } from "./protocol.ts";
 
@@ -83,14 +85,24 @@ export interface RuntimeOptions {
 	faux?: FauxOptions;
 }
 
-/** A fresh, isolated ModelRuntime: no auth.json, no models.json, no network catalog refresh. */
-export async function createRuntime(options: RuntimeOptions): Promise<ModelRuntime> {
-	const runtime = await ModelRuntime.create({
+function bareRuntime(): Promise<ModelRuntime> {
+	return ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: null,
 		allowModelNetwork: false,
 		refreshOnCreate: false,
 	});
+}
+
+/** Provider ids an extension may not take: pi's built-in list, the custom endpoint and the test model. */
+export async function builtInProviderIds(): Promise<Set<string>> {
+	const runtime = await bareRuntime();
+	return new Set([...runtime.getProviders().map((p) => p.id), CUSTOM_PROVIDER, FAUX_PROVIDER]);
+}
+
+/** A fresh, isolated ModelRuntime: no auth.json, no models.json, no network catalog refresh. */
+export async function createRuntime(options: RuntimeOptions): Promise<ModelRuntime> {
+	const runtime = await bareRuntime();
 	const { provider, apiKey } = options;
 	if (provider.kind === "catalog" && provider.id === FAUX_PROVIDER) {
 		const ids = [...new Set([...(options.modelIds ?? []), "faux-1"])];
@@ -114,7 +126,12 @@ export async function createRuntime(options: RuntimeOptions): Promise<ModelRunti
 		await runtime.setRuntimeApiKey(CUSTOM_PROVIDER, apiKey || "none");
 		return runtime;
 	}
-	if (!runtime.getProvider(provider.id)) throw new EngineError(`Unknown provider "${provider.id}"`, "config");
+	if (!runtime.getProvider(provider.id)) {
+		const owners = await registerExtensionProviders(runtime);
+		if (!owners.has(provider.id)) throw new EngineError(`Unknown provider "${provider.id}"`, "config");
+		// Signed in through its own tool (Claude Code's login, say): the saved key belongs to another provider.
+		if (apiKey && (await runtime.checkAuth(provider.id).catch(() => undefined))) return runtime;
+	}
 	if (apiKey) await runtime.setRuntimeApiKey(provider.id, apiKey);
 	return runtime;
 }
@@ -155,11 +172,21 @@ export function modelInfo(model: Model<Api>): ModelInfo {
 }
 
 export async function listProviders(): Promise<ProviderInfo[]> {
-	const runtime = await createRuntime({ provider: { kind: "catalog", id: "anthropic" } });
-	return runtime
+	const runtime = await bareRuntime();
+	const builtIn: ProviderInfo[] = runtime
 		.getProviders()
 		.filter((p) => p.id !== FAUX_PROVIDER && runtime.getModels(p.id).length > 0)
 		.map((p) => ({ id: p.id, name: p.name, ...(KEY_URLS[p.id] ? { keyUrl: KEY_URLS[p.id] } : {}) }));
+	const owners = await registerExtensionProviders(runtime);
+	const extra = await Promise.all(
+		[...owners].map(async ([id, extension]): Promise<ProviderInfo> => {
+			// An extension provider may be signed in through its own tool (Claude Code's login, say).
+			const check = await runtime.checkAuth(id, { signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+			const name = runtime.getProvider(id)?.name ?? id;
+			return { id, name, extension, ...(check ? { signedIn: check.source ?? "Signed in" } : {}) };
+		}),
+	);
+	return [...builtIn, ...extra];
 }
 
 function numberField(record: Record<string, unknown>, names: string[]): number | undefined {

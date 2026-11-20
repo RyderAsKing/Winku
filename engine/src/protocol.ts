@@ -56,6 +56,25 @@ export interface ProviderInfo {
 	name: string;
 	/** Where the user gets a key, when known. */
 	keyUrl?: string;
+	/** The package name of the provider extension that adds this provider; absent for pi's built-in list. */
+	extension?: string;
+	/** Set when the provider has credentials of its own (an extension provider signed in through its own
+	 *  tool, such as Claude Code): what it is signed in as. No key is needed then. */
+	signedIn?: string;
+}
+
+/** A provider extension: a pi package installed into <dataDir>\extensions\ whose providers Winku offers. */
+export interface ExtensionInfo {
+	/** The package name, e.g. "@earendil-works/pi-claude-code". */
+	name: string;
+	version?: string;
+	description?: string;
+	/** What it was installed from, as recorded in extensions\package.json. */
+	source: string;
+	/** The providers it adds. */
+	providers: { id: string; name: string }[];
+	/** Why it didn't load, when it didn't. */
+	error?: string;
 }
 
 /** What the user was looking at when they sent the message. Appended to the end of the user message. */
@@ -372,8 +391,16 @@ export type Command =
 			now?: NowLine;
 			voiceProfile?: string;
 	  }
-	/** Result data: ProviderInfo[] from pi's bundled catalog. */
+	/** Result data: ProviderInfo[]: pi's bundled catalog, then the providers from provider extensions. */
 	| { type: "list_providers"; id: string }
+	/** Result data: ExtensionInfo[] for the installed provider extensions. */
+	| { type: "extensions_list"; id: string }
+	/** Install a provider extension: an npm package name ("npm:" optional), a GitHub URL or "github:owner/repo",
+	 *  a git URL or a local folder. Its install scripts don't run. Fails, leaving nothing installed, when the
+	 *  package doesn't load or adds no model provider. Result data: ExtensionInfo. */
+	| { type: "extension_install"; id: string; source: string }
+	/** Remove a provider extension by package name. Fails while the configured provider comes from it. */
+	| { type: "extension_remove"; id: string; name: string }
 	/** Result data: ModelInfo[]. For custom providers the engine calls GET {baseUrl}/models. */
 	| { type: "list_models"; id: string; provider: ProviderConfig; apiKey?: string }
 	/** Sends a tiny request (and a tiny image, to detect image support).

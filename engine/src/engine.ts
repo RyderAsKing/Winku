@@ -22,7 +22,8 @@ import type { Command, ConfigureCommand, Event, MemoryCore, MemoryLink, MemoryOv
 import { type Embed, formatRecalled, RecallIndex } from "./recall.ts";
 import { Replies } from "./reply.ts";
 import type { ShellRequests } from "./requests.ts";
-import { capContextWindow, clampThinking, createRuntime, errorOf, modelInfo, resolveModel, thinkingLevels } from "./runtime.ts";
+import { setExtensionsDataDir } from "./extensions.ts";
+import { capContextWindow, clampThinking, createRuntime, errorOf, modelInfo, providerId, resolveModel, thinkingLevels } from "./runtime.ts";
 import { NOTICE_TYPE, Thread } from "./thread.ts";
 import { IDLE_DELAY_MS, Tidy, type TidyModel, type TidyReason } from "./tidy.ts";
 import { cliRunner, findAgentDesktop } from "./tools/desktop/cli.ts";
@@ -132,6 +133,11 @@ export class Engine {
 				if (ok) void this.refreezePrompt();
 			},
 		);
+	}
+
+	/** The configured provider's id, once configured. */
+	get providerId(): string | undefined {
+		return this.config ? providerId(this.config.provider) : undefined;
 	}
 
 	get configured(): boolean {
@@ -342,6 +348,7 @@ export class Engine {
 			this.emit(this.readyEvent());
 			return;
 		}
+		setExtensionsDataDir(config.dataDir);
 		// Validate everything before touching the running session.
 		const mainId = config.main.id;
 		const quickId = config.quick?.id;

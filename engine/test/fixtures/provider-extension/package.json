@@ -1,0 +1,7 @@
+{
+	"name": "winku-test-provider",
+	"version": "1.2.3",
+	"description": "A provider extension for the engine tests",
+	"type": "module",
+	"pi": { "extensions": ["./index.ts"] }
+}

@@ -1,5 +1,5 @@
 // Shared logic for picking a provider, key and model (Connect form and Settings).
-import type { CustomModel, ModelInfo, ProviderConfig, ProviderInfo } from "../../../../engine/src/protocol.ts";
+import type { CustomModel, ExtensionInfo, ModelInfo, ProviderConfig, ProviderInfo } from "../../../../engine/src/protocol.ts";
 import { shell } from "./shell.ts";
 
 export const CUSTOM = "__custom__";
@@ -37,10 +37,34 @@ export async function testConnection(provider: ProviderConfig, model: string, ap
 	}
 }
 
-/** Provider picker entries: the catalog, then a custom OpenAI-compatible endpoint. */
+export async function listExtensions(): Promise<ExtensionInfo[]> {
+	return shell.call<ExtensionInfo[]>({ type: "extensions_list" });
+}
+
+export async function installExtension(source: string): Promise<ExtensionInfo> {
+	return shell.call<ExtensionInfo>({ type: "extension_install", source });
+}
+
+export async function removeExtension(name: string): Promise<void> {
+	await shell.call({ type: "extension_remove", name });
+}
+
+/** What the key field says for a provider: extension providers may sign in on their own. */
+export function keyPlaceholder(provider: ProviderInfo | undefined, custom: boolean): string {
+	if (custom) return "Optional for local servers";
+	if (provider?.extension) return "Optional if it signs in on its own";
+	return "Paste your key";
+}
+
+/** Whether Test can run without a key: custom endpoints and extension providers may not need one. */
+export function keyOptional(provider: ProviderInfo | undefined, custom: boolean): boolean {
+	return custom || !!provider?.extension;
+}
+
+/** Provider picker entries: the catalog, then extension providers, then a custom OpenAI-compatible endpoint. */
 export function providerOptions(providers: ProviderInfo[]): { value: string; label: string; hint?: string }[] {
 	return [
-		...providers.map((p) => ({ value: p.id, label: p.name })),
+		...providers.map((p) => ({ value: p.id, label: p.name, ...(p.extension ? { hint: `From ${p.extension}` } : {}) })),
 		{ value: CUSTOM, label: "Custom OpenAI-compatible", hint: "Ollama, LM Studio or any /v1 endpoint" },
 	];
 }

@@ -4,6 +4,7 @@
 	import {
 		CUSTOM,
 		DEFAULT_CUSTOM_CONTEXT,
+		keyPlaceholder,
 		listModels,
 		listProviders,
 		modelOptions,
@@ -37,10 +38,11 @@
 	let busy = $state(false);
 
 	const custom = $derived(providerId === CUSTOM);
-	const keyUrl = $derived(providers.find((p) => p.id === providerId)?.keyUrl);
+	const current = $derived(providers.find((p) => p.id === providerId));
+	const keyUrl = $derived(current?.keyUrl);
 	const providerList = $derived(providerOptions(providers));
 	const modelList = $derived(modelOptions(models));
-	const canTest = $derived(Boolean(providerId && model.trim() && (custom ? baseUrl.trim() : apiKey.trim())));
+	const canTest = $derived(Boolean(providerId && model.trim() && (custom ? baseUrl.trim() : current?.extension || apiKey.trim())));
 
 	$effect(() => {
 		listProviders()
@@ -130,15 +132,22 @@
 		</div>
 	{/if}
 
-	<div class="field">
-		<span class="name">API key</span>
-		<div class="with-presets">
-			<input type="password" aria-label="API key" bind:value={apiKey} autocomplete="off" spellcheck="false" placeholder={custom ? "Optional for local servers" : "Paste your key"} />
-			{#if keyUrl}
-				<button type="button" class="chip" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>
-			{/if}
+	{#if current?.signedIn}
+		<div class="field">
+			<span class="name">Sign-in</span>
+			<p class="signed-in">{current.signedIn}, no key needed</p>
 		</div>
-	</div>
+	{:else}
+		<div class="field">
+			<span class="name">API key</span>
+			<div class="with-presets">
+				<input type="password" aria-label="API key" bind:value={apiKey} autocomplete="off" spellcheck="false" placeholder={keyPlaceholder(current, custom)} />
+				{#if keyUrl}
+					<button type="button" class="chip" onclick={() => shell.openExternal(keyUrl)}>Get a key</button>
+				{/if}
+			</div>
+		</div>
+	{/if}
 
 	<div class="field">
 		<span class="name">Model</span>
@@ -153,8 +162,10 @@
 				Works{test.supportsImages ? ", and it can see images." : "."}
 			{:else if test}
 				{test.error ?? "That didn't work."}
+			{:else if current?.signedIn}
+				Signed in through {current.extension}.
 			{:else}
-				Your key stays in {keyStore}.
+				Your key stays in {keyStore}. <button type="button" class="link" onclick={() => shell.openWindow("settings", "model")}>More providers</button>
 			{/if}
 		</p>
 		<button type="button" class="secondary" disabled={!canTest || busy} onclick={runTest}>Test</button>
@@ -213,6 +224,23 @@
 		display: flex;
 		gap: 6px;
 		min-width: 0;
+	}
+	.signed-in {
+		margin: 0;
+		color: var(--muted);
+		font-size: 13px;
+		line-height: 32px;
+	}
+	.link {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--accent);
+		font: inherit;
+		cursor: pointer;
+	}
+	.link:hover {
+		text-decoration: underline;
 	}
 	.chip {
 		flex: none;

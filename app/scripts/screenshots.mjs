@@ -545,6 +545,17 @@ const cases = [
 	{ name: "settings-actions-narrow", path: "/settings.html#actions", size: { width: 520, height: 600 }, ready: "role=textbox[name='Action 5 prompt']" },
 	{ name: "eyes", path: "/eyes.html", size: { width: 900, height: 760 }, fullPage: true, ready: "text=Lids by context fullness" },
 	{ name: "settings", path: "/settings.html", size: SETTINGS, ready: "role=combobox[name='Provider']" },
+	{
+		name: "settings-model-extension",
+		path: "/settings.html?extension=1",
+		size: SETTINGS,
+		ready: "text=@earendil-works/pi-claude-code",
+		prepare: async (page) => {
+			await page.getByRole("heading", { name: "Provider extensions" }).evaluate((h) => {
+				h.scrollIntoView({ block: "center" });
+			});
+		},
+	},
 	{ name: "settings-narrow", path: "/settings.html#speech", size: { width: 520, height: 600 }, ready: "role=heading[name='Speech']" },
 	{
 		name: "settings-keys-warnings",

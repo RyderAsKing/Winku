@@ -58,7 +58,7 @@ export type UiEvent =
 	| { kind: "settings_section"; section: SettingsSection };
 
 /** Settings sections that can be opened directly. */
-export type SettingsSection = "schedules";
+export type SettingsSection = "schedules" | "model";
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {

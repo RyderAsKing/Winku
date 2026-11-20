@@ -10,7 +10,7 @@
 //   ?many=1        forty extra archived conversations
 //   ?empty=1       no History entries
 //   ?tasks=1       three scheduled tasks, and a scheduled run and a notice in the transcript
-import type { Command, HistoryEntry, MemoryOverview, MemoryPreview, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
+import type { Command, ExtensionInfo, HistoryEntry, MemoryOverview, MemoryPreview, ModelInfo, ProviderInfo, TaskInfo, ThinkingLevel, TranscriptItem } from "../../../../engine/src/protocol.ts";
 import { defaultSettings } from "./defaults.ts";
 import type { Settings } from "./settings.ts";
 import type { ShellImpl } from "./shell.ts";
@@ -72,6 +72,15 @@ const PROVIDERS: ProviderInfo[] = [
 	{ id: "mistral", name: "Mistral" },
 ];
 
+/** ?extension: pi-claude-code installed, its provider signed in and picked. */
+const CLAUDE_CODE: ExtensionInfo = {
+	name: "@earendil-works/pi-claude-code",
+	version: "0.1.0",
+	description: "Experimental pi provider for Claude Pro/Max subscriptions through Claude Code",
+	source: "github:earendil-works/pi-claude-code",
+	providers: [{ id: "claude-code", name: "Claude Code Subscription (Experimental)" }],
+};
+
 const MODELS: ModelInfo[] = [
 	{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", supportsImages: true, contextWindow: 200_000, thinkingLevels: ["off", "low", "medium", "high", "max"] },
 	{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", supportsImages: true, contextWindow: 200_000, thinkingLevels: ["off", "low", "medium", "high"] },
@@ -118,6 +127,7 @@ export function createMockShell(): ShellImpl {
 	const layout = { alignRight: !params.has("left"), above: params.has("low"), room: !params.has("noroom") };
 	let hasKey = !params.has("connect");
 	let hasSearchKey = false;
+	let extensions: ExtensionInfo[] = params.has("extension") ? [CLAUDE_CODE] : [];
 	let pendingAsk: ((decision: string) => void) | null = null;
 	if (hasKey) {
 		settings = {
@@ -125,7 +135,7 @@ export function createMockShell(): ShellImpl {
 			voiceProfiles: { default: "casual", byApp: { "outlook.exe": "work" } },
 			askBeforeRunning: params.has("ask"),
 			alwaysAllow: params.has("ask") ? ["powershell:Get-ChildItem", "open:https://github.com"] : [],
-			provider: { kind: "catalog", id: "anthropic" },
+			provider: { kind: "catalog", id: params.has("extension") ? "claude-code" : "anthropic" },
 			main: { id: "claude-sonnet-4-5", thinking: (params.get("thinking") as ThinkingLevel | null) ?? "medium" },
 		};
 	}
@@ -206,7 +216,17 @@ export function createMockShell(): ShellImpl {
 				setTimeout(() => emit("engine", { type: "thread_changed", reason: "clear", sessionId: "new" }), 10);
 				return { undoToken: "undo-1" };
 			case "list_providers":
-				return PROVIDERS;
+				return extensions.length
+					? [...PROVIDERS, { id: "claude-code", name: "Claude Code Subscription (Experimental)", extension: CLAUDE_CODE.name, signedIn: "Claude Code max" }]
+					: PROVIDERS;
+			case "extensions_list":
+				return extensions;
+			case "extension_install":
+				extensions = [CLAUDE_CODE];
+				return CLAUDE_CODE;
+			case "extension_remove":
+				extensions = [];
+				return undefined;
 			case "list_models":
 				return MODELS;
 			case "test_connection":

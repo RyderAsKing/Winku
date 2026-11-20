@@ -25,7 +25,7 @@ Confirmed with the user on 2026-11-11, including the four points that were first
 
 - **Shell:** Rust and Tauri 2, with a thin web UI that uses SVG/CSS for the eyes and a small framework (Svelte or Solid) for the rest.
 - **winku-engine:** our own process built on the pi SDK, compiled with Bun into a single binary. It starts with the app and stays running so summoning is instant. It is completely isolated from any pi install:
-  - It uses a custom `ResourceLoader` and our own settings, so nothing is read from `~/.pi`, `.pi/`, `AGENTS.md`/`CLAUDE.md`, pi extensions or pi skills.
+  - It uses a custom `ResourceLoader` and our own settings, so nothing is read from `~/.pi`, `.pi/`, `AGENTS.md`/`CLAUDE.md`, pi extensions or pi skills. The one exception is provider extensions the user adds in Settings (§10), and only their providers are used.
   - pi's agent and session folders live under `%APPDATA%\winku\engine\`.
   - `PI_OFFLINE`, `PI_TELEMETRY=0` and `PI_SKIP_VERSION_CHECK` are set, so pi.dev is never contacted.
   - The pi version is pinned in our lockfile and only changes when we upgrade it.
@@ -173,13 +173,14 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 
 ## 10. Models
 
-- **Provider:** one per install. Pick from pi's built-in list or "Custom OpenAI-compatible" (base URL, with presets for Ollama and LM Studio).
+- **Provider:** one per install. Pick from pi's built-in list, a provider extension's providers, or "Custom OpenAI-compatible" (base URL, with presets for Ollama and LM Studio).
+- **Provider extensions:** Settings > Model installs a pi package that adds providers (an npm name, a GitHub URL or a folder) into `extensions\`, without npm or git, and without running its install scripts. Only the providers it registers are used; its tools, commands and hooks are not. A provider that signs in through its own tool (pi-claude-code uses Claude Code's login) needs no key. See [ADR 0004](adr/0004-provider-extensions-are-user-installed.md).
 - **Key:** stored in Windows Credential Manager and passed to winku-engine when it starts. It is never written to disk by us or by pi.
 - **Main and Quick actions models:** searchable dropdowns built from pi's bundled catalog or the endpoint's `/v1/models` list, and you can always type a model ID. Quick actions follows Main until you change it.
 - **Catalog:** pi's bundled catalog is never refreshed from pi.dev. New models arrive when we upgrade pi.
 - **Image support and context window:** read from the catalog. For custom endpoints, "Test connection" probes image support with a tiny test image, and the context window is an editable field.
 - **Thinking level:** set per role, with Main at medium and Quick actions off by default.
-- **Sign-in:** API keys only in v1. Subscription sign-in comes later.
+- **Sign-in:** API keys, or whatever sign-in a provider extension brings with it. Winku has no sign-in flow of its own.
 
 ## 11. Voice
 
@@ -193,7 +194,7 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 ## 12. Not in v1
 
 - Automatic "learn from my edits" for voice profiles.
-- Subscription sign-in for model providers.
+- A subscription sign-in flow of Winku's own (provider extensions can bring theirs).
 - Linux and macOS builds.
 - A notch pill on macOS.
 - Code signing.

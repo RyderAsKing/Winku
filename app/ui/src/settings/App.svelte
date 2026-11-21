@@ -42,10 +42,13 @@
 	import type { Settings } from "../lib/settings.ts";
 	import {
 		type AltGrReport,
+		type AudioDevices,
 		type HotkeysStatus,
 		type MemoryModel,
 		onDownloadProgress,
 		onEngine,
+		onMicTestEnd,
+		onMicTestLevel,
 		onUpdateStatus,
 		type UpdateStatus,
 		onHotkeysStatus,
@@ -92,6 +95,49 @@
 	let forgetResult: string | null = $state(null);
 	let altGr = $state<AltGrReport | null>(null);
 	let tasks: TaskInfo[] = $state([]);
+
+	// Speech page: microphone and speaker
+	let devices: AudioDevices = $state({ inputs: [], outputs: [] });
+	let micTesting = $state(false);
+	let micLevel = $state(0);
+	let micError = $state("");
+	/** Dots in the level meter, lit from the left as the level rises. */
+	const METER_DOTS = 24;
+	const litDots = $derived(Math.round(Math.min(1, Math.sqrt(micLevel) * 1.15) * METER_DOTS));
+	/** "System default" first, with the device it means, then every device; a saved device that is unplugged stays listed. */
+	function deviceOptions(list: { name: string; isDefault: boolean }[], saved: string | null): SelectOption<string | null>[] {
+		const current = list.find((d) => d.isDefault);
+		const options: SelectOption<string | null>[] = [{ value: null, label: "System default", hint: current?.name }];
+		for (const d of list) options.push({ value: d.name, label: d.name });
+		if (saved && !list.some((d) => d.name === saved)) options.push({ value: saved, label: saved, hint: "Not connected, using the default" });
+		return options;
+	}
+	async function loadDevices() {
+		devices = await shell.audioDevices().catch(() => devices);
+	}
+	async function toggleMicTest() {
+		micError = "";
+		if (micTesting) {
+			micTesting = false;
+			micLevel = 0;
+			await shell.micTestStop().catch(() => {});
+			return;
+		}
+		try {
+			await shell.micTestStart();
+			micTesting = true;
+		} catch (error) {
+			micError = String(error).replace(/^Error: /, "");
+		}
+	}
+	async function chooseMic(name: string | null) {
+		saveVoice({ inputDevice: name });
+		if (micTesting) {
+			await shell.micTestStop().catch(() => {});
+			micTesting = false;
+			micLevel = 0;
+		}
+	}
 
 	// Memory page
 	let memory = $state<MemoryOverview | null>(null);
@@ -242,6 +288,15 @@
 			if (e.kind === "settings_section") go(e.section);
 		});
 		void loadMemory();
+		void loadDevices();
+		const unlistenMicLevel = onMicTestLevel((level) => {
+			if (micTesting) micLevel = level;
+		});
+		const unlistenMicEnd = onMicTestEnd((error) => {
+			micTesting = false;
+			micLevel = 0;
+			if (error) micError = error;
+		});
 		const unlistenEngine = onEngine((m) => {
 			if (m.type === "memory_changed" || m.type === "memory_saved") void loadMemory();
 			else if (m.type === "memory_tidy") {
@@ -250,8 +305,11 @@
 				if (m.state === "done") void loadMemory();
 			}
 		});
-		// Notes saved in a conversation while this window was in the background.
-		const onFocus = () => void loadMemory();
+		// Notes saved, or a headset plugged in, while this window was in the background.
+		const onFocus = () => {
+			void loadMemory();
+			void loadDevices();
+		};
 		window.addEventListener("focus", onFocus);
 		const unlistenDownloads = onDownloadProgress((p) => {
 			if (p.what === "embed") {
@@ -276,6 +334,9 @@
 			void unlistenTasks.then((u) => u());
 			void unlistenUi.then((u) => u());
 			void unlistenEngine.then((u) => u());
+			void unlistenMicLevel.then((u) => u());
+			void unlistenMicEnd.then((u) => u());
+			if (micTesting) void shell.micTestStop().catch(() => {});
 			window.removeEventListener("focus", onFocus);
 			for (const timer of Object.values(coreTimers)) clearTimeout(timer);
 		};
@@ -728,6 +789,12 @@
 		{ id: "app", name: "App", desc: "Startup and updates.", alert: false },
 	]);
 	const pageIds = ["model", "conversation", "tools", "speech", "memory", "actions", "keys", "eyes", "schedules", "app"];
+	/** The section list, in three short groups so it reads at a glance. */
+	const NAV_GROUPS = [
+		{ label: "Assistant", ids: ["model", "conversation", "tools", "memory"] },
+		{ label: "Controls", ids: ["speech", "actions", "keys"] },
+		{ label: "Winku", ids: ["eyes", "schedules", "app"] },
+	];
 	const fromHash = () => {
 		// open_window with a section opens settings.html?section=… (window.rs); the hash wins after that.
 		const id = location.hash.slice(1) || (new URLSearchParams(location.search).get("section") ?? "");
@@ -776,18 +843,33 @@
 
 <div class="shell">
 	<nav aria-label="Settings sections">
-		<p class="brand">Settings</p>
-		<ul>
-			{#each pages as p (p.id)}
-				<li>
-					<button type="button" class:current={page === p.id} aria-current={page === p.id ? "page" : undefined} onclick={() => go(p.id)}>
-						{p.name}
-						{#if p.alert}<span class="alert" aria-label="Needs attention"></span>{/if}
-					</button>
-				</li>
-			{/each}
-		</ul>
-		{#if version}<p class="version mono">Winku {version}</p>{/if}
+		<p class="brand">
+			<svg class="mark" viewBox="0 0 40 24" aria-hidden="true">
+				<rect width="40" height="24" rx="12" fill="#13161c" />
+				<rect x="10" y="7.5" width="9" height="9" rx="2.8" fill="var(--accent)" />
+				<rect x="21" y="7.5" width="9" height="9" rx="2.8" fill="var(--accent)" />
+			</svg>
+			Settings
+		</p>
+		{#each NAV_GROUPS as group (group.label)}
+			<p class="nav-label" id="nav-{group.label}">{group.label}</p>
+			<ul aria-labelledby="nav-{group.label}">
+				{#each pages.filter((p) => group.ids.includes(p.id)) as p (p.id)}
+					<li>
+						<button type="button" class:current={page === p.id} aria-current={page === p.id ? "page" : undefined} onclick={() => go(p.id)}>
+							{p.name}
+							{#if p.alert}<span class="alert" aria-label="Needs attention"></span>{/if}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/each}
+		{#if version}
+			<p class="version">
+				<span class="mono">Winku {version}</span>
+				{#if update.state === "ready"}<span class="update-dot" aria-label="Update ready"></span>{/if}
+			</p>
+		{/if}
 	</nav>
 
 	<main bind:this={content}>
@@ -1004,6 +1086,32 @@
 					{/if}
 				</div>
 			{:else if page === "speech"}
+				<h3>Devices</h3>
+				<div class="group">
+					<div class="row">
+						<div class="label"><span class="title">Microphone</span><span class="desc">What Winku listens to while you hold the key.</span></div>
+						<div class="inline">
+							<Select label="Microphone" options={deviceOptions(devices.inputs, settings.voice.inputDevice)} value={settings.voice.inputDevice} onchange={chooseMic} />
+							<button type="button" class="btn" aria-pressed={micTesting} onclick={toggleMicTest}>{micTesting ? "Stop" : "Test"}</button>
+						</div>
+					</div>
+					{#if micTesting || micError}
+						<div class="row meter-row">
+							{#if micError}
+								<p class="status bad" role="alert">{micError}</p>
+							{:else}
+								<p class="status">Say something. The dots follow your voice.</p>
+								<div class="meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(micLevel * 100)}>
+									{#each { length: METER_DOTS } as _, i (i)}<span class:lit={i < litDots}></span>{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
+					<div class="row">
+						<div class="label"><span class="title">Speaker</span><span class="desc">Where replies are read aloud.</span></div>
+						<Select label="Speaker" options={deviceOptions(devices.outputs, settings.voice.outputDevice)} value={settings.voice.outputDevice} onchange={(outputDevice) => saveVoice({ outputDevice })} />
+					</div>
+				</div>
 				<h3>Listening</h3>
 				<div class="group">
 					<div class="row">
@@ -1525,19 +1633,45 @@
 						</div>
 					</div>
 				</div>
+				<h3>About</h3>
+				<div class="group">
+					<div class="row">
+						<div class="label">
+							<span class="title">Winku{version ? ` ${version}` : ""}</span>
+							<span class="desc">Open source under the MIT licence. No account, no telemetry.</span>
+						</div>
+						<div class="inline end">
+							<button type="button" class="btn ghost" onclick={() => shell.openExternal("https://winku.ryder.pro")}>Website</button>
+							<button type="button" class="btn ghost" onclick={() => shell.openExternal("https://github.com/RyderAsKing/Winku")}>Source code</button>
+							<button type="button" class="btn" onclick={() => shell.openExternal("https://github.com/RyderAsKing/Winku/issues/new/choose")}>Report a problem</button>
+						</div>
+					</div>
+				</div>
 			{/if}
 		{/if}
 	</main>
 </div>
 
 <style>
+	/* Settings has its own page, so it can tune the shared tokens without touching the bar. */
+	:global(:root) {
+		--panel: #0b0c10;
+		--panel-raised: #15171c;
+		--line: rgb(255 255 255 / 0.075);
+		--line-strong: rgb(255 255 255 / 0.12);
+		--field: #121419;
+	}
 	:global(body) {
 		background: var(--panel);
 		overflow: hidden;
 	}
+	:global(*) {
+		scrollbar-width: thin;
+		scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+	}
 	.shell {
 		display: grid;
-		grid-template-columns: 188px minmax(0, 1fr);
+		grid-template-columns: 200px minmax(0, 1fr);
 		height: 100%;
 	}
 
@@ -1545,20 +1679,40 @@
 	nav {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		padding: 20px 10px 14px;
+		padding: 18px 12px 14px;
 		border-right: 1px solid var(--line);
-		background: #090a0e;
+		background: #08090c;
 		overflow-y: auto;
 	}
 	.brand {
-		margin: 0 10px 12px;
-		font-size: 15px;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin: 0 8px 18px;
+		font-size: 14px;
 		font-weight: 600;
+		letter-spacing: -0.005em;
+	}
+	.mark {
+		width: 30px;
+		height: 18px;
+		flex: none;
+	}
+	.nav-label {
+		margin: 14px 10px 6px;
+		color: var(--faint);
+		font-family: var(--mono);
+		font-size: 10.5px;
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.brand + .nav-label {
+		margin-top: 0;
 	}
 	nav ul {
 		display: grid;
-		gap: 2px;
+		gap: 1px;
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -1568,10 +1722,10 @@
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
-		height: 34px;
+		height: 32px;
 		padding: 0 10px;
 		border: 0;
-		border-radius: 8px;
+		border-radius: 7px;
 		background: none;
 		color: var(--muted);
 		font-size: 13px;
@@ -1586,9 +1740,9 @@
 		color: var(--text);
 	}
 	nav button.current {
-		background: rgb(255 255 255 / 0.08);
+		background: rgb(255 255 255 / 0.075);
 		color: var(--text);
-		font-weight: 600;
+		font-weight: 500;
 	}
 	.alert {
 		width: 6px;
@@ -1597,50 +1751,70 @@
 		background: var(--error);
 	}
 	.version {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 		margin: auto 10px 0;
-		padding-top: 16px;
+		padding-top: 18px;
 		color: var(--faint);
+	}
+	.update-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
 	}
 
 	/* ── page ── */
 	main {
 		height: 100%;
 		overflow-y: auto;
-		padding: 26px 28px 40px;
+		padding: 28px 32px 48px;
+		scrollbar-gutter: stable;
 	}
 	header {
-		margin-bottom: 18px;
+		margin-bottom: 22px;
+		padding-bottom: 18px;
+		border-bottom: 1px solid var(--line);
 	}
 	header h2 {
 		margin: 0;
-		font-size: 20px;
+		font-size: 21px;
 		font-weight: 600;
-		line-height: 1.3;
+		line-height: 1.25;
+		letter-spacing: -0.015em;
 	}
 	header p {
-		margin: 4px 0 0;
+		margin: 5px 0 0;
+		max-width: 60ch;
 		color: var(--muted);
 		font-size: 13px;
 	}
 	h3 {
-		margin: 24px 0 8px;
-		color: var(--muted);
-		font-size: 12px;
-		font-weight: 600;
-		letter-spacing: 0.02em;
+		margin: 28px 0 10px;
+		color: var(--faint);
+		font-family: var(--mono);
+		font-size: 10.5px;
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	header + h3,
+	.section-head:first-child h3 {
+		margin-top: 0;
 	}
 	.group {
 		border: 1px solid var(--line);
-		border-radius: 12px;
-		background: rgb(255 255 255 / 0.02);
+		border-radius: 10px;
+		background: rgb(255 255 255 / 0.018);
 	}
 	.row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 16px;
-		min-height: 56px;
-		padding: 10px 16px;
+		gap: 20px;
+		min-height: 54px;
+		padding: 11px 16px;
 	}
 	.row + .row {
 		border-top: 1px solid var(--line);
@@ -1649,10 +1823,10 @@
 		flex-direction: column;
 		align-items: stretch;
 		gap: 10px;
-		padding: 12px 16px 14px;
+		padding: 13px 16px 15px;
 	}
 	.row > :global(:not(.label)) {
-		flex: 0 1 340px;
+		flex: 0 1 320px;
 		min-width: 0;
 	}
 	.row > .inline.end {
@@ -1669,12 +1843,13 @@
 	}
 	.label {
 		display: grid;
-		gap: 2px;
+		gap: 3px;
 		flex: 1 1 200px;
 		min-width: 0;
 	}
 	.title {
 		font-size: 13px;
+		font-weight: 500;
 	}
 	.desc {
 		color: var(--muted);
@@ -1690,8 +1865,8 @@
 		text-wrap: pretty;
 	}
 	.foot {
-		background: rgb(255 255 255 / 0.015);
-		border-radius: 0 0 12px 12px;
+		background: rgb(255 255 255 / 0.02);
+		border-radius: 0 0 10px 10px;
 	}
 	.status {
 		flex: 1 1 auto !important;
@@ -1704,6 +1879,28 @@
 	}
 	.group.spaced {
 		margin-top: 24px;
+	}
+	.row.meter-row {
+		min-height: 44px;
+		padding-top: 8px;
+		padding-bottom: 8px;
+	}
+	.meter {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex: none !important;
+	}
+	.meter span {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: rgb(255 255 255 / 0.1);
+		transition: background-color 80ms linear;
+	}
+	/* Listening teal, the eyes' colour while you talk. */
+	.meter span.lit {
+		background: #4cffe3;
 	}
 	.note .label {
 		gap: 3px;
@@ -1837,18 +2034,20 @@
 	}
 
 	/* ── controls ── */
-	input:not([type="checkbox"]),
+	input:not([type="checkbox"]):not([type="range"]),
 	textarea {
 		width: 100%;
 		min-width: 0;
 		height: 32px;
 		padding: 0 10px;
-		border-radius: 8px;
+		border-radius: 7px;
 		border: 1px solid var(--line-strong);
-		background-color: var(--panel-raised);
+		background-color: var(--field);
 		outline: none;
 		font-size: 13px;
-		transition: border-color 120ms ease;
+		transition:
+			border-color 120ms ease,
+			box-shadow 120ms ease;
 	}
 	textarea {
 		height: auto;
@@ -1860,12 +2059,13 @@
 	}
 	input:hover,
 	textarea:hover {
-		border-color: rgb(255 255 255 / 0.32);
+		border-color: rgb(255 255 255 / 0.2);
 	}
-	/* The border is the focus mark; an outline as well would double it. */
+	/* The border and a soft ring are the focus mark; an outline as well would double it. */
 	input:focus,
 	textarea:focus {
-		border-color: var(--focus);
+		border-color: rgb(94 246 240 / 0.7);
+		box-shadow: 0 0 0 3px rgb(94 246 240 / 0.12);
 	}
 	input:focus-visible,
 	textarea:focus-visible {
@@ -1885,11 +2085,12 @@
 		flex: none;
 		height: 32px;
 		padding: 0 12px;
-		border-radius: 8px;
+		border-radius: 7px;
 		border: 1px solid var(--line-strong);
-		background: var(--panel-raised);
+		background: rgb(255 255 255 / 0.04);
 		color: var(--text);
-		font-size: 12px;
+		font-size: 12.5px;
+		font-weight: 500;
 		white-space: nowrap;
 		cursor: pointer;
 		transition:
@@ -1897,15 +2098,15 @@
 			border-color 120ms ease;
 	}
 	.btn:hover:not(:disabled) {
-		background: #1c2029;
-		border-color: rgb(255 255 255 / 0.32);
+		background: rgb(255 255 255 / 0.08);
+		border-color: rgb(255 255 255 / 0.2);
 	}
 	.btn.primary {
 		border-color: transparent;
 		background: var(--accent);
 		color: #041314;
 		font-weight: 600;
-		padding: 0 18px;
+		padding: 0 16px;
 	}
 	.btn.primary:hover:not(:disabled) {
 		background: #8af9f5;
@@ -1931,7 +2132,7 @@
 		color: var(--text);
 	}
 	button:disabled {
-		opacity: 0.45;
+		opacity: 0.4;
 		cursor: default;
 	}
 
@@ -2058,7 +2259,7 @@
 		gap: 12px;
 		margin-bottom: 12px;
 		padding: 12px 16px;
-		border-radius: 12px;
+		border-radius: 10px;
 		border: 1px solid rgb(255 139 130 / 0.4);
 		background: rgb(255 139 130 / 0.06);
 	}
@@ -2084,8 +2285,14 @@
 			scrollbar-width: none;
 		}
 		.brand,
+		.nav-label,
 		.version {
 			display: none;
+		}
+		nav ul:not(:first-of-type) {
+			margin-left: 2px;
+			padding-left: 4px;
+			border-left: 1px solid var(--line);
 		}
 		nav ul {
 			display: flex;

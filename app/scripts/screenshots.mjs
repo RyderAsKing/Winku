@@ -447,6 +447,17 @@ const cases = [
 		},
 	},
 	{
+		name: "settings-speech-mic-test",
+		path: "/settings.html#speech",
+		size: SETTINGS,
+		ready: "role=heading[name='Speech']",
+		prepare: async (page) => {
+			await page.getByRole("button", { name: "Test", exact: true }).first().click();
+			await page.getByRole("meter", { name: "Microphone level" }).waitFor();
+			await page.waitForTimeout(500);
+		},
+	},
+	{
 		name: "settings-app",
 		path: "/settings.html?update=1#app",
 		size: SETTINGS,

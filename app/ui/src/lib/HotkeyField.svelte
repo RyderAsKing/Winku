@@ -41,9 +41,9 @@
 		min-width: 140px;
 		height: 32px;
 		padding: 0 12px;
-		border-radius: 8px;
+		border-radius: 7px;
 		border: 1px solid var(--line-strong);
-		background: var(--panel-raised);
+		background: var(--field, var(--panel-raised));
 		font-size: 12px;
 		cursor: pointer;
 		text-align: center;

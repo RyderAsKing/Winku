@@ -11,35 +11,35 @@
 	.switch {
 		flex: none;
 		position: relative;
-		width: 38px;
-		height: 22px;
+		width: 36px;
+		height: 20px;
 		padding: 0;
 		border-radius: 999px;
-		border: 1px solid var(--line-strong);
-		background: var(--panel-raised);
+		border: 0;
+		background: rgb(255 255 255 / 0.14);
 		cursor: pointer;
-		transition:
-			background-color 160ms ease,
-			border-color 160ms ease;
+		transition: background-color 160ms ease;
+	}
+	.switch:hover {
+		background: rgb(255 255 255 / 0.2);
 	}
 	.knob {
 		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 14px;
-		height: 14px;
+		top: 2px;
+		left: 2px;
+		width: 16px;
+		height: 16px;
 		border-radius: 50%;
-		background: var(--muted);
-		transition:
-			translate 180ms cubic-bezier(0.22, 1, 0.36, 1),
-			background-color 160ms ease;
+		background: #e7e9ee;
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+		transition: translate 180ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
 	.switch[aria-checked="true"] {
-		border-color: transparent;
 		background: var(--accent);
 	}
 	.switch[aria-checked="true"] .knob {
 		translate: 16px 0;
 		background: #041314;
+		box-shadow: none;
 	}
 </style>

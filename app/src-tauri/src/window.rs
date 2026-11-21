@@ -18,6 +18,7 @@ use tauri::{
 use crate::settings::{self, Point};
 
 pub const MAIN: &str = "main";
+pub const SETTINGS: &str = "settings";
 
 /// Logical px within which the pill snaps to a work-area edge.
 pub const SNAP_DISTANCE: f64 = 24.0;
@@ -1203,7 +1204,7 @@ pub fn open_page(app: &AppHandle, page: Page, section: Option<&str>) -> Result<(
     });
     let (label, url, title, size) = match page {
         Page::Settings => (
-            "settings",
+            SETTINGS,
             "settings.html",
             "Winku Settings",
             (860.0, 600.0),

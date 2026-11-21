@@ -1,4 +1,4 @@
-//! Microphone capture with cpal (WASAPI on Windows). Records the default input device on the
+//! Microphone capture with cpal (WASAPI on Windows). Records the chosen input device (default if none) on the
 //! calling thread until told to stop, reporting a level for the eyes.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 
 use super::audio;
@@ -96,17 +96,18 @@ impl Tap {
     }
 }
 
-/// Records until `stop` receives (or its sender is dropped) or `max` has passed. `on_open` runs
+/// Records `device` (the default when `None` or no longer plugged in) until `stop` receives (or its sender is dropped) or `max` has passed. `on_open` runs
 /// once the microphone is capturing, with a `Tap` on the samples so far; `on_level` gets 0–1 at
 /// most every `LEVEL_INTERVAL`.
 pub fn record(
+    device: Option<&str>,
     stop: &Receiver<()>,
     max: Duration,
     on_open: impl FnOnce(Tap),
     mut on_level: impl FnMut(f32),
 ) -> Result<Recording, MicError> {
     let host = cpal::default_host();
-    let device = host.default_input_device().ok_or(MicError::NoDevice)?;
+    let device = super::devices::input(&host, device).ok_or(MicError::NoDevice)?;
     let supported = device.default_input_config().map_err(from_cpal)?;
     let config = supported.config();
     let rate = config.sample_rate;

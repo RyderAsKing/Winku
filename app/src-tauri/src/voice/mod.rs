@@ -8,6 +8,7 @@
 //! handler and Tauri commands only start work and return.
 
 pub mod audio;
+pub mod devices;
 pub mod download;
 pub mod mic;
 pub mod models;
@@ -36,6 +37,12 @@ use stt::Slot;
 
 /// A recording stops by itself after this long.
 pub const MAX_RECORDING: Duration = Duration::from_secs(60);
+/// The microphone test stops by itself after this long.
+pub const MAX_MIC_TEST: Duration = Duration::from_secs(30);
+/// Events for the Settings window while the microphone test runs: `mic_test_level` (0-1, the
+/// same scale as `talk_level`) and `mic_test_end` (null, or the message when it failed).
+pub const MIC_TEST_LEVEL_EVENT: &str = "mic_test_level";
+pub const MIC_TEST_END_EVENT: &str = "mic_test_end";
 /// Event for model download progress, to every window.
 pub const DOWNLOAD_EVENT: &str = "download_progress";
 /// How often the idle check runs while a model is loaded.
@@ -46,6 +53,12 @@ struct Session {
     stop: Sender<()>,
     /// Closed as soon as the hold ends, so no `talk_partial` follows.
     partials: Arc<Gate>,
+}
+
+/// Settings > Speech "test microphone": levels only, nothing is kept or transcribed.
+struct MicTest {
+    id: u64,
+    stop: Sender<()>,
 }
 
 /// A recording waiting for its model to finish downloading.
@@ -65,6 +78,7 @@ struct Speaking {
 pub struct Voice {
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
+    mic_test: Mutex<Option<MicTest>>,
     pending: Mutex<Option<Pending>>,
     stt: Mutex<Slot<OfflineRecognizer>>,
     tts: Mutex<Slot<OfflineTts>>,
@@ -112,6 +126,8 @@ fn chosen_stt(app: &AppHandle) -> &'static Model {
 /// speech, send `talk_start` and start recording, with `talk_partial` while it records.
 pub fn hold_start(app: &AppHandle) {
     stop_speaking(app);
+    // Talking wins: the test gives up the microphone.
+    mic_test_stop(app);
     let voice = app.state::<Voice>();
     let model = chosen_stt(app);
 
@@ -134,6 +150,7 @@ pub fn hold_start(app: &AppHandle) {
     emit_ui(app, json!({ "kind": "talk_start" }));
     ensure_download(app, model);
     let thread_app = app.clone();
+    let input = app.state::<Store>().get().voice.input_device;
     let spawned = std::thread::Builder::new()
         .name("winku-mic".into())
         .spawn(move || {
@@ -142,6 +159,7 @@ pub fn hold_start(app: &AppHandle) {
             let worker_app = app.clone();
             let worker_gate = Arc::clone(&partials);
             let result = mic::record(
+                input.as_deref(),
                 &rx,
                 MAX_RECORDING,
                 |tap| start_partials(worker_app, model, tap, worker_gate),
@@ -177,6 +195,59 @@ pub fn hold_end(app: &AppHandle) {
     if let Some(session) = lock(&app.state::<Voice>().session).take() {
         session.partials.close();
         let _ = session.stop.send(());
+    }
+}
+
+// ───────────────────────────── microphone test ─────────────────────────────
+
+/// Opens the chosen microphone and sends `mic_test_level` to the Settings window until
+/// `mic_test_stop`, the window closing, or `MAX_MIC_TEST`. Refused while the talk key is held.
+pub fn mic_test_start(app: &AppHandle) -> Result<(), String> {
+    let voice = app.state::<Voice>();
+    if lock(&voice.session).is_some() {
+        return Err("The microphone is in use for talking.".into());
+    }
+    let (tx, rx) = mpsc::channel();
+    let id = voice.next_id.fetch_add(1, Ordering::Relaxed);
+    if let Some(old) = lock(&voice.mic_test).replace(MicTest { id, stop: tx }) {
+        let _ = old.stop.send(());
+    }
+    let input = app.state::<Store>().get().voice.input_device;
+    let thread_app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("winku-mic-test".into())
+        .spawn(move || {
+            let app = thread_app;
+            let result = mic::record(
+                input.as_deref(),
+                &rx,
+                MAX_MIC_TEST,
+                |_| {},
+                |level| {
+                    let _ = app.emit_to(crate::window::SETTINGS, MIC_TEST_LEVEL_EVENT, level);
+                },
+            );
+            {
+                let voice = app.state::<Voice>();
+                let mut test = lock(&voice.mic_test);
+                if test.as_ref().is_some_and(|t| t.id == id) {
+                    *test = None;
+                }
+            }
+            let error = result.err().map(|e| e.message());
+            let _ = app.emit_to(crate::window::SETTINGS, MIC_TEST_END_EVENT, error);
+        });
+    if let Err(e) = spawned {
+        lock(&voice.mic_test).take();
+        return Err(format!("Couldn't start the microphone test: {e}"));
+    }
+    Ok(())
+}
+
+/// Stops the microphone test if one runs.
+pub fn mic_test_stop(app: &AppHandle) {
+    if let Some(test) = lock(&app.state::<Voice>().mic_test).take() {
+        let _ = test.stop.send(());
     }
 }
 
@@ -477,6 +548,7 @@ pub fn speak(app: &AppHandle, text: String, append: bool) {
                         &app,
                         neural,
                         settings.reading(),
+                        settings.output_device.as_deref(),
                         &text,
                         next,
                         &stop,
@@ -487,7 +559,14 @@ pub fn speak(app: &AppHandle, text: String, append: bool) {
                         // Not downloaded yet: fetch it for next time, and use the OS voice now.
                         ensure_download(&app, neural);
                     }
-                    speak_os(&text, settings.os_voice.as_deref(), next, &stop, on_start)
+                    speak_os(
+                        &text,
+                        settings.os_voice.as_deref(),
+                        settings.output_device.as_deref(),
+                        next,
+                        &stop,
+                        on_start,
+                    )
                 };
                 if let Err(e) = result {
                     if !stop.load(Ordering::SeqCst) {
@@ -530,6 +609,7 @@ fn speak_neural(
     app: &AppHandle,
     model: &'static Model,
     reading: tts::Reading,
+    output: Option<&str>,
     text: &str,
     mut next: impl FnMut() -> Option<String>,
     stop: &Arc<AtomicBool>,
@@ -545,7 +625,7 @@ fn speak_neural(
         .and_then(|engine| {
             let feed = tts::Feed::new(tts::engine_rate(engine));
             std::thread::scope(|s| {
-                let player = s.spawn(|| tts::play(&feed, stop, on_start));
+                let player = s.spawn(|| tts::play(output, &feed, stop, on_start));
                 let mut utterance = tts::Utterance::default();
                 tts::supertonic_speak(engine, text, reading, &mut utterance, &feed, stop);
                 while !stop.load(Ordering::SeqCst) {
@@ -568,14 +648,15 @@ fn speak_neural(
 fn speak_os(
     text: &str,
     os_voice: Option<&str>,
+    output: Option<&str>,
     mut next: impl FnMut() -> Option<String>,
     stop: &AtomicBool,
     on_start: impl FnOnce(),
 ) -> Result<(), String> {
-    tts::os_speak(text, os_voice, stop, on_start)?;
+    tts::os_speak(text, os_voice, output, stop, on_start)?;
     while !stop.load(Ordering::SeqCst) {
         let Some(more) = next() else { break };
-        tts::os_speak(&more, os_voice, stop, || {})?;
+        tts::os_speak(&more, os_voice, output, stop, || {})?;
     }
     Ok(())
 }

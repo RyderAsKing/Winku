@@ -50,6 +50,8 @@ The first time you hold the talk key, Winku downloads a speech model of about 11
 
 When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice (on Linux, Speech Dispatcher's `spd-say`, if it's installed) reads until Supertonic arrives, and stays available in Settings.
 
+To use a different microphone or speaker, pick it in Settings > Speech. Test, next to the microphone, shows a live level so you can see it hears you; nothing is recorded. If the one you chose is unplugged, Winku uses the system default.
+
 ## Memory
 
 Winku remembers you between conversations. It keeps a short profile of lasting facts about you, your current goals and a recap of where you left off, and it always has them in front of it, so you don't have to repeat yourself. Things worth keeping go into notes, and before each message Winku looks through them and brings along the ones that relate. That search runs on your computer, with a 34 MB model downloaded the first time it's needed.

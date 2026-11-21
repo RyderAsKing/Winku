@@ -128,6 +128,16 @@ export function createMockShell(): ShellImpl {
 	let hasKey = !params.has("connect");
 	let hasSearchKey = false;
 	let extensions: ExtensionInfo[] = params.has("extension") ? [CLAUDE_CODE] : [];
+	let micTest: ReturnType<typeof setInterval> | null = null;
+	let micTestStop: ReturnType<typeof setTimeout> | null = null;
+	const commandsStopMicTest = () => {
+		if (micTest) clearInterval(micTest);
+		if (micTestStop) clearTimeout(micTestStop);
+		const wasRunning = micTest !== null;
+		micTest = null;
+		micTestStop = null;
+		if (wasRunning) emit("mic_test_end", null);
+	};
 	let pendingAsk: ((decision: string) => void) | null = null;
 	if (hasKey) {
 		settings = {
@@ -533,6 +543,32 @@ export function createMockShell(): ShellImpl {
 						{ id: "MSTTS_V110_enUS_ZiraM", name: "Microsoft Zira", language: "en-US" },
 						{ id: "MSTTS_V110_enGB_HazelM", name: "Microsoft Hazel", language: "en-GB" },
 					] as T;
+				case "audio_devices":
+					return {
+						inputs: [
+							{ name: "Microphone Array (Realtek Audio)", isDefault: true },
+							{ name: "Headset Microphone (USB Audio)", isDefault: false },
+						],
+						outputs: [
+							{ name: "Speakers (Realtek Audio)", isDefault: true },
+							{ name: "Headphones (USB Audio)", isDefault: false },
+						],
+					} as T;
+				case "mic_test_start": {
+					if (micTest) clearInterval(micTest);
+					let t = 0;
+					const stop = setTimeout(() => commandsStopMicTest(), 30_000);
+					micTest = setInterval(() => {
+						t += 1;
+						const level = Math.max(0, Math.min(1, 0.45 + 0.3 * Math.sin(t / 3) + 0.15 * Math.sin(t * 1.7)));
+						emit("mic_test_level", level);
+					}, 67);
+					micTestStop = stop;
+					return undefined as T;
+				}
+				case "mic_test_stop":
+					commandsStopMicTest();
+					return undefined as T;
 				case "voice_model_download":
 					download(String(args?.id));
 					return undefined as T;

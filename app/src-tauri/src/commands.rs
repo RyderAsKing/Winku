@@ -260,6 +260,25 @@ pub fn stop_speaking(app: AppHandle) {
     crate::voice::stop_speaking(&app);
 }
 
+/// The microphones and speakers to choose from. Async: listing devices can take a moment.
+#[tauri::command]
+pub async fn audio_devices() -> crate::voice::devices::AudioDevices {
+    tauri::async_runtime::spawn_blocking(crate::voice::devices::list)
+        .await
+        .unwrap_or_default()
+}
+
+/// Settings > Speech: show the microphone's level (event `mic_test_level`) without transcribing.
+#[tauri::command]
+pub fn mic_test_start(app: AppHandle) -> Result<(), String> {
+    crate::voice::mic_test_start(&app)
+}
+
+#[tauri::command]
+pub fn mic_test_stop(app: AppHandle) {
+    crate::voice::mic_test_stop(&app);
+}
+
 /// The OS voices (Windows OneCore); empty elsewhere. Async: WinRT enumeration can take a moment.
 #[tauri::command]
 pub async fn voice_os_voices() -> Vec<crate::voice::tts::OsVoice> {

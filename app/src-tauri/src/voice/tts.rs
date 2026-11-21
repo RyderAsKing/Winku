@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use serde::Serialize;
 use sherpa_onnx::{
@@ -67,12 +67,16 @@ impl Feed {
     }
 }
 
-/// Plays `feed` on the default output device until it is finished and drained, or `stop` is set.
+/// Plays `feed` on the `output` device (the default when `None` or unplugged) until it is finished and drained, or `stop` is set.
 /// `on_start` runs when the first audio reaches the device. Blocks the calling thread.
-pub fn play(feed: &Feed, stop: &AtomicBool, on_start: impl FnOnce()) -> Result<(), String> {
+pub fn play(
+    output: Option<&str>,
+    feed: &Feed,
+    stop: &AtomicBool,
+    on_start: impl FnOnce(),
+) -> Result<(), String> {
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
+    let device = super::devices::output(&host, output)
         .ok_or("No speakers or headphones found")?;
     let supported = device
         .default_output_config()
@@ -541,6 +545,7 @@ pub fn os_voices() -> Vec<OsVoice> {
 pub fn os_speak(
     text: &str,
     voice: Option<&str>,
+    output: Option<&str>,
     stop: &AtomicBool,
     on_start: impl FnOnce(),
 ) -> Result<(), String> {
@@ -551,7 +556,7 @@ pub fn os_speak(
     let feed = Feed::new(wav.rate);
     feed.push(&wav.samples);
     feed.finish();
-    play(&feed, stop, on_start)
+    play(output, &feed, stop, on_start)
 }
 
 /// Speaks `text` with `spd-say` (speech-dispatcher), blocking until it ends or `stop` is set.
@@ -559,6 +564,7 @@ pub fn os_speak(
 pub fn os_speak(
     text: &str,
     _voice: Option<&str>,
+    _output: Option<&str>,
     stop: &AtomicBool,
     on_start: impl FnOnce(),
 ) -> Result<(), String> {

@@ -6,7 +6,7 @@ name: Release
 # Windows and the Macs after Linux, one at a time, each adding its files and its entries in
 # latest.json to the same release.
 # The Mac apps are ad-hoc signed, not signed with an Apple Developer ID or notarized:
-# docs/adr/0004-macos-unsigned-build.md.
+# docs/adr/0005-macos-unsigned-build.md.
 # The tag must match the version in app/src-tauri/tauri.conf.json.
 on:
   push:

@@ -86,7 +86,7 @@ A few things differ on Linux whatever the session:
 
 ## macOS
 
-The Mac app is an unsigned preview ([why](adr/0004-macos-unsigned-build.md)): it hasn't been tried on a real Mac yet, so please [report](https://github.com/RyderAsKing/Winku/issues/new/choose) whatever doesn't work. The README says how to get past Gatekeeper the first time.
+The Mac app is an unsigned preview ([why](adr/0005-macos-unsigned-build.md)): it hasn't been tried on a real Mac yet, so please [report](https://github.com/RyderAsKing/Winku/issues/new/choose) whatever doesn't work. The README says how to get past Gatekeeper the first time.
 
 - **Keys.** Winku's `Alt` is Option and `Super` (or `Win`) is Cmd, so the summon key is `Ctrl+Option+Space`. macOS uses `Ctrl+Option+Space` to switch input sources when you have more than one; if it does on your Mac, pick another summon key in Settings > Keys.
 - **Permissions.** macOS asks for each one the first time Winku needs it. You can turn them on or off later in System Settings > Privacy & Security:

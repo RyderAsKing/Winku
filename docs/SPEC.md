@@ -6,7 +6,7 @@ Confirmed with the user on 2026-11-11, including the four points that were first
 
 ## 1. Platforms and releases
 
-- The first few releases are Windows only. Linux (KDE on Wayland first, then the others) and macOS come later.
+- Windows came first. Linux followed in 0.3.0 (on X11, ADR 0003), and macOS is an unsigned preview for Apple Silicon and Intel (ADR 0005).
 - Builds for Windows, then Linux AppImage/deb, then macOS, come from GitHub Actions and are published to GitHub Releases. They are unsigned for now, and the README explains how to get past SmartScreen and Gatekeeper.
 - Auto-update uses the Tauri updater, which verifies each update against our release signing key. The update downloads in the background and installs on the next restart or quit, with a small dot on the eyes until then. Settings: Auto-install (default), Notify only, Off.
 
@@ -196,7 +196,6 @@ All of this is plain markdown under `%APPDATA%\winku\`, so you can edit it in an
 
 - Automatic "learn from my edits" for voice profiles.
 - A subscription sign-in flow of Winku's own (provider extensions can bring theirs).
-- Linux and macOS builds.
 - A notch pill on macOS.
 - Code signing.
 

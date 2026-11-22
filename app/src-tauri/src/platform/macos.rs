@@ -1,4 +1,4 @@
-//! macOS (docs/adr/0004-macos-unsigned-build.md). Windows are Quartz window ids from the window
+//! macOS (docs/adr/0005-macos-unsigned-build.md). Windows are Quartz window ids from the window
 //! list (`CGWindowListCopyWindowInfo`), which also names their process; keys are Quartz events;
 //! the selection comes from the Accessibility API; the clipboard is the general NSPasteboard,
 //! whose change count stands in for Windows' clipboard sequence number.

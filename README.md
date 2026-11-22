@@ -41,7 +41,7 @@ Winku on Linux works best in an **X11 session**. On Wayland (the default on GNOM
 
 **macOS (unsigned preview)**
 
-The Mac app isn't signed with an Apple Developer ID or notarized ([why](docs/adr/0004-macos-unsigned-build.md)), and nobody has tried it on a real Mac yet, so treat it as a preview and tell us what breaks.
+The Mac app isn't signed with an Apple Developer ID or notarized ([why](docs/adr/0005-macos-unsigned-build.md)), and nobody has tried it on a real Mac yet, so treat it as a preview and tell us what breaks.
 
 1. From the [latest release](https://github.com/RyderAsKing/Winku/releases/latest), download `Winku_<version>_aarch64.dmg` for Apple Silicon (M1 and newer) or `Winku_<version>_x64.dmg` for an Intel Mac.
 2. Open it and drag Winku to Applications.

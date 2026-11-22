@@ -145,6 +145,10 @@ pub struct Voice {
     /// Supertonic pace, 0.8-1.5 (1.0 is the model's own).
     pub tts_speed: f32,
     pub os_voice: Option<String>,
+    /// Microphone and speakers by the name cpal reports; `None` is the system default. A device
+    /// that isn't plugged in falls back to the default when used.
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
     /// `"mirror"`, `"always_voice"` or `"always_text"` (SPEC §11).
     pub reply: String,
     /// How much of a spoken reply is said: `"brief"`, `"enough"` or `"full"`.
@@ -236,6 +240,8 @@ impl Default for Voice {
             tts_steps: crate::voice::tts::DEFAULT_STEPS,
             tts_speed: crate::voice::tts::DEFAULT_SPEED,
             os_voice: None,
+            input_device: None,
+            output_device: None,
             reply: "mirror".into(),
             say: "enough".into(),
             listening_paused: false,

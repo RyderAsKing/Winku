@@ -215,7 +215,7 @@
 		padding: 0 10px 0 11px;
 		border-radius: 8px;
 		border: 1px solid var(--line-strong);
-		background: var(--panel-raised);
+		background: var(--field, var(--panel-raised));
 		color: var(--text);
 		font-size: 13px;
 		text-align: left;

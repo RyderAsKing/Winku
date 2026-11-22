@@ -63,7 +63,7 @@ export function defaultSettings(): Settings {
 		},
 		leaderKey: null,
 		eyes: { hidden: false, size: "small", positions: {} },
-		voice: { stt: "moonshine-base", tts: "supertonic", ttsVoice: 5, ttsSteps: 8, ttsSpeed: 1.05, osVoice: null, reply: "mirror", say: "enough", listeningPaused: false },
+		voice: { stt: "moonshine-base", tts: "supertonic", ttsVoice: 5, ttsSteps: 8, ttsSpeed: 1.05, osVoice: null, inputDevice: null, outputDevice: null, reply: "mirror", say: "enough", listeningPaused: false },
 		memory: { recall: true, tidy: true },
 		updates: "auto",
 		launchAtLogin: true,

@@ -76,8 +76,7 @@ pub fn play(
     on_start: impl FnOnce(),
 ) -> Result<(), String> {
     let host = cpal::default_host();
-    let device = super::devices::output(&host, output)
-        .ok_or("No speakers or headphones found")?;
+    let device = super::devices::output(&host, output).ok_or("No speakers or headphones found")?;
     let supported = device
         .default_output_config()
         .map_err(|e| format!("Couldn't use the speakers: {e}"))?;

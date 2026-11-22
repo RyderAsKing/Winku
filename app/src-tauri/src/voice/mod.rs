@@ -544,16 +544,7 @@ pub fn speak(app: &AppHandle, text: String, append: bool) {
                 let neural = models::find("supertonic").expect("supertonic is in the table");
                 let result = if settings.tts == "supertonic" && neural.installed(&models_dir(&app))
                 {
-                    speak_neural(
-                        &app,
-                        neural,
-                        settings.reading(),
-                        settings.output_device.as_deref(),
-                        &text,
-                        next,
-                        &stop,
-                        on_start,
-                    )
+                    speak_neural(&app, neural, &settings, &text, next, &stop, on_start)
                 } else {
                     if settings.tts == "supertonic" {
                         // Not downloaded yet: fetch it for next time, and use the OS voice now.
@@ -608,14 +599,14 @@ fn next_queued(app: &AppHandle, id: u64) -> Option<String> {
 fn speak_neural(
     app: &AppHandle,
     model: &'static Model,
-    reading: tts::Reading,
-    output: Option<&str>,
+    settings: &crate::settings::Voice,
     text: &str,
     mut next: impl FnMut() -> Option<String>,
     stop: &Arc<AtomicBool>,
     on_start: impl FnOnce() + Send,
 ) -> Result<(), String> {
     let voice = app.state::<Voice>();
+    let (reading, output) = (settings.reading(), settings.output_device.as_deref());
     let dir = model.dir(&models_dir(app));
     let mut slot = lock(&voice.tts);
     let result = slot

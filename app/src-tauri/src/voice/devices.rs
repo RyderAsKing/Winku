@@ -126,8 +126,14 @@ mod tests {
         assert_eq!(
             out,
             vec![
-                DeviceInfo { name: "A".into(), is_default: false },
-                DeviceInfo { name: "B".into(), is_default: true },
+                DeviceInfo {
+                    name: "A".into(),
+                    is_default: false
+                },
+                DeviceInfo {
+                    name: "B".into(),
+                    is_default: true
+                },
             ]
         );
     }

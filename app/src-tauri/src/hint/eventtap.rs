@@ -3,7 +3,7 @@
 //! One thread owns the tap and runs its run loop; the tap sees every key whichever app has
 //! focus and takes nothing away from anyone. A second thread runs the one timer while a hold is
 //! pending (deadline.rs). The tap needs the Input Monitoring permission: without it macOS
-//! refuses to make one, and there are no hints.
+//! refuses to make one, and the thread tries again every few seconds until it is allowed.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -21,6 +21,9 @@ use super::deadline::{set_deadline, timer};
 use super::{Key, Timer};
 
 static STARTED: OnceLock<()> = OnceLock::new();
+
+/// How often to try again for the tap while a permission is missing.
+const RETRY: Duration = Duration::from_secs(3);
 
 /// What the tap's callback needs; it runs on the tap's thread.
 struct Tap {
@@ -43,10 +46,22 @@ pub fn watch(on_key: fn(Key, bool) -> Timer, on_timer: fn() -> Option<u32>, dela
     std::thread::Builder::new()
         .name("winku-keys".into())
         .spawn(move || {
-            if keys(on_key, delay).is_none() {
-                eprintln!(
-                    "winku: no key events (Input Monitoring isn't allowed for Winku), no hotkey hints"
-                );
+            // At first start the permissions aren't there yet: wait for Accessibility (so its
+            // prompt doesn't arrive together with Input Monitoring's), then keep trying until
+            // macOS allows the tap. `keys` only returns when it couldn't make one.
+            let mut said = false;
+            loop {
+                if crate::platform::accessibility_granted() && keys(on_key, delay).is_some() {
+                    break;
+                }
+                if !said {
+                    said = true;
+                    eprintln!(
+                        "winku: no key events yet (Accessibility or Input Monitoring isn't allowed \
+                         for Winku), no hotkey hints until it is"
+                    );
+                }
+                std::thread::sleep(RETRY);
             }
         })
         .ok();
@@ -95,19 +110,19 @@ unsafe extern "C-unwind" fn callback(
     event: NonNull<CGEvent>,
     _user_info: *mut c_void,
 ) -> *mut CGEvent {
-    // SAFETY: the event is valid for the duration of the callback.
-    let e = unsafe { event.as_ref() };
     TAP.with(|t| {
         let t = t.borrow();
         let Some(tap) = t.as_ref() else { return };
         if kind == CGEventType::TapDisabledByTimeout || kind == CGEventType::TapDisabledByUserInput
         {
-            // macOS turns a slow tap off; turn it back on.
+            // macOS turns a slow tap off; turn it back on. These carry no key event to read.
             if let Some(port) = &tap.port {
                 CGEvent::tap_enable(port, true);
             }
             return;
         }
+        // SAFETY: a key event, valid for the duration of the callback.
+        let e = unsafe { event.as_ref() };
         let code = CGEvent::integer_value_field(Some(e), CGEventField::KeyboardEventKeycode) as u16;
         let events: &[(Key, bool)] = &if kind == CGEventType::FlagsChanged {
             match modifier(code, CGEvent::flags(Some(e)).0) {

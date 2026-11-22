@@ -63,6 +63,7 @@ pub fn run() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 if let Some(main) = app.get_webview_window(window::MAIN) {
                     let _ = main.set_visible_on_all_workspaces(true);
+                    platform::join_fullscreen_spaces(&main);
                 }
                 platform::request_accessibility();
             }

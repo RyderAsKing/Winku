@@ -10,7 +10,7 @@
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use objc2::rc::{autoreleasepool, Retained};
@@ -51,6 +51,12 @@ extern "C" {
     static kAXTrustedCheckOptionPrompt: &'static CFString;
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
 fn cf_ptr<T: ?Sized>(value: &T) -> *const c_void {
     (value as *const T).cast()
 }
@@ -59,6 +65,11 @@ fn cf_ptr<T: ?Sized>(value: &T) -> *const c_void {
 fn trusted() -> bool {
     // SAFETY: no arguments.
     unsafe { AXIsProcessTrusted() != 0 }
+}
+
+/// Whether the Accessibility permission is granted.
+pub fn accessibility_granted() -> bool {
+    trusted()
 }
 
 const NEEDS_ACCESSIBILITY: &str = "Winku needs the Accessibility permission for this: System \
@@ -100,7 +111,11 @@ impl Ax {
 
     fn app(pid: i32) -> Option<Ax> {
         // SAFETY: any pid; an unknown one gives an element whose queries fail.
-        Ax::adopt(unsafe { AXUIElementCreateApplication(pid) })
+        let app = Ax::adopt(unsafe { AXUIElementCreateApplication(pid) })?;
+        // As for the system-wide element: a hung app shouldn't hold a caller for six seconds.
+        // SAFETY: a valid element.
+        unsafe { AXUIElementSetMessagingTimeout(cf_ptr(&*app.0), 0.5) };
+        Some(app)
     }
 
     fn attribute(&self, name: &str) -> Option<CFRetained<CFType>> {
@@ -240,6 +255,31 @@ pub fn foreground_window() -> WindowHandle {
     let Some(pid) = front_pid() else {
         return WindowHandle(0);
     };
+    remember_front(pid);
+    front_window_of(pid)
+}
+
+/// The last app other than Winku seen in front (0 for none yet).
+static LAST_OTHER_PID: AtomicI32 = AtomicI32::new(0);
+
+fn remember_front(pid: i32) {
+    if u32::try_from(pid).ok() != Some(std::process::id()) {
+        LAST_OTHER_PID.store(pid, Ordering::Relaxed);
+    }
+}
+
+/// The front window of the app that was in front before Winku. Clicking the pill brings Winku
+/// to the front, so the window the user was in is this one. 0 when there is none.
+pub fn window_before_winku() -> WindowHandle {
+    match LAST_OTHER_PID.load(Ordering::Relaxed) {
+        0 => WindowHandle(0),
+        pid => front_window_of(pid),
+    }
+}
+
+/// `pid`'s frontmost ordinary window (layer 0), or its frontmost window of any kind. 0 when it
+/// shows none.
+fn front_window_of(pid: i32) -> WindowHandle {
     let windows = on_screen();
     let mut own = windows.iter().filter(|w| w.pid == pid);
     let front = own
@@ -358,13 +398,15 @@ fn send_command(key: u16) -> Result<(), String> {
 }
 
 /// The selected text of the focused control, through the Accessibility API. Nothing is copied.
+/// Empty when the control says nothing is selected; None when it doesn't answer, or has no
+/// `AXSelectedText` (see `EMPTY_SELECTION_IS_FINAL`).
 pub fn selection_via_uia() -> Option<String> {
     if !trusted() {
         return None;
     }
     autoreleasepool(|_| {
         let focused = Ax::system()?.element("AXFocusedUIElement")?;
-        focused.string("AXSelectedText").filter(|t| !t.is_empty())
+        focused.string("AXSelectedText")
     })
 }
 
@@ -440,11 +482,22 @@ pub fn window_title(handle: WindowHandle) -> Option<String> {
 }
 
 /// The window's pixels, through the `screencapture` tool (Quartz's own window capture is gone
-/// from current SDKs). Needs the Screen Recording permission; without it the picture shows only
-/// the desktop.
+/// from current SDKs). Needs the Screen Recording permission, checked first: without it the
+/// capture wouldn't show the window.
 pub fn capture_window(handle: WindowHandle) -> Result<RawImage, String> {
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let id = window_id(handle).ok_or("there is no window to capture")?;
+    // SAFETY: no arguments.
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        // Shows macOS's prompt the first time it's asked; later calls show nothing.
+        // SAFETY: no arguments.
+        unsafe { CGRequestScreenCaptureAccess() };
+        return Err(
+            "Winku needs the Screen Recording permission for this: System Settings > \
+             Privacy & Security > Screen Recording, turn on Winku, then quit and reopen it."
+                .into(),
+        );
+    }
     let path = std::env::temp_dir().join(format!(
         "winku-capture-{}-{}.png",
         std::process::id(),
@@ -931,12 +984,21 @@ pub fn watch_fullscreen(callback: Box<dyn Fn(bool) + Send>) {
         .ok();
 }
 
+/// Whether the front app's focused window is in fullscreen. Asks the Accessibility API, which
+/// knows on any display; without the permission, compares the window with the displays, which
+/// misses fullscreen windows under a MacBook's notch.
 fn front_is_fullscreen() -> bool {
     let Some(pid) = front_pid() else {
         return false;
     };
     if u32::try_from(pid).ok() == Some(std::process::id()) {
         return false;
+    }
+    remember_front(pid);
+    if trusted() {
+        if let Some(fullscreen) = autoreleasepool(|_| ax_fullscreen(pid)) {
+            return fullscreen;
+        }
     }
     let Some(bounds) = on_screen()
         .into_iter()
@@ -952,6 +1014,34 @@ fn front_is_fullscreen() -> bool {
             && same(d.size.width, bounds.size.width)
             && same(d.size.height, bounds.size.height)
     })
+}
+
+fn ax_fullscreen(pid: i32) -> Option<bool> {
+    let value = Ax::app(pid)?
+        .element("AXFocusedWindow")?
+        .attribute("AXFullScreen")?;
+    Some(value.downcast::<CFBoolean>().ok()?.value())
+}
+
+/// Lets `window` show over fullscreen apps' Spaces too, so the summon key opens the bar on top
+/// of a fullscreen app instead of switching Spaces. The resting pill still hides there
+/// (fullscreen.rs). Call on the main thread.
+pub fn join_fullscreen_spaces(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    let Ok(ptr) = window.ns_window() else {
+        return;
+    };
+    // SAFETY: Tauri's NSWindow for this window, alive while the window is.
+    let Some(ns) = (unsafe { ptr.cast::<AnyObject>().as_ref() }) else {
+        return;
+    };
+    // SAFETY: NSWindow's collectionBehavior property (an NSUInteger), on the main thread.
+    unsafe {
+        let behavior: usize = msg_send![ns, collectionBehavior];
+        let _: () = msg_send![ns, setCollectionBehavior: behavior | FULL_SCREEN_AUXILIARY];
+    }
 }
 
 fn displays() -> Vec<CGRect> {

@@ -498,6 +498,27 @@ mod os {
             .collect())
     }
 
+    /// Whether this Mac has `voice`. The list is read again at most once a minute, so speaking
+    /// doesn't run `say -v ?` before every sentence.
+    fn installed(voice: &str) -> bool {
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+        static CACHE: Mutex<Option<(Instant, Vec<OsVoice>)>> = Mutex::new(None);
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = cache
+            .as_ref()
+            .is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(60));
+        if !fresh {
+            match voices() {
+                Ok(list) => *cache = Some((Instant::now(), list)),
+                Err(_) => return false,
+            }
+        }
+        cache
+            .as_ref()
+            .is_some_and(|(_, list)| list.iter().any(|a| a.id == voice))
+    }
+
     /// A WAV file of `text` in the chosen voice (or the system default).
     pub fn synthesize(text: &str, voice: Option<&str>) -> Result<Vec<u8>, String> {
         let run = || -> windows::core::Result<Vec<u8>> {
@@ -569,9 +590,7 @@ mod os {
             COUNT.fetch_add(1, Ordering::Relaxed)
         ));
         let mut command = Command::new(SAY);
-        if let Some(voice) =
-            voice.filter(|v| voices().is_ok_and(|all| all.iter().any(|a| a.id == *v)))
-        {
+        if let Some(voice) = voice.filter(|v| installed(v)) {
             command.args(["-v", voice]);
         }
         let mut child = command

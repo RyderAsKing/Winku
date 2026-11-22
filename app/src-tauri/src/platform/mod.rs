@@ -72,10 +72,11 @@ pub fn uia_is_safe(window: WindowHandle) -> bool {
 /// editors with a built-in terminal (VS Code and its forks, JetBrains IDEs), which could have
 /// one focused. The action hotkeys still copy there: the user asked for the selection then.
 /// `process` is the lowercase executable name; `classes` a window and its focused child.
-/// Always on macOS, where the copy is Cmd+C, which interrupts nothing.
+/// On macOS, where the copy is Cmd+C and interrupts nothing, only the editors are left out:
+/// there Cmd+C with nothing selected copies the current line.
 pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
     if cfg!(target_os = "macos") {
-        return true;
+        return !is_mac_line_copying_editor(classes);
     }
     const CONSOLE_CLASSES: [&str; 3] = [
         "ConsoleWindowClass",
@@ -140,6 +141,30 @@ pub fn summon_copy_allowed(process: Option<&str>, classes: &[String]) -> bool {
     !(TERMINALS.contains(&process) || IDE_PREFIXES.iter().any(|p| process.starts_with(p)))
 }
 
+/// Mac editors whose Cmd+C copies the current line when nothing is selected, by bundle id (the
+/// first of `classes` on macOS): VS Code and its forks, JetBrains IDEs, Sublime Text and Zed.
+pub(crate) fn is_mac_line_copying_editor(classes: &[String]) -> bool {
+    const BUNDLE_PREFIXES: [&str; 9] = [
+        "com.microsoft.VSCode",
+        "com.vscodium",
+        "com.todesktop.230313mzl4w4u92", // Cursor
+        "com.exafunction.windsurf",
+        "com.jetbrains.",
+        "com.google.android.studio",
+        "com.sublimetext.",
+        "dev.zed.Zed",
+        "com.visualstudio.code.oss",
+    ];
+    classes
+        .iter()
+        .any(|c| BUNDLE_PREFIXES.iter().any(|p| c.starts_with(p)))
+}
+
+/// Whether an empty answer from `selection_via_uia` means nothing is selected, so no copy is
+/// tried. On macOS `AXSelectedText` is empty then; elsewhere an empty answer often means the
+/// control doesn't say.
+pub const EMPTY_SELECTION_IS_FINAL: bool = cfg!(target_os = "macos");
+
 /// Terminal emulators on Linux, by executable name. They copy and paste with Ctrl+Shift+C and
 /// Ctrl+Shift+V: plain Ctrl+C interrupts the running program and Ctrl+V types a control character.
 pub(crate) fn is_linux_terminal(process: &str) -> bool {
@@ -176,6 +201,17 @@ pub(crate) fn is_linux_terminal(process: &str) -> bool {
     TERMINALS.contains(&process)
 }
 
+/// The window to note as the bar opens: the foreground one, or on macOS, when that is Winku's
+/// own (clicking the pill brings Winku to the front), the one the user was in before.
+pub fn summon_window() -> WindowHandle {
+    let window = foreground_window();
+    #[cfg(target_os = "macos")]
+    if is_own_window(window) {
+        return window_before_winku();
+    }
+    window
+}
+
 /// `summon_copy_allowed` for a live window.
 pub fn summon_copy_is_safe(window: WindowHandle) -> bool {
     summon_copy_allowed(
@@ -206,9 +242,38 @@ pub use self::fallback::*;
 
 #[cfg(all(test, target_os = "macos"))]
 #[test]
-fn summon_always_copies_on_macos() {
-    assert!(summon_copy_allowed(Some("terminal"), &[]));
-    assert!(summon_copy_allowed(Some("code"), &[]));
+fn summon_copies_on_macos_except_in_editors() {
+    let vscode = vec![
+        "com.microsoft.VSCode".to_string(),
+        "Chrome_Framework".to_string(),
+    ];
+    assert!(summon_copy_allowed(
+        Some("terminal"),
+        &["com.apple.Terminal".into()]
+    ));
+    assert!(summon_copy_allowed(
+        Some("safari"),
+        &["com.apple.Safari".into()]
+    ));
+    assert!(!summon_copy_allowed(Some("code"), &vscode));
+}
+
+#[test]
+fn mac_editors_that_copy_the_line() {
+    let one = |id: &str| vec![id.to_string()];
+    assert!(is_mac_line_copying_editor(&one("com.microsoft.VSCode")));
+    assert!(is_mac_line_copying_editor(&one(
+        "com.microsoft.VSCodeInsiders"
+    )));
+    assert!(is_mac_line_copying_editor(&one(
+        "com.todesktop.230313mzl4w4u92"
+    )));
+    assert!(is_mac_line_copying_editor(&one("com.jetbrains.intellij")));
+    assert!(is_mac_line_copying_editor(&one("com.sublimetext.4")));
+    assert!(is_mac_line_copying_editor(&one("dev.zed.Zed")));
+    assert!(!is_mac_line_copying_editor(&one("com.apple.TextEdit")));
+    assert!(!is_mac_line_copying_editor(&one("com.apple.Terminal")));
+    assert!(!is_mac_line_copying_editor(&[]));
 }
 
 #[cfg(all(test, not(target_os = "macos")))]

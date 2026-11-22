@@ -273,7 +273,7 @@ impl NowState {
 /// not at all in Chromium windows (`platform::uia_is_safe`). The summon hotkey notes the window
 /// with `begin_hotkey_note` instead, so this one finds it noted and leaves it.
 pub fn note_summon(app: &AppHandle) {
-    let window = platform::foreground_window();
+    let window = platform::summon_window();
     let skip_selection = !platform::uia_is_safe(window);
     let Some(generation) = begin_note(app, window, !skip_selection, true) else {
         return;
@@ -347,12 +347,16 @@ pub fn begin_hotkey_note(app: &AppHandle, window: WindowHandle) -> Option<Hotkey
 pub fn read_selection(app: &AppHandle, note: HotkeyNote, in_now_line: bool) -> Option<String> {
     platform::clear_keys_for_input(MODIFIER_TIMEOUT);
     let window = note.window;
-    let selection = platform::uia_is_safe(window)
+    let via_uia = platform::uia_is_safe(window)
         .then(platform::selection_via_uia)
-        .flatten()
+        .flatten();
+    // Where the platform reports "nothing selected" reliably (macOS), an empty answer is final:
+    // copying anyway would beep in apps whose Copy is disabled.
+    let answered = platform::EMPTY_SELECTION_IS_FINAL && via_uia.is_some();
+    let selection = via_uia
         .filter(|s| !s.trim().is_empty())
         .or_else(|| {
-            platform::summon_copy_is_safe(window)
+            (!answered && platform::summon_copy_is_safe(window))
                 .then(|| platform::selection_via_copy_within(SUMMON_COPY_WAIT))
                 .flatten()
         })

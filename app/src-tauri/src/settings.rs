@@ -180,6 +180,15 @@ impl Default for Memory {
     }
 }
 
+/// Install updates automatically, except on macOS: there the app is signed ad hoc, so each
+/// update loses the permissions granted to the last build (docs/adr/0005-macos-unsigned-build.md),
+/// and the user should choose when that happens.
+pub const DEFAULT_UPDATES: &str = if cfg!(target_os = "macos") {
+    "notify"
+} else {
+    "auto"
+};
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -199,7 +208,7 @@ impl Default for Settings {
             eyes: Eyes::default(),
             voice: Voice::default(),
             memory: Memory::default(),
-            updates: "auto".into(),
+            updates: DEFAULT_UPDATES.into(),
             launch_at_login: true,
             extra: Extra::new(),
         }
@@ -624,7 +633,7 @@ mod tests {
         );
         assert_eq!(value["voice"]["osVoice"], Value::Null);
         assert_eq!(value["voice"]["listeningPaused"], false);
-        assert_eq!(value["updates"], "auto");
+        assert_eq!(value["updates"], DEFAULT_UPDATES);
         assert_eq!(value["launchAtLogin"], true);
         assert_eq!(value["memory"], json!({ "recall": true, "tidy": true }));
         let names: Vec<_> = value["actions"]

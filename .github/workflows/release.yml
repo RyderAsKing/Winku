@@ -67,7 +67,7 @@ jobs:
 
             Linux (x86_64): the AppImage, or the `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) package. Winku runs on X11, and on Wayland desktops through XWayland; see the README for what that means.
 
-            macOS (11 Big Sur or newer): `Winku_*_aarch64.dmg` for Apple Silicon, `Winku_*_x64.dmg` for Intel. **The Mac app is unsigned**: it isn't signed with an Apple Developer ID or notarized, so macOS blocks it at first ("Winku is damaged" or "can't be opened"). It is also untested on real Macs so far; please report what doesn't work. To open it anyway, drag Winku to Applications, then either run `xattr -dr com.apple.quarantine /Applications/Winku.app` in Terminal, or try to open it once and choose **Open Anyway** in System Settings > Privacy & Security. Or build it yourself from source (see CONTRIBUTING.md). Winku asks for Accessibility, and later Screen Recording, Microphone and Input Monitoring; macOS asks again after each update.
+            macOS (13 Ventura or newer): `Winku_*_aarch64.dmg` for Apple Silicon, `Winku_*_x64.dmg` for Intel. **The Mac app is unsigned**: it isn't signed with an Apple Developer ID or notarized, so macOS blocks it at first ("Winku is damaged" or "can't be opened"). It is also untested on real Macs so far; please report what doesn't work. To open it anyway, drag Winku to Applications, then either run `xattr -dr com.apple.quarantine /Applications/Winku.app` in Terminal, or try to open it once and choose **Open Anyway** in System Settings > Privacy & Security. Or build it yourself from source (see CONTRIBUTING.md). Winku asks for Accessibility, and later Screen Recording, Microphone and Input Monitoring; macOS asks again after each update.
 
             Installed copies update themselves from here.
           releaseDraft: false
@@ -131,6 +131,8 @@ jobs:
     strategy:
       # One after the other: each adds its entries to the release's latest.json.
       max-parallel: 1
+      # An Apple Silicon failure shouldn't cancel the Intel build, or the other way round.
+      fail-fast: false
       matrix:
         # The Intel app is built on the Apple Silicon runner too.
         target: [aarch64-apple-darwin, x86_64-apple-darwin]

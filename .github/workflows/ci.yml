@@ -39,9 +39,17 @@ jobs:
           # sherpa-onnx-sys unpacks its prebuilt libraries here, outside what rust-cache keeps by
           # default; without it a restored build skips the download and fails to link.
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v1-sherpa
+          prefix-key: v2-sherpa
           # Pull requests reuse main's cache without spending minutes uploading their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A partly matching cache restores the prebuilt folders but rust-cache's clean empties them,
+      # and sherpa-onnx-sys skips its download when the folder exists. Drop an empty one.
+      - name: Drop an emptied sherpa-onnx cache
+        shell: bash
+        run: |
+          dir=app/src-tauri/target/sherpa-onnx-prebuilt
+          if [ -d "$dir" ] && [ -z "$(find "$dir" -type f -print -quit)" ]; then rm -rf "$dir"; fi
 
       - name: Tauri system dependencies
         # Runner DNS has failed to resolve Ubuntu's mirrors, stalling apt for the whole job; add
@@ -114,8 +122,16 @@ jobs:
           # sherpa-onnx-sys unpacks its prebuilt libraries here, outside what rust-cache keeps by
           # default; without it a restored build skips the download and fails to link.
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v1-sherpa
+          prefix-key: v2-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A partly matching cache restores the prebuilt folders but rust-cache's clean empties them,
+      # and sherpa-onnx-sys skips its download when the folder exists. Drop an empty one.
+      - name: Drop an emptied sherpa-onnx cache
+        shell: bash
+        run: |
+          dir=app/src-tauri/target/sherpa-onnx-prebuilt
+          if [ -d "$dir" ] && [ -z "$(find "$dir" -type f -print -quit)" ]; then rm -rf "$dir"; fi
 
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.
@@ -219,8 +235,16 @@ jobs:
           # sherpa-onnx-sys unpacks its prebuilt libraries here, outside what rust-cache keeps by
           # default; without it a restored build skips the download and fails to link.
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v1-sherpa
+          prefix-key: v2-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A partly matching cache restores the prebuilt folders but rust-cache's clean empties them,
+      # and sherpa-onnx-sys skips its download when the folder exists. Drop an empty one.
+      - name: Drop an emptied sherpa-onnx cache
+        shell: bash
+        run: |
+          dir=app/src-tauri/target/sherpa-onnx-prebuilt
+          if [ -d "$dir" ] && [ -z "$(find "$dir" -type f -print -quit)" ]; then rm -rf "$dir"; fi
 
       - name: Bun packages
         # Installing the engine's packages takes about 17 s on Windows.
@@ -258,7 +282,7 @@ jobs:
   # release does) and launched for half a minute. Apple Silicon runner.
   macos:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       # As in windows-build: a working optimised app, not the release's smallest binary.
@@ -280,8 +304,16 @@ jobs:
         with:
           workspaces: app/src-tauri
           cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v1-sherpa
+          prefix-key: v2-sherpa
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A partly matching cache restores the prebuilt folders but rust-cache's clean empties them,
+      # and sherpa-onnx-sys skips its download when the folder exists. Drop an empty one.
+      - name: Drop an emptied sherpa-onnx cache
+        shell: bash
+        run: |
+          dir=app/src-tauri/target/sherpa-onnx-prebuilt
+          if [ -d "$dir" ] && [ -z "$(find "$dir" -type f -print -quit)" ]; then rm -rf "$dir"; fi
 
       - name: Engine tests
         working-directory: engine
@@ -332,3 +364,15 @@ jobs:
           kill "$pid"
           cat "$RUNNER_TEMP/winku.log"
           if grep -qi "panicked" "$RUNNER_TEMP/winku.log"; then exit 1; fi
+
+      # What otherwise only a tagged release does, checked on main so a tag doesn't find it first:
+      # the DMG, and linking the Intel app against sherpa-onnx's static libraries. The Intel
+      # sidecars were staged by the Intel build check above.
+      - name: Release paths (main only), the DMG and the Intel app
+        if: github.ref == 'refs/heads/main'
+        working-directory: app
+        run: |
+          bunx tauri build --bundles dmg -c '{"bundle":{"createUpdaterArtifacts":false}}'
+          ls src-tauri/target/release/bundle/dmg/*.dmg
+          bunx tauri build --target x86_64-apple-darwin --bundles app -c '{"bundle":{"createUpdaterArtifacts":false}}'
+          file src-tauri/target/x86_64-apple-darwin/release/winku | grep -q x86_64

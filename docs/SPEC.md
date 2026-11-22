@@ -8,7 +8,7 @@ Confirmed with the user on 2026-11-11, including the four points that were first
 
 - Windows came first. Linux followed in 0.3.0 (on X11, ADR 0003), and macOS is an unsigned preview for Apple Silicon and Intel (ADR 0005).
 - Builds for Windows, then Linux AppImage/deb, then macOS, come from GitHub Actions and are published to GitHub Releases. They are unsigned for now, and the README explains how to get past SmartScreen and Gatekeeper.
-- Auto-update uses the Tauri updater, which verifies each update against our release signing key. The update downloads in the background and installs on the next restart or quit, with a small dot on the eyes until then. Settings: Auto-install (default), Notify only, Off.
+- Auto-update uses the Tauri updater, which verifies each update against our release signing key. The update downloads in the background and installs on the next restart or quit, with a small dot on the eyes until then. Settings: Auto-install (the default; Notify only on macOS, where an update resets the permissions, ADR 0005), Notify only, Off.
 
 ## 2. Architecture
 

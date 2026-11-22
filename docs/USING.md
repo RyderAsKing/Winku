@@ -93,11 +93,11 @@ The Mac app is an unsigned preview ([why](adr/0005-macos-unsigned-build.md)): it
   - **Accessibility** (asked at the first start): reading your selection, pasting a result back, and computer use.
   - **Screen Recording**: screenshots of the window you're in, and window titles.
   - **Microphone**: talking to Winku.
-  - **Input Monitoring**: the hotkey hints that appear while you hold a key's modifiers.
+  - **Input Monitoring** (asked once Accessibility is on): the hotkey hints that appear while you hold a key's modifiers. They start as soon as it's allowed, no restart needed.
 
-  Without one of them, that feature does less and the rest keeps working. Because the app isn't signed with a Developer ID, macOS forgets these permissions when Winku updates, and asks again.
-- **Copy and paste** use Cmd+C and Cmd+V, in terminals too (Cmd+C never interrupts a program on a Mac), so the summon key reads the selection there as well. They are sent as the keys where C and V sit on a US keyboard.
+  Without one of them, that feature does less and the rest keeps working. Because the app isn't signed with a Developer ID, macOS treats each update as a new app, and the permissions stop working. So on a Mac, Winku tells you about an update instead of installing it on its own (Settings > App > Updates), and you choose when. If a feature stops working after an update, open its list in System Settings > Privacy & Security, remove Winku with the minus button and add it again, or run `tccutil reset All app.winku` in Terminal and let macOS ask again.
+- **Copy and paste** use Cmd+C and Cmd+V, in terminals too (Cmd+C never interrupts a program on a Mac), so the summon key reads the selection there as well. It only copies when the app doesn't say what's selected, and never in code editors (VS Code and its forks, JetBrains IDEs, Sublime Text, Zed), where Cmd+C with nothing selected copies the whole line. They are sent as the keys where C and V sit on a US keyboard.
 - **The clipboard.** When Winku puts your clipboard back after reading a selection or pasting, it marks it as transient, so clipboard managers don't record the copy twice. Content a password manager marks as concealed is never kept or read. Clipboard history checks for new copies a few times a second.
-- **Fullscreen apps** live in a Space of their own, and the eyes stay out of it.
+- **Fullscreen apps.** The resting eyes hide over a fullscreen app, as on Windows. The summon key still opens the bar on top of it, in the same Space.
 - **Voices.** The "system" voice is the Mac's own speech (`say`), in the voice you pick from the ones installed in System Settings > Accessibility > Spoken Content.
 - **API keys** are kept in your login Keychain.

@@ -45,6 +45,9 @@ export interface Settings {
 		/** Natural voice pace, 0.8–1.5; 1 is the model's own. */
 		ttsSpeed: number;
 		osVoice: string | null;
+		/** Microphone and speakers by name as the system reports it; null is the system default. */
+		inputDevice: string | null;
+		outputDevice: string | null;
 		reply: ReplyMode;
 		/** How much of a spoken reply is said; the rest is only on screen (SPEC §11). */
 		say: SpeechLength;

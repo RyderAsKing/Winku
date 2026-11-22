@@ -34,6 +34,10 @@ _Avoid_: History (History is where cleared threads and past actions are kept), l
 The one running conversation with the assistant, kept until the user clears it.
 _Avoid_: Chat, session (pi's word for the file a thread is stored in)
 
+**Provider extension**:
+A pi package the user adds in Settings > Model so Winku can use the model providers it adds, such as a Claude subscription through Claude Code. Only its providers are used.
+_Avoid_: Plugin, add-on, pi extension (pi's extensions can do much more, and Winku ignores the rest)
+
 **Steer**:
 A message sent while a reply is running, which the model takes in at its next step instead of after the reply ends.
 _Avoid_: Interrupt, queue, follow-up

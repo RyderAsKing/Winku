@@ -1,0 +1,6 @@
+{
+	"name": "winku-test-tool-only",
+	"version": "0.0.1",
+	"type": "module",
+	"pi": { "extensions": ["./index.ts"] }
+}

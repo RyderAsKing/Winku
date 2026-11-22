@@ -58,7 +58,7 @@ export type UiEvent =
 	| { kind: "settings_section"; section: SettingsSection };
 
 /** Settings sections that can be opened directly. */
-export type SettingsSection = "schedules";
+export type SettingsSection = "schedules" | "model";
 
 /** Which way the bar and bubble grow from the pill: toward the middle of its monitor. */
 export interface Layout {
@@ -161,6 +161,17 @@ export type DownloadProgress =
 	| { what: "stt" | "tts"; model: VoiceModelId; fraction: number }
 	| { what: "embed"; model: string; fraction: number };
 
+export interface AudioDevice {
+	/** As the system reports it; this is what Settings stores. */
+	name: string;
+	isDefault: boolean;
+}
+
+export interface AudioDevices {
+	inputs: AudioDevice[];
+	outputs: AudioDevice[];
+}
+
 export interface UpdateStatus {
 	state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 	version?: string;
@@ -211,6 +222,10 @@ export const shell = {
 		const { getVersion } = await import("@tauri-apps/api/app");
 		return getVersion();
 	},
+	audioDevices: () => invoke<AudioDevices>("audio_devices"),
+	/** Settings only: show the chosen microphone's level (onMicTestLevel), without transcribing. */
+	micTestStart: () => invoke<void>("mic_test_start"),
+	micTestStop: () => invoke<void>("mic_test_stop"),
 	voiceOsVoices: () => invoke<OsVoice[]>("voice_os_voices"),
 	voiceModels: () => invoke<VoiceModel[]>("voice_models"),
 	voiceModelDownload: (id: VoiceModelId) => invoke<void>("voice_model_download", { id }),
@@ -241,6 +256,12 @@ export const onSettingsChanged = (handler: (settings: Settings) => void) => list
 
 export const onDownloadProgress = (handler: (progress: DownloadProgress) => void) =>
 	listen<DownloadProgress>("download_progress", handler);
+
+/** 0…1, the same scale as talk_level, about 15 a second while the microphone test runs. */
+export const onMicTestLevel = (handler: (level: number) => void) => listen<number>("mic_test_level", handler);
+
+/** The microphone test ended (stopped, 30 seconds passed, the talk key was held): null, or why it failed. */
+export const onMicTestEnd = (handler: (error: string | null) => void) => listen<string | null>("mic_test_end", handler);
 
 export const onUpdateStatus = (handler: (status: UpdateStatus) => void) => listen<UpdateStatus>("update_status", handler);
 

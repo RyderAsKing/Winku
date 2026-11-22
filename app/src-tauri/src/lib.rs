@@ -88,6 +88,14 @@ pub fn run() {
         })
         .on_menu_event(menu::on_menu_event)
         .on_window_event(|window, event| {
+            if window.label() == window::SETTINGS
+                && matches!(
+                    event,
+                    WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+                )
+            {
+                voice::mic_test_stop(window.app_handle());
+            }
             if window.label() == window::MAIN {
                 if let WindowEvent::Moved(_) = event {
                     window::on_moved(window.app_handle());
@@ -119,6 +127,9 @@ pub fn run() {
             commands::speak,
             commands::stop_speaking,
             commands::voice_os_voices,
+            commands::audio_devices,
+            commands::mic_test_start,
+            commands::mic_test_stop,
             commands::voice_models,
             commands::voice_model_download,
             commands::voice_model_remove,

@@ -29,7 +29,7 @@ test("streams one reply from the scripted model and exits cleanly", async () => 
 
 	expect(stderr).toBe("");
 	expect(exitCode).toBe(0);
-	expect(engine.records[0]).toMatchObject({ type: "hello", pi: "1.5.2" });
+	expect(engine.records[0]).toMatchObject({ type: "hello", pi: "1.6.0" });
 	expect(engine.records.find((r) => r.type === "ready")).toMatchObject({
 		type: "ready",
 		provider: "winku-faux",

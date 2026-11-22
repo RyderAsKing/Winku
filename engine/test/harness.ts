@@ -60,7 +60,7 @@ export class EngineProcess {
 			stdin: "pipe",
 			stdout: "pipe",
 			stderr: "pipe",
-			env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: home, XDG_DATA_HOME: home, XDG_CONFIG_HOME: home },
+			env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: home, XDG_DATA_HOME: home, XDG_CONFIG_HOME: home, WINKU_DATA_DIR: dataDir },
 		});
 		this.done = this.read();
 	}

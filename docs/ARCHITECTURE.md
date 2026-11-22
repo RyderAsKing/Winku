@@ -14,7 +14,7 @@ app/ui (Svelte webview)  ──invoke/events──▶  app/src-tauri (Rust shell
 | **Shell** (`app/src-tauri`) | OS integration: windows and their geometry, global hotkeys, tray, native context menu, `settings.json`, the API key in the OS credential store, selection capture and paste-back, foreground app and window title, screenshots, UI Automation text, speech (sherpa-onnx, OS TTS), updater, launch at login. Starts and stops the engine. |
 | **Engine** (`engine`) | Everything model-related: pi sessions, the thread and its history, compaction, the frozen system prompt, actions, tools, memory files, voice profiles. Reads `about-me.md`, `voice\`, `memory\`; writes `memory\`, `voice\` (only after Accept) and `engine\`. |
 
-The engine never reads `settings.json`; the shell sends what it needs in `configure`. The UI never sees the API key; the shell reads it from Credential Manager and sends it in `configure`.
+The engine never reads `settings.json`; the shell sends what it needs in `configure`, and passes the data folder as `WINKU_DATA_DIR` when it starts the engine, so provider extensions (`engine/src/extensions.ts`) are found before `configure`. The UI never sees the API key; the shell reads it from Credential Manager and sends it in `configure`.
 
 ## Engine protocol
 
@@ -197,6 +197,7 @@ engine\memory-undo.jsonl    one line per memory save (files before/after) and pe
 engine\memory-index.sqlite  the recall index: notes, an FTS5 table and their vectors; rebuilt from memory\ whenever it is missing or stale
 engine\memory-tidy.json     tidy state: the last tidy, and how far each thread has been read
 engine\memory-tidy.jsonl    one line per tidy pass and what it changed
+extensions\                 provider extensions (ADR 0004): package.json, bun.lock and node_modules\, written by the engine running as Bun
 models\bge-small-en-v1.5\   the memory search model (model_quantized.onnx, vocab.txt)
 visuals\<id>.html           one file per visual, the page exactly as the model wrote it (id: 16 hex characters)
 ```

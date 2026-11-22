@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -81,7 +81,8 @@ impl Engine {
     /// Spawns the engine and configures it. Call once the Engine is managed state.
     pub fn start(app: &AppHandle) -> Result<(), String> {
         let engine = app.state::<Engine>();
-        let (stdin, child, stdout) = spawn_process()?;
+        let data_dir = app.state::<settings::Store>().data_dir.clone();
+        let (stdin, child, stdout) = spawn_process(&data_dir)?;
         *engine.running.lock().unwrap_or_else(|e| e.into_inner()) = Some(Running { stdin, child });
         let started = Instant::now();
         let reader_app = app.clone();
@@ -227,10 +228,14 @@ fn smoke_configure(app: &AppHandle) -> Value {
     })
 }
 
-fn spawn_process() -> Result<(ChildStdin, Child, std::process::ChildStdout), String> {
+/// `data_dir` goes in as WINKU_DATA_DIR, so the engine finds its provider extensions before `configure`.
+fn spawn_process(
+    data_dir: &Path,
+) -> Result<(ChildStdin, Child, std::process::ChildStdout), String> {
     let path = engine_path()?;
     let mut command = Command::new(&path);
     command
+        .env("WINKU_DATA_DIR", data_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());

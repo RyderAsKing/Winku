@@ -36,6 +36,10 @@ Select text in any app and press `Ctrl+Alt+1`. The defaults are Rewrite, Fix gra
 
 You don't need an action key to work on a selection. Select text, open Winku with `Ctrl+Alt+Space` (or hold it and talk), and say what you want: "google this and check the facts". The selection shows in the bar as a pill; click its × to leave it out. In terminals, and in editors that have a built-in terminal (VS Code, JetBrains IDEs), use `Ctrl+Alt+Q` instead, because Winku won't press `Ctrl+C` there for you.
 
+## More providers
+
+Settings > Model > Provider extensions adds a pi package that brings more model providers. For example, paste `https://github.com/earendil-works/pi-claude-code` to use your Claude Pro or Max subscription through Claude Code: install Claude Code, run `claude auth login` once, then pick "Claude Code Subscription (Experimental)" as the provider. It needs no key. Only add extensions you trust, since they run on your computer. Winku uses only the providers an extension adds, not its other features.
+
 ## Tools
 
 Winku can read and write files in your home folder, run PowerShell (bash on Linux), open files, apps and web pages, read web pages and look at the window you were using. Turn on Settings > Tools > "Ask before running" to approve each change first.
@@ -45,6 +49,8 @@ Winku can read and write files in your home folder, run PowerShell (bash on Linu
 The first time you hold the talk key, Winku downloads a speech model of about 110 MB and shows the progress on the eyes. Your speech is recognised on your computer and never leaves it.
 
 When you spoke, Winku reads the reply aloud in a natural offline voice (Supertonic, an 85 MB download on first use). The Windows voice (on macOS its own `say`; on Linux, Speech Dispatcher's `spd-say`, if it's installed) reads until Supertonic arrives, and stays available in Settings.
+
+To use a different microphone or speaker, pick it in Settings > Speech. Test, next to the microphone, shows a live level so you can see it hears you; nothing is recorded. If the one you chose is unplugged, Winku uses the system default.
 
 ## Memory
 

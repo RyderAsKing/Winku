@@ -23,7 +23,7 @@ There is no account and no telemetry. Winku talks only to the model provider you
 
 ## Install
 
-Windows 10 and 11, Linux (x86_64), and macOS 11 or newer (an unsigned preview).
+Windows 10 and 11, Linux (x86_64), and macOS 13 Ventura or newer (an unsigned preview).
 
 **Windows**
 

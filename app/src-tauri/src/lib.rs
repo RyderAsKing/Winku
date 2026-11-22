@@ -56,6 +56,17 @@ pub fn run() {
             app.manage(recall::Recall::default());
             app.manage(update::Updates::default());
 
+            #[cfg(target_os = "macos")]
+            {
+                // No Dock icon or app menu (the bundle's Info.plist says so too; this covers
+                // `tauri dev`), and the eyes follow the user to every Space.
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                if let Some(main) = app.get_webview_window(window::MAIN) {
+                    let _ = main.set_visible_on_all_workspaces(true);
+                    platform::join_fullscreen_spaces(&main);
+                }
+                platform::request_accessibility();
+            }
             let handle = app.handle();
             let current = app.state::<settings::Store>().get();
             hotkeys::register_all(handle, &current);

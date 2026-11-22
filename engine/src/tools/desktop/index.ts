@@ -24,8 +24,8 @@ const PROCESS_MARGIN_MS = 10_000;
 const REF = /^@([A-Za-z0-9]+):e\d+$/;
 /**
  * agent-desktop's window ids: `w-<HWND>` on Windows, opaque addresses of 34 to 70 characters on
- * Linux (where the shell's `w-<X11 window>` is also accepted). Elsewhere checked only so a
- * model-written id can't be read as a flag.
+ * Linux (where the shell's `w-<X11 window>` is also accepted, as its `w-<Quartz window>` is on
+ * macOS). Elsewhere checked only so a model-written id can't be read as a flag.
  */
 const WINDOW_ID = process.platform === "win32" ? /^w-\d+$/ : /^[^\s-]\S{0,255}$/;
 
@@ -45,7 +45,7 @@ interface KnownWindow {
 	chromium?: boolean;
 }
 
-/** The shell's view of a window. With a pid (Linux), its id is the shell's, not agent-desktop's. */
+/** The shell's view of a window. With a pid (Linux, macOS), its id is the shell's, not agent-desktop's. */
 interface ShellWindow extends KnownWindow {
 	pid?: number;
 }
@@ -141,8 +141,8 @@ class DesktopState {
 	}
 
 	/**
-	 * A window the shell named, as agent-desktop knows it. Where the shell's id is its own (Linux,
-	 * with a pid), the window is looked up among agent-desktop's by process and title, and the
+	 * A window the shell named, as agent-desktop knows it. Where the shell's id is its own (Linux and
+	 * macOS, with a pid), the window is looked up among agent-desktop's by process and title, and the
 	 * shell's id is kept as another name for it.
 	 */
 	async resolve(shell: ShellWindow, signal: AbortSignal | undefined): Promise<KnownWindow> {
@@ -456,7 +456,9 @@ export function desktopTools(deps: DesktopDeps): DesktopTools {
 			"focus, minimize, maximize or restore a window (a minimized window must be restored before you can act in it), " +
 			(process.platform === "win32"
 				? 'or launch an app and get its window: app is "notepad", "mspaint", "charmap" or a full path to an .exe. '
-				: 'or launch an app and get its window: app is a name list-apps would show, such as "gnome-calculator", or a desktop entry. ') +
+				: process.platform === "darwin"
+					? 'or launch an app and get its window: app is an app name such as "TextEdit" or "Calculator". '
+					: 'or launch an app and get its window: app is a name list-apps would show, such as "gnome-calculator", or a desktop entry. ') +
 			"For other apps use open, then desktop_windows to find the new window.",
 		parameters: Type.Object({
 			action: Type.Union(

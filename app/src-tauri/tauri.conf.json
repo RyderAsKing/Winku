@@ -10,6 +10,7 @@
     "beforeBuildCommand": "bun run ui:build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -24,6 +25,7 @@
         "skipTaskbar": true,
         "shadow": false,
         "focus": false,
+        "acceptFirstMouse": true,
         "visible": false
       }
     ],

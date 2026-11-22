@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/RyderAsKing/Winku/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RyderAsKing/Winku?color=5EF6F0&labelColor=0C0E13"></a>
-  <img alt="Windows 10 and 11, Linux" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-5EF6F0?labelColor=0C0E13">
+  <img alt="Windows 10 and 11, Linux, macOS" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux%20%7C%20macOS-5EF6F0?labelColor=0C0E13">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/RyderAsKing/Winku?color=5EF6F0&labelColor=0C0E13"></a>
   <a href="https://github.com/RyderAsKing/Winku/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/RyderAsKing/Winku/actions/workflows/ci.yml/badge.svg"></a>
 </p>
@@ -19,11 +19,11 @@ Press a key to type, or hold it to talk. Winku answers in text or out loud. It c
 There is no account and no telemetry. Winku talks only to the model provider you choose and, if you add a key, Brave Search.
 
 > [!NOTE]
-> Winku is early: version 0.x, and the Windows installer isn't code-signed yet. Expect rough edges, and please [report them](https://github.com/RyderAsKing/Winku/issues/new/choose).
+> Winku is early: version 0.x, the Windows installer isn't code-signed yet, and the Mac app is unsigned and hasn't been tried on a real Mac. Expect rough edges, and please [report them](https://github.com/RyderAsKing/Winku/issues/new/choose).
 
 ## Install
 
-Windows 10 and 11, and Linux (x86_64). macOS comes later.
+Windows 10 and 11, Linux (x86_64), and macOS 13 Ventura or newer (an unsigned preview).
 
 **Windows**
 
@@ -38,6 +38,23 @@ Windows 10 and 11, and Linux (x86_64). macOS comes later.
 3. Press `Ctrl+Alt+Space` and connect a model, as on Windows.
 
 Winku on Linux works best in an **X11 session**. On Wayland (the default on GNOME and KDE Plasma) it runs through XWayland and can only see apps that do too. With a native Wayland app in front it can't read the selection, paste back or take a screenshot, and on GNOME the hotkeys don't fire. [Using Winku](docs/USING.md#linux) has the details.
+
+**macOS (unsigned preview)**
+
+The Mac app isn't signed with an Apple Developer ID or notarized ([why](docs/adr/0005-macos-unsigned-build.md)), and nobody has tried it on a real Mac yet, so treat it as a preview and tell us what breaks.
+
+1. From the [latest release](https://github.com/RyderAsKing/Winku/releases/latest), download `Winku_<version>_aarch64.dmg` for Apple Silicon (M1 and newer) or `Winku_<version>_x64.dmg` for an Intel Mac.
+2. Open it and drag Winku to Applications.
+3. macOS blocks unsigned apps it downloaded, often saying Winku "is damaged". To let it run, open Terminal and run:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Winku.app
+   ```
+
+   Or open Winku once, then choose **Open Anyway** in System Settings > Privacy & Security.
+4. Open Winku and allow **Accessibility** when macOS asks (System Settings > Privacy & Security > Accessibility). Press `Ctrl+Option+Space` and connect a model.
+
+You can also build the app yourself from this repository ([Build from source](CONTRIBUTING.md#build-from-source)). On a Mac, `Alt` in Winku's keys is Option and `Super` is Cmd. [Using Winku](docs/USING.md#macos) has the rest, including the other permissions.
 
 ## Use it
 

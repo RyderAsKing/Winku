@@ -12,7 +12,10 @@
 //! the hotkeys themselves are unaffected. X11 reads XInput 2 raw key events (`xinput.rs`) on a
 //! thread that sleeps waiting for them. Other platforms never show hints.
 
-#![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#![cfg_attr(
+    not(any(windows, target_os = "linux", target_os = "macos")),
+    allow(dead_code)
+)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -27,6 +30,12 @@ mod rawinput;
 mod xinput;
 #[cfg(target_os = "linux")]
 use xinput as rawinput;
+#[cfg(target_os = "macos")]
+mod eventtap;
+#[cfg(target_os = "macos")]
+use eventtap as rawinput;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod deadline;
 
 /// How long the prefix must be held alone before the hints appear.
 pub const HOLD_DELAY: Duration = Duration::from_millis(450);
@@ -385,7 +394,7 @@ pub(crate) fn debug_log(line: &str) {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn on_key(key: Key, down: bool) -> Timer {
     let outcome = with_state(|h| h.on_key(key, down, Instant::now()));
     if outcome.hide {
@@ -395,7 +404,7 @@ fn on_key(key: Key, down: bool) -> Timer {
 }
 
 /// The 450 ms timer. `Some(ms)`: start it again for that long.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn on_timer() -> Option<u32> {
     let allowed = !crate::fullscreen::active();
     match with_state(|h| h.timer_fired(Instant::now(), allowed)) {
@@ -408,7 +417,7 @@ fn on_timer() -> Option<u32> {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub fn start(app: &AppHandle) {
     if APP.set(app.clone()).is_err() {
         return;
@@ -420,7 +429,7 @@ pub fn start(app: &AppHandle) {
     rawinput::watch(on_key, on_timer, HOLD_DELAY.as_millis() as u32);
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn start(_app: &AppHandle) {}
 
 #[cfg(test)]

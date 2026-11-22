@@ -17,7 +17,7 @@ export function describeCapture(capture: ScreenCapture, imageIncluded: boolean, 
 	const lines = [
 		capture.app ? `App: ${capture.app}` : "",
 		capture.windowTitle ? `Window: ${capture.windowTitle}` : "",
-		// With a pid (Linux) the id is the shell's, not one desktop_* tools know; they default to this window anyway.
+		// With a pid (Linux, macOS) the id is the shell's, not one desktop_* tools know; they default to this window anyway.
 		capture.windowId && capture.pid === undefined ? `Window id: ${capture.windowId}` : "",
 	].filter(Boolean);
 	const text = capture.text?.trim();

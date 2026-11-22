@@ -325,6 +325,6 @@ test("outline: one line per node, quiet states dropped, capped", () => {
 	expect(out.labels.get("@s1:e1")).toBe('button "OK"');
 	expect(outline(tree, 12).cut).toBe(2);
 	expect(renderError("Click", { ok: false, error: { code: "PERM_DENIED", message: "no" } })).toContain(
-		process.platform === "win32" ? "administrator" : "another user",
+		process.platform === "win32" ? "administrator" : process.platform === "darwin" ? "Accessibility" : "another user",
 	);
 });

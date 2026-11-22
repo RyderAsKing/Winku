@@ -22,7 +22,9 @@ test = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# macos-private-api: a transparent window on macOS (tauri.conf.json's macOSPrivateApi). It changes
+# nothing elsewhere.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde_json = "1"
 base64 = "0.23"
 png = "0.18"
@@ -109,6 +111,13 @@ raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
+# AppKit, Quartz and Core Foundation (platform/macos.rs, hint/eventtap.rs): the same crates Tauri
+# already builds on macOS, with only the parts Winku calls.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSEnumerator", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSAccessibility", "NSBitmapImageRep", "NSImageRep", "NSPasteboard", "NSPasteboardItem", "NSRunningApplication", "NSWorkspace"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFBase", "CFCGTypes", "CFDictionary", "CFMachPort", "CFNumber", "CFRunLoop", "CFString"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGRemoteOperation", "CGWindow"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

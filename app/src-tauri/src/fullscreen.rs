@@ -63,13 +63,13 @@ pub fn start(app: &AppHandle) {
     }));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     crate::platform::watch_fullscreen(Box::new(move |fullscreen| changed(&app, fullscreen)));
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn start(_app: &AppHandle) {}
 
 #[cfg(test)]

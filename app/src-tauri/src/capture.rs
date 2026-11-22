@@ -105,20 +105,21 @@ pub struct ScreenTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
     pub chromium: bool,
-    /// Linux only: the window's process. agent-desktop's window ids there are AT-SPI addresses,
-    /// not X11 windows, so the engine finds the window by process and title.
+    /// Linux and macOS: the window's process. agent-desktop's window ids there aren't the
+    /// windows Winku sees (AT-SPI addresses, accessibility elements), so the engine finds the
+    /// window by process and title.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
 }
 
-/// The process the engine looks the window up by (`ScreenTarget::pid`): Linux only. Elsewhere
-/// `window_id` is agent-desktop's own id.
+/// The process the engine looks the window up by (`ScreenTarget::pid`): Linux and macOS. On
+/// Windows `window_id` is agent-desktop's own id.
 fn lookup_pid(window: WindowHandle) -> Option<u32> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         platform::window_pid(window)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = window;
         None
@@ -272,7 +273,7 @@ impl NowState {
 /// not at all in Chromium windows (`platform::uia_is_safe`). The summon hotkey notes the window
 /// with `begin_hotkey_note` instead, so this one finds it noted and leaves it.
 pub fn note_summon(app: &AppHandle) {
-    let window = platform::foreground_window();
+    let window = platform::summon_window();
     let skip_selection = !platform::uia_is_safe(window);
     let Some(generation) = begin_note(app, window, !skip_selection, true) else {
         return;
@@ -346,12 +347,16 @@ pub fn begin_hotkey_note(app: &AppHandle, window: WindowHandle) -> Option<Hotkey
 pub fn read_selection(app: &AppHandle, note: HotkeyNote, in_now_line: bool) -> Option<String> {
     platform::clear_keys_for_input(MODIFIER_TIMEOUT);
     let window = note.window;
-    let selection = platform::uia_is_safe(window)
+    let via_uia = platform::uia_is_safe(window)
         .then(platform::selection_via_uia)
-        .flatten()
+        .flatten();
+    // Where the platform reports "nothing selected" reliably (macOS), an empty answer is final:
+    // copying anyway would beep in apps whose Copy is disabled.
+    let answered = platform::EMPTY_SELECTION_IS_FINAL && via_uia.is_some();
+    let selection = via_uia
         .filter(|s| !s.trim().is_empty())
         .or_else(|| {
-            platform::summon_copy_is_safe(window)
+            (!answered && platform::summon_copy_is_safe(window))
                 .then(|| platform::selection_via_copy_within(SUMMON_COPY_WAIT))
                 .flatten()
         })

@@ -1,5 +1,6 @@
-//! Text-to-speech: Supertonic through sherpa-onnx (the default) or Windows OneCore voices (WinRT
-//! `SpeechSynthesizer`, the fallback), both played with cpal. Elsewhere the "os" voice is `spd-say` when present.
+//! Text-to-speech: Supertonic through sherpa-onnx (the default) or the system's voices (the
+//! fallback): Windows OneCore voices (WinRT `SpeechSynthesizer`) and macOS's `say`, played with
+//! cpal like Supertonic. On Linux the "os" voice is `spd-say` when present.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -523,7 +524,116 @@ mod os {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod os {
+    use super::OsVoice;
+    use std::process::{Command, Stdio};
+
+    const SAY: &str = "/usr/bin/say";
+
+    pub fn voices() -> Result<Vec<OsVoice>, String> {
+        let out = Command::new(SAY)
+            .args(["-v", "?"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("say failed: {e}"))?;
+        Ok(parse_voices(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    /// `say -v ?` lists one voice a line: its name (which may have spaces, as in
+    /// "Eddy (English (US))"), its locale, then `#` and a sample sentence.
+    pub fn parse_voices(list: &str) -> Vec<OsVoice> {
+        list.lines()
+            .filter_map(|line| {
+                let head = line.split('#').next()?.trim_end();
+                let (name, locale) = head.rsplit_once(char::is_whitespace)?;
+                let name = name.trim();
+                (!name.is_empty() && locale.contains('_')).then(|| OsVoice {
+                    id: name.to_string(),
+                    name: name.to_string(),
+                    language: locale.replace('_', "-"),
+                })
+            })
+            .collect()
+    }
+
+    /// Whether this Mac has `voice`. The list is read again at most once a minute, so speaking
+    /// doesn't run `say -v ?` before every sentence.
+    fn installed(voice: &str) -> bool {
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+        static CACHE: Mutex<Option<(Instant, Vec<OsVoice>)>> = Mutex::new(None);
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = cache
+            .as_ref()
+            .is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(60));
+        if !fresh {
+            match voices() {
+                Ok(list) => *cache = Some((Instant::now(), list)),
+                Err(_) => return false,
+            }
+        }
+        cache
+            .as_ref()
+            .is_some_and(|(_, list)| list.iter().any(|a| a.id == voice))
+    }
+
+    /// A WAV file of `text` in the chosen voice (or the system default). A voice this Mac
+    /// doesn't have (one picked on another computer) falls back to the default.
+    pub fn synthesize(text: &str, voice: Option<&str>) -> Result<Vec<u8>, String> {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNT: AtomicU32 = AtomicU32::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "winku-say-{}-{}.wav",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut command = Command::new(SAY);
+        if let Some(voice) = voice.filter(|v| installed(v)) {
+            command.args(["-v", voice]);
+        }
+        let mut child = command
+            .args(["--file-format=WAVE", "--data-format=LEI16@22050", "-o"])
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("say failed: {e}"))?;
+        // The text goes in on stdin: as an argument, a leading dash would read as an option.
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let status = child.wait().map_err(|e| format!("say failed: {e}"));
+        let wav = std::fs::read(&path);
+        let _ = std::fs::remove_file(&path);
+        match (status?, wav) {
+            (status, Ok(wav)) if status.success() => Ok(wav),
+            _ => Err("The macOS voice failed".into()),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::parse_voices;
+
+        #[test]
+        fn voices_with_spaces_in_their_names() {
+            let list = "Albert              en_US    # Hello! My name is Albert.
+                        Eddy (English (US)) en_US    # Hello! My name is Eddy.
+                        Amélie              fr_CA    # Bonjour, je m’appelle Amélie.
+";
+            let voices = parse_voices(list);
+            assert_eq!(voices.len(), 3);
+            assert_eq!(voices[1].id, "Eddy (English (US))");
+            assert_eq!(voices[1].language, "en-US");
+            assert_eq!(voices[2].name, "Amélie");
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod os {
     use super::OsVoice;
 
@@ -540,7 +650,7 @@ pub fn os_voices() -> Vec<OsVoice> {
 }
 
 /// Speaks `text` with the OS voice, blocking until it ends or `stop` is set.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn os_speak(
     text: &str,
     voice: Option<&str>,
@@ -559,7 +669,7 @@ pub fn os_speak(
 }
 
 /// Speaks `text` with `spd-say` (speech-dispatcher), blocking until it ends or `stop` is set.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn os_speak(
     text: &str,
     _voice: Option<&str>,

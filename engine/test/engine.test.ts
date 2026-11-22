@@ -1,5 +1,5 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HistoryEntry, ModelInfo, OutboundMessage, ProviderInfo, TranscriptItem } from "../src/protocol.ts";
 import { deltas, EngineProcess, removeTempDirs } from "./harness.ts";
@@ -55,8 +55,14 @@ test("keeps its files in the data folder and never touches the home folder", asy
 	await engine.prompt("hi");
 	await engine.shutdown();
 
-	// From source, the bun runner itself may create ~/.bun. The compiled binary must leave home empty.
-	const touched = readdirSync(engine.home).filter((name) => process.env.WINKU_ENGINE_BIN || name !== ".bun");
+	// From source, the bun runner itself may leave its transpiler cache in ~/.bun (on macOS in
+	// ~/Library/Caches/bun). The compiled binary must leave home empty. Files only, by path, so a
+	// failure names what was written.
+	const fromSource = !process.env.WINKU_ENGINE_BIN;
+	const touched = (readdirSync(engine.home, { recursive: true }) as string[])
+		.filter((path) => statSync(join(engine.home, path)).isFile())
+		.map((path) => path.replaceAll("\\", "/"))
+		.filter((path) => !(fromSource && (path.startsWith(".bun/") || path.startsWith("Library/Caches/bun/"))));
 	expect(touched).toEqual([]);
 	const sessions = readdirSync(join(engine.dataDir, "engine", "sessions")).filter((f) => f.endsWith(".jsonl"));
 	expect(sessions).toHaveLength(1);
